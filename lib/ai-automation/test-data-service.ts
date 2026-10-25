@@ -9,12 +9,20 @@ export interface TestFileInfo {
   lastModified?: string
 }
 
+export interface AvailableTestFolderInfo {
+  label: string
+  path: string
+  filesCount: number
+  projectName?: string
+}
+
 export interface TestDataStatus {
   success: boolean
   folderPath: string
   exists: boolean
   filesCount: number
   files: TestFileInfo[]
+  availableFolders?: AvailableTestFolderInfo[]
   message?: string
 }
 
@@ -54,9 +62,88 @@ function makePdfBuffer(title: string, subtitle: string, body: string): Buffer {
 const TINY_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
 
-export function verifyTargetTestData(projectDir?: string, baseUrl?: string): TestDataStatus {
+function countFilesInDir(dirPath: string): number {
+  try {
+    if (!fs.existsSync(dirPath) || !fs.statSync(dirPath).isDirectory()) return 0
+    return fs.readdirSync(dirPath, { withFileTypes: true }).filter((d) => d.isFile()).length
+  } catch {
+    return 0
+  }
+}
+
+export function listAvailableTestFolders(projectDir?: string, baseUrl?: string): AvailableTestFolderInfo[] {
   const resolvedDir = resolveProjectDirectory(baseUrl, projectDir)
-  const testFilesDir = path.join(resolvedDir, "test-files")
+  const resolvedProjectName = path.basename(resolvedDir)
+  const parentRoot = path.dirname(process.cwd())
+  const seen = new Set<string>()
+  const folders: AvailableTestFolderInfo[] = []
+
+  const addFolder = (dirPath: string, labelPrefix: string, subLabel: string, includeIfEmpty = false) => {
+    const normalized = path.resolve(dirPath).replace(/\\/g, "/")
+    if (seen.has(normalized.toLowerCase())) return
+    const exists = fs.existsSync(dirPath) && (() => { try { return fs.statSync(dirPath).isDirectory() } catch { return false } })()
+    const filesCount = exists ? countFilesInDir(dirPath) : 0
+    if (!exists && !includeIfEmpty) return
+    seen.add(normalized.toLowerCase())
+    folders.push({
+      label: `${labelPrefix}/${subLabel}`,
+      path: normalized,
+      filesCount,
+      projectName: labelPrefix,
+    })
+  }
+
+  // 1. Target project's own test folders first (always include target project's test-files folder)
+  addFolder(path.join(resolvedDir, "test-files"), resolvedProjectName, "test-files", true)
+  for (const sub of ["scripts/fixtures", "fixtures", "test-assets", "cypress/fixtures"]) {
+    addFolder(path.join(resolvedDir, sub), resolvedProjectName, sub, false)
+  }
+
+  // 2. Sibling projects' test-files and scripts/fixtures in workspace parent (e.g. D:/wamp64/www/*)
+  try {
+    const entries = fs.readdirSync(parentRoot, { withFileTypes: true })
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name.startsWith(".")) continue
+      const projPath = path.join(parentRoot, entry.name)
+      addFolder(path.join(projPath, "test-files"), entry.name, "test-files", false)
+      addFolder(path.join(projPath, "scripts", "fixtures"), entry.name, "scripts/fixtures", false)
+    }
+  } catch {
+    // ignore
+  }
+
+  return folders
+}
+
+function resolveRequestedTestFolder(resolvedDir: string, customFolderPath?: string): string {
+  const defaultDir = path.join(resolvedDir, "test-files")
+  if (!customFolderPath || !customFolderPath.trim()) return defaultDir
+  const raw = customFolderPath.trim()
+  const candidates = [
+    path.isAbsolute(raw) ? raw : path.resolve(resolvedDir, raw),
+    path.resolve(process.cwd(), raw),
+    path.resolve(path.dirname(process.cwd()), raw),
+  ]
+  for (const c of candidates) {
+    try {
+      if (fs.existsSync(c) && fs.statSync(c).isDirectory()) {
+        return c
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return path.isAbsolute(raw) ? raw : defaultDir
+}
+
+export function verifyTargetTestData(
+  projectDir?: string,
+  baseUrl?: string,
+  customFolderPath?: string
+): TestDataStatus {
+  const resolvedDir = resolveProjectDirectory(baseUrl, projectDir)
+  const testFilesDir = resolveRequestedTestFolder(resolvedDir, customFolderPath)
+  const availableFolders = listAvailableTestFolders(projectDir, baseUrl)
 
   if (!fs.existsSync(testFilesDir)) {
     return {
@@ -65,6 +152,7 @@ export function verifyTargetTestData(projectDir?: string, baseUrl?: string): Tes
       exists: false,
       filesCount: 0,
       files: [],
+      availableFolders,
       message: "No test-files folder found in target project.",
     }
   }
@@ -90,7 +178,8 @@ export function verifyTargetTestData(projectDir?: string, baseUrl?: string): Tes
       exists: true,
       filesCount: files.length,
       files,
-      message: `Verified ${files.length} test files in ${path.basename(resolvedDir)}/test-files.`,
+      availableFolders,
+      message: `Verified ${files.length} test files in ${testFilesDir.replace(/\\/g, "/")}.`,
     }
   } catch (err: any) {
     return {
@@ -99,6 +188,7 @@ export function verifyTargetTestData(projectDir?: string, baseUrl?: string): Tes
       exists: false,
       filesCount: 0,
       files: [],
+      availableFolders,
       message: err?.message || "Failed to read test-files folder.",
     }
   }
@@ -152,6 +242,27 @@ export function generateTargetTestData(projectDir?: string, baseUrl?: string): T
     path.join(testFilesDir, "landlord_tax_notes.txt"),
     "LANDLORD ACCOUNTING CLIENT NOTES - 2024/25 TAX YEAR\nClient: John Smith\n14 High Street, Abingdon\n"
   )
+
+  return verifyTargetTestData(projectDir, baseUrl)
+}
+
+export function saveUploadedTargetTestFiles(
+  uploadedFiles: Array<{ name: string; buffer: Buffer }>,
+  projectDir?: string,
+  baseUrl?: string
+): TestDataStatus {
+  const resolvedDir = resolveProjectDirectory(baseUrl, projectDir)
+  const testFilesDir = path.join(resolvedDir, "test-files")
+
+  if (!fs.existsSync(testFilesDir)) {
+    fs.mkdirSync(testFilesDir, { recursive: true })
+  }
+
+  for (const item of uploadedFiles) {
+    const safeName = path.basename(item.name || "uploaded-test-file.bin").replace(/[<>:"/\\|?*\x00-\x1F]/g, "_")
+    if (!safeName) continue
+    fs.writeFileSync(path.join(testFilesDir, safeName), item.buffer)
+  }
 
   return verifyTargetTestData(projectDir, baseUrl)
 }

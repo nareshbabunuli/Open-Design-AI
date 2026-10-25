@@ -33,6 +33,7 @@ export interface SettingsModalProps {
   initialTab?: "account" | "integrations" | "ai"
   onOpenFigmaImport?: () => void
   aiConfigProps?: AiConfigPanelProps
+  theme?: "light" | "dark"
 }
 
 export function SettingsModal({
@@ -43,9 +44,28 @@ export function SettingsModal({
   initialTab = "account",
   onOpenFigmaImport,
   aiConfigProps,
+  theme,
 }: SettingsModalProps) {
   const supabase = createClient()
   const [activeTab, setActiveTab] = useState<"account" | "integrations" | "ai">(initialTab)
+
+  const [currentTheme, setCurrentTheme] = useState<"light" | "dark">(theme || "dark")
+
+  useEffect(() => {
+    if (theme) {
+      setCurrentTheme(theme)
+    } else if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("theme") as "light" | "dark" | null
+      const docHasDark = document.documentElement.classList.contains("dark")
+      if (saved) {
+        setCurrentTheme(saved)
+      } else if (docHasDark) {
+        setCurrentTheme("dark")
+      }
+    }
+  }, [theme, isOpen])
+
+  const isDark = currentTheme === "dark"
 
   useEffect(() => {
     if (isOpen && initialTab) {
@@ -197,13 +217,23 @@ export function SettingsModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+    <div className={`fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-in fade-in duration-200 ${isDark ? "dark" : ""}`}>
       <div
-        className="relative w-full max-w-xl rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden text-slate-900 dark:text-white transition-all flex flex-col max-h-[85vh]"
+        className={`relative w-full max-w-xl rounded-3xl border shadow-2xl overflow-hidden transition-all flex flex-col max-h-[85vh] ${
+          isDark
+            ? "border-slate-800 bg-slate-900 text-white"
+            : "border-slate-200 bg-white text-slate-900"
+        }`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/50">
+        <div
+          className={`flex items-center justify-between px-6 py-4 border-b ${
+            isDark
+              ? "border-slate-800 bg-slate-900/80 text-white"
+              : "border-slate-200 bg-slate-50/80 text-slate-900"
+          }`}
+        >
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-500/20">
               {activeTab === "account" ? (
@@ -213,10 +243,10 @@ export function SettingsModal({
               )}
             </div>
             <div>
-              <h2 className="text-base font-bold text-slate-900 dark:text-white leading-tight">
+              <h2 className={`text-base font-bold leading-tight ${isDark ? "text-white" : "text-slate-900"}`}>
                 Settings &amp; Integrations
               </h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
+              <p className={`text-xs ${isDark ? "text-slate-400" : "text-slate-500"}`}>
                 Manage your credentials and third-party app connections
               </p>
             </div>
@@ -224,7 +254,11 @@ export function SettingsModal({
           <button
             type="button"
             onClick={onClose}
-            className="p-2 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+            className={`p-2 rounded-xl transition-colors cursor-pointer ${
+              isDark
+                ? "text-slate-400 hover:text-slate-200 hover:bg-slate-800"
+                : "text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+            }`}
             aria-label="Close modal"
           >
             <X className="h-5 w-5" />
@@ -232,15 +266,23 @@ export function SettingsModal({
         </div>
 
         {/* Tab Navigation */}
-        <div className="flex border-b border-slate-200 dark:border-slate-800 px-6 bg-slate-50/30 dark:bg-slate-900/30 overflow-x-auto">
+        <div
+          className={`flex border-b px-6 overflow-x-auto ${
+            isDark ? "border-slate-800 bg-slate-900/40" : "border-slate-200 bg-slate-50/50"
+          }`}
+        >
           {aiConfigProps && (
             <button
               type="button"
               onClick={() => setActiveTab("ai")}
               className={`py-3 px-3 border-b-2 text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer relative shrink-0 ${
                 activeTab === "ai"
-                  ? "border-purple-600 text-purple-600 dark:text-purple-400"
-                  : "border-transparent text-slate-500 hover:text-slate-900 dark:hover:text-slate-200"
+                  ? isDark
+                    ? "border-purple-400 text-purple-400 font-bold"
+                    : "border-purple-600 text-purple-600 font-bold"
+                  : isDark
+                    ? "border-transparent text-slate-400 hover:text-white"
+                    : "border-transparent text-slate-500 hover:text-slate-900"
               }`}
             >
               <Sparkles className="h-3.5 w-3.5 text-purple-400" />
@@ -252,8 +294,12 @@ export function SettingsModal({
             onClick={() => setActiveTab("integrations")}
             className={`py-3 px-3 border-b-2 text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer relative shrink-0 ${
               activeTab === "integrations"
-                ? "border-indigo-600 text-indigo-600 dark:text-indigo-400"
-                : "border-transparent text-slate-500 hover:text-slate-900 dark:hover:text-slate-200"
+                ? isDark
+                  ? "border-indigo-400 text-indigo-400 font-bold"
+                  : "border-indigo-600 text-indigo-600 font-bold"
+                : isDark
+                  ? "border-transparent text-slate-400 hover:text-white"
+                  : "border-transparent text-slate-500 hover:text-slate-900"
             }`}
           >
             <Plug className="h-3.5 w-3.5" />
@@ -267,8 +313,12 @@ export function SettingsModal({
             onClick={() => setActiveTab("account")}
             className={`py-3 px-3 border-b-2 text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer shrink-0 ${
               activeTab === "account"
-                ? "border-blue-600 text-blue-600 dark:text-blue-400"
-                : "border-transparent text-slate-500 hover:text-slate-900 dark:hover:text-slate-200"
+                ? isDark
+                  ? "border-blue-400 text-blue-400 font-bold"
+                  : "border-blue-600 text-blue-600 font-bold"
+                : isDark
+                  ? "border-transparent text-slate-400 hover:text-white"
+                  : "border-transparent text-slate-500 hover:text-slate-900"
             }`}
           >
             <KeyRound className="h-3.5 w-3.5" />
@@ -283,6 +333,7 @@ export function SettingsModal({
             <div className="space-y-4">
               <AiConfigPanel
                 {...aiConfigProps}
+                theme={isDark ? "dark" : "light"}
                 isEmbedded={true}
                 onClose={onClose}
               />

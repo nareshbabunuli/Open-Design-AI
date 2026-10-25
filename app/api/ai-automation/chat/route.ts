@@ -27,6 +27,7 @@ export async function POST(req: NextRequest) {
       aiBaseUrl,
       mode,
       dummyTestFiles,
+      uploadFilesDir,
     } = body
 
     if ((!command || !command.trim()) && !image) {
@@ -78,6 +79,7 @@ export async function POST(req: NextRequest) {
       aiBaseUrl,
       maxScreens: isFullApp ? 10 : isFeatureWf ? 5 : 3,
       dummyTestFiles,
+      uploadFilesDir: typeof uploadFilesDir === "string" && uploadFilesDir.trim() ? uploadFilesDir.trim() : undefined,
     })
 
     ;(job as any).userId = access.user.id

@@ -109,6 +109,12 @@ interface FeatureWorkflowViewProps {
   onRescanRoutes?: () => void
   isScanningRoutes?: boolean
   onGenerateTestData?: () => void
+  onUploadTestFiles?: (files: FileList) => void
+  uploadFilesDir?: string
+  onSelectUploadFilesDir?: (dir: string) => void
+  availableTestFolders?: Array<{ label: string; path: string; filesCount: number }>
+  testFilesCount?: number
+  onOpenTestDataModal?: () => void
   isGeneratingTestData?: boolean
   onNavigateUrl?: (url: string) => void
 
@@ -215,6 +221,12 @@ export default function FeatureWorkflowView({
   onRescanRoutes,
   isScanningRoutes = false,
   onGenerateTestData,
+  onUploadTestFiles,
+  uploadFilesDir = "",
+  onSelectUploadFilesDir,
+  availableTestFolders = [],
+  testFilesCount,
+  onOpenTestDataModal,
   isGeneratingTestData = false,
   onNavigateUrl,
   onConfirmVerification,
@@ -308,6 +320,24 @@ export default function FeatureWorkflowView({
     return job?.featureWorkflowSpec || analyzedSpec
   }, [job?.featureWorkflowSpec, analyzedSpec])
 
+  // Auto-fill test credentials from saved simulator storage if available
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const savedStr = localStorage.getItem("simulator_auth_credentials")
+        if (savedStr) {
+          const parsed = JSON.parse(savedStr)
+          if (parsed.username && !blockedUsernameInput) {
+            setBlockedUsernameInput(parsed.username)
+          }
+          if (parsed.password && !blockedPasswordInput) {
+            setBlockedPasswordInput(parsed.password)
+          }
+        }
+      } catch {}
+    }
+  }, [job?.id])
+
   // Identify blocked steps and screens across the current plan or job
   const blockedSteps = useMemo(() => {
     return activePlan?.steps?.filter((s) => s.status === "blocked") || []
@@ -319,12 +349,21 @@ export default function FeatureWorkflowView({
       if (s.screenName) names.add(s.screenName)
       else if (s.screenId) names.add(s.screenId)
     })
-    if (job?.authState === "awaiting_credentials") {
+    if (job?.authState === "awaiting_credentials" || job?.authState === "login_failed") {
       names.add("Authentication / Login Wall")
     }
     if (activePlan?.screens) {
       activePlan.screens.forEach((s) => {
-        if (s.isLoginWall || (s as any).testStatus === "blocked") names.add(s.name || s.path)
+        const hasBlockedStepOnScreen = blockedSteps.some(
+          (step) => step.screenId === s.id || step.screenName === s.name
+        )
+        const isAuthAwaiting = job?.authState === "awaiting_credentials" || job?.authState === "login_failed"
+        const isActuallyBlocked =
+          (s as any).testStatus === "blocked" ||
+          hasBlockedStepOnScreen ||
+          (s.isLoginWall && isAuthAwaiting && job?.authState !== "logged_in")
+
+        if (isActuallyBlocked) names.add(s.name || s.path)
       })
     }
     return Array.from(names)
@@ -1182,13 +1221,17 @@ export default function FeatureWorkflowView({
                           <Layers className="h-3 w-3 text-indigo-400 shrink-0" />
                           <span className="font-semibold text-slate-300">Project:</span>
                           <select
-                            value={availableProjects.some((p) => p.name === selectedProjectDir || p.path === selectedProjectDir) ? selectedProjectDir : "custom"}
+                            value={
+                              availableProjects.find(
+                                (p) => p.name === selectedProjectDir || p.path === selectedProjectDir
+                              )?.path || "custom"
+                            }
                             onChange={(e) => {
                               if (e.target.value !== "custom" && onSelectProjectDir) {
                                 onSelectProjectDir(e.target.value)
                               }
                             }}
-                            className="bg-transparent text-[10px] text-white font-mono outline-none cursor-pointer max-w-[120px]"
+                            className="bg-transparent text-[10px] text-white font-mono outline-none cursor-pointer max-w-[140px]"
                           >
                             {availableProjects.map((p) => (
                               <option key={p.path} value={p.path} className="bg-slate-900 text-white">
@@ -1205,30 +1248,64 @@ export default function FeatureWorkflowView({
                             className="bg-slate-900 border border-slate-700/60 rounded px-1.5 py-0.5 text-[10px] text-slate-200 font-mono w-32 focus:border-indigo-500 outline-none"
                             title="Enter custom local project directory path (e.g. D:\wamp64\www\hh) or target URL"
                           />
-                          <label
-                            className="flex items-center gap-0.5 px-1 py-0.5 rounded bg-indigo-950/60 hover:bg-indigo-900/60 text-indigo-300 border border-indigo-700/50 cursor-pointer transition text-[9px] font-semibold shrink-0"
-                            title="Select test files / fixtures directly"
-                          >
-                            <FolderOpen className="h-2.5 w-2.5 text-indigo-400" />
-                            <span>Select Files</span>
-                            <input
-                              type="file"
-                              multiple
-                              className="hidden"
-                              onChange={(e) => {
-                                const files = e.target.files
-                                if (files && files.length > 0 && onSelectProjectDir) {
-                                  const firstFile = files[0] as any
-                                  const filePath = firstFile.path || firstFile.webkitRelativePath || firstFile.name
-                                  if (filePath) {
-                                    onSelectProjectDir(filePath)
-                                  }
-                                }
-                              }}
-                            />
-                          </label>
                         </div>
                       )}
+                      <div className="flex items-center gap-1 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5">
+                        <FolderOpen className="h-3 w-3 text-amber-400 shrink-0" />
+                        <span className="font-semibold text-slate-300">Test Folder:</span>
+                        <select
+                          value={
+                            availableTestFolders.find(
+                              (f) =>
+                                f.path.toLowerCase() === (uploadFilesDir || "").replace(/\\/g, "/").toLowerCase() ||
+                                f.label.toLowerCase() === (uploadFilesDir || "").replace(/\\/g, "/").toLowerCase()
+                            )?.path || (uploadFilesDir ? uploadFilesDir : "")
+                          }
+                          onChange={(e) => {
+                            if (onSelectUploadFilesDir) {
+                              onSelectUploadFilesDir(e.target.value)
+                            }
+                          }}
+                          className="bg-transparent text-[10px] text-amber-200 font-mono outline-none cursor-pointer max-w-[190px]"
+                          title="Select which generated test-files folder to use for file upload testing"
+                        >
+                          {availableTestFolders.map((f) => (
+                            <option key={f.path} value={f.path} className="bg-slate-900 text-white">
+                              {f.label} ({f.filesCount} files)
+                            </option>
+                          ))}
+                          {uploadFilesDir &&
+                            !availableTestFolders.some(
+                              (f) =>
+                                f.path.toLowerCase() === uploadFilesDir.replace(/\\/g, "/").toLowerCase() ||
+                                f.label.toLowerCase() === uploadFilesDir.replace(/\\/g, "/").toLowerCase()
+                            ) && (
+                              <option value={uploadFilesDir} className="bg-slate-900 text-amber-300">
+                                {uploadFilesDir}
+                              </option>
+                            )}
+                        </select>
+                        <label
+                          className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-indigo-950/60 hover:bg-indigo-900/60 text-indigo-300 border border-indigo-700/50 cursor-pointer transition text-[9px] font-semibold shrink-0"
+                          title="Browse and select a folder of test files from your computer"
+                        >
+                          <FolderOpen className="h-2.5 w-2.5 text-indigo-400" />
+                          <span>Select Folder</span>
+                          <input
+                            type="file"
+                            {...({ webkitdirectory: "", directory: "" } as any)}
+                            multiple
+                            className="hidden"
+                            onChange={(e) => {
+                              const files = e.target.files
+                              if (files && files.length > 0 && onUploadTestFiles) {
+                                onUploadTestFiles(files)
+                              }
+                              e.target.value = ""
+                            }}
+                          />
+                        </label>
+                      </div>
                       {onGenerateTestData && (
                         <button
                           type="button"
@@ -1243,6 +1320,16 @@ export default function FeatureWorkflowView({
                             <Sparkles className="h-2.5 w-2.5 text-amber-400" />
                           )}
                           <span>Generate Test Data</span>
+                        </button>
+                      )}
+                      {typeof testFilesCount === "number" && testFilesCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => onOpenTestDataModal && onOpenTestDataModal()}
+                          className="px-1.5 py-0.5 rounded bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/40 text-[9px] font-mono font-semibold transition cursor-pointer shrink-0"
+                          title="View verified test files in target project"
+                        >
+                          {testFilesCount} test files ready
                         </button>
                       )}
                     </div>

@@ -193,3 +193,23 @@ test("prioritizePendingStepsForScreen orders upload before fields, fields before
   const modalOrder = plan.steps.filter((s) => s.screenId === "S003").map((s) => s.targetName)
   assert.deepEqual(modalOrder, ["Choose a file", "Which property?", "Add document", "Cancel"])
 })
+
+import { generateTargetTestData, saveUploadedTargetTestFiles, verifyTargetTestData } from "../lib/ai-automation/test-data-service"
+
+test("generateTargetTestData and saveUploadedTargetTestFiles populate project test-files folder", () => {
+  const gen = generateTargetTestData("landlord-accounting-portal")
+  assert.equal(gen.success, true)
+  assert.equal(gen.exists, true)
+  assert.ok(gen.filesCount >= 10, `Expected at least 10 generated test files, got ${gen.filesCount}`)
+
+  const uploaded = saveUploadedTargetTestFiles(
+    [{ name: "custom-upload-check.pdf", buffer: Buffer.from("%PDF-1.4\n%%EOF\n", "utf8") }],
+    "landlord-accounting-portal"
+  )
+  assert.equal(uploaded.success, true)
+  assert.ok(uploaded.files.some((f) => f.name === "custom-upload-check.pdf"))
+
+  const verified = verifyTargetTestData("landlord-accounting-portal")
+  assert.equal(verified.exists, true)
+  assert.ok(verified.filesCount >= 11)
+})

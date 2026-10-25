@@ -97,15 +97,24 @@ export function listAvailableLocalProjects(): LocalProjectInfo[] {
         fs.existsSync(path.join(full, "pages")) ||
         fs.existsSync(path.join(full, "src", "app"))
       if (hasPkg && hasApp) {
+        let detectedPort: number | undefined =
+          entry.name === "landlord-accounting-portal"
+            ? 3001
+            : entry.name === "design-workflow-tracker"
+            ? 3000
+            : undefined
+        if (!detectedPort) {
+          try {
+            const pkgRaw = JSON.parse(fs.readFileSync(path.join(full, "package.json"), "utf8"))
+            const devScript = String(pkgRaw?.scripts?.dev || pkgRaw?.scripts?.start || "")
+            const portMatch = devScript.match(/(?:-p|--port)\s+(\d{4,5})/)
+            if (portMatch) detectedPort = parseInt(portMatch[1], 10)
+          } catch {}
+        }
         results.push({
           name: entry.name,
           path: full.replace(/\\/g, "/"),
-          defaultPort:
-            entry.name === "landlord-accounting-portal"
-              ? 3001
-              : entry.name === "design-workflow-tracker"
-              ? 3000
-              : undefined,
+          defaultPort: detectedPort,
         })
       }
     }
@@ -131,11 +140,21 @@ export function resolveProjectDirectory(baseUrl = "http://localhost:3000", custo
   // 1. Explicit directory provided
   if (customDir && customDir.trim()) {
     const trimmed = customDir.trim()
-    if (fs.existsSync(trimmed)) return path.resolve(trimmed)
-    const relFromCwd = path.resolve(cwd, trimmed)
-    if (fs.existsSync(relFromCwd)) return relFromCwd
-    const relFromParent = path.resolve(cwd, "..", trimmed)
-    if (fs.existsSync(relFromParent)) return relFromParent
+    const toDir = (p: string): string | null => {
+      try {
+        if (!fs.existsSync(p)) return null
+        const st = fs.statSync(p)
+        return st.isDirectory() ? path.resolve(p) : path.dirname(path.resolve(p))
+      } catch {
+        return null
+      }
+    }
+    const direct = toDir(trimmed)
+    if (direct) return direct
+    const relFromCwd = toDir(path.resolve(cwd, trimmed))
+    if (relFromCwd) return relFromCwd
+    const relFromParent = toDir(path.resolve(cwd, "..", trimmed))
+    if (relFromParent) return relFromParent
   }
 
   // 2. Derive from baseUrl port/origin

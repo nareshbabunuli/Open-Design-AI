@@ -2780,6 +2780,7 @@ export default function Page() {
         userEmail={user?.email}
         userId={user?.id}
         initialTab={settingsTab}
+        theme={theme}
         onOpenFigmaImport={() => handleOpenFigmaImport()}
       />
 

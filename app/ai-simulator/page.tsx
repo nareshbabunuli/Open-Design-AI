@@ -737,6 +737,7 @@ export default function AISimulatorPage() {
     filesCount: number
     folderPath: string
     files: Array<{ name: string; size: number; category: string; lastModified?: string }>
+    availableFolders?: Array<{ label: string; path: string; filesCount: number }>
     message?: string
   }
 
@@ -745,22 +746,33 @@ export default function AISimulatorPage() {
   const [isGeneratingTestData, setIsGeneratingTestData] = useState<boolean>(false)
   const [isTestDataModalOpen, setIsTestDataModalOpen] = useState<boolean>(false)
 
-  const fetchTestDataStatus = useCallback(async (projectName?: string) => {
+  const fetchTestDataStatus = useCallback(async (projectName?: string, folderPathOverride?: string) => {
     const proj = typeof projectName === "string" && projectName.trim() ? projectName.trim() : (typeof selectedProjectDir === "string" ? selectedProjectDir.trim() : "")
     if (!proj) return
     setIsCheckingTestData(true)
     try {
-      const res = await fetch(`/api/ai-automation/test-data?projectDir=${encodeURIComponent(proj)}`)
+      const folderParam = typeof folderPathOverride === "string" && folderPathOverride.trim()
+        ? `&folderPath=${encodeURIComponent(folderPathOverride.trim())}`
+        : ""
+      const res = await fetch(`/api/ai-automation/test-data?projectDir=${encodeURIComponent(proj)}&baseUrl=${encodeURIComponent(targetUrl || "")}${folderParam}`)
       const data = await res.json()
       if (data && typeof data.exists === "boolean") {
         setTestDataStatus(data)
+        if (data.folderPath) {
+          setUploadFilesDir(data.folderPath)
+        }
       }
     } catch (e) {
       console.error("Failed to check test data status", e)
     } finally {
       setIsCheckingTestData(false)
     }
-  }, [selectedProjectDir])
+  }, [selectedProjectDir, targetUrl])
+
+  const handleSelectTestFolder = useCallback((folderPath: string) => {
+    setUploadFilesDir(folderPath)
+    fetchTestDataStatus(selectedProjectDir, folderPath)
+  }, [fetchTestDataStatus, selectedProjectDir])
 
   const handleGenerateTestData = useCallback(async (projectName?: string) => {
     const proj = typeof projectName === "string" && projectName.trim() ? projectName.trim() : (typeof selectedProjectDir === "string" ? selectedProjectDir.trim() : "")
@@ -770,11 +782,14 @@ export default function AISimulatorPage() {
       const res = await fetch("/api/ai-automation/test-data", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectDir: proj }),
+        body: JSON.stringify({ projectDir: proj, baseUrl: targetUrl }),
       })
       const data = await res.json()
       if (data && typeof data.exists === "boolean") {
         setTestDataStatus(data)
+        if (data.folderPath) {
+          setUploadFilesDir(data.folderPath)
+        }
         setIsTestDataModalOpen(true)
       }
     } catch (e) {
@@ -782,24 +797,68 @@ export default function AISimulatorPage() {
     } finally {
       setIsGeneratingTestData(false)
     }
-  }, [selectedProjectDir])
+  }, [selectedProjectDir, targetUrl])
 
-  const handleSelectTestingProject = (projectName: string) => {
-    setSelectedProjectDir(projectName)
-    localStorage.setItem("ai_target_project_dir", projectName)
+  const handleUploadCustomTestFiles = useCallback(async (files: FileList) => {
+    if (!files || files.length === 0) return
+    const proj = typeof selectedProjectDir === "string" && selectedProjectDir.trim() ? selectedProjectDir.trim() : "landlord-accounting-portal"
+    setIsGeneratingTestData(true)
+    try {
+      const formData = new FormData()
+      formData.append("projectDir", proj)
+      if (targetUrl) formData.append("baseUrl", targetUrl)
+      Array.from(files).forEach((f) => formData.append("files", f))
 
-    const projectInfo = availableProjects.find((p) => p.name === projectName)
-    const newPort = projectInfo?.defaultPort || (projectName === "landlord-accounting-portal" ? 3001 : 3000)
-    const newUrl = `http://localhost:${newPort}`
-    setTargetUrl(newUrl)
-    localStorage.setItem("ai_target_app_url", newUrl)
-    fetchLocalRoutes(projectName, newUrl)
-    fetchTestDataStatus(projectName)
+      const res = await fetch("/api/ai-automation/test-data", {
+        method: "POST",
+        body: formData,
+      })
+      const data = await res.json()
+      if (data && typeof data.exists === "boolean") {
+        setTestDataStatus(data)
+        if (data.folderPath) {
+          setUploadFilesDir(data.folderPath)
+        }
+        setIsTestDataModalOpen(true)
+      }
+    } catch (e) {
+      console.error("Failed to upload custom test files", e)
+    } finally {
+      setIsGeneratingTestData(false)
+    }
+  }, [selectedProjectDir, targetUrl])
+
+  const handleSelectTestingProject = (projectNameOrPath: string) => {
+    setSelectedProjectDir(projectNameOrPath)
+    localStorage.setItem("ai_target_project_dir", projectNameOrPath)
+
+    const projectInfo = availableProjects.find(
+      (p) => p.name === projectNameOrPath || p.path === projectNameOrPath
+    )
+    if (projectInfo) {
+      const newPort =
+        projectInfo.defaultPort ||
+        (projectInfo.name === "landlord-accounting-portal" ? 3001 : 3000)
+      const newUrl = `http://localhost:${newPort}`
+      setTargetUrl(newUrl)
+      localStorage.setItem("ai_target_app_url", newUrl)
+      fetchLocalRoutes(projectNameOrPath, newUrl)
+      fetchTestDataStatus(projectNameOrPath)
+    } else {
+      fetchLocalRoutes(projectNameOrPath, targetUrl)
+      fetchTestDataStatus(projectNameOrPath)
+    }
   }
 
   useEffect(() => {
-    const savedProject = localStorage.getItem("ai_target_project_dir") || "landlord-accounting-portal"
-    const savedUrl = localStorage.getItem("ai_target_app_url") || (savedProject === "landlord-accounting-portal" ? "http://localhost:3001" : "http://localhost:3000")
+    const rawSavedProject = localStorage.getItem("ai_target_project_dir") || "landlord-accounting-portal"
+    const savedProject = /\.(pdf|png|jpe?g|webp|csv|xlsx|txt|docx?|json)$/i.test(rawSavedProject)
+      ? "landlord-accounting-portal"
+      : rawSavedProject
+    if (savedProject !== rawSavedProject) {
+      localStorage.setItem("ai_target_project_dir", savedProject)
+    }
+    const savedUrl = localStorage.getItem("ai_target_app_url") || (savedProject.includes("landlord-accounting-portal") ? "http://localhost:3001" : "http://localhost:3000")
     setSelectedProjectDir(savedProject)
     setTargetUrl(savedUrl)
     fetchLocalRoutes(savedProject, savedUrl)
@@ -1139,6 +1198,7 @@ export default function AISimulatorPage() {
           targetUrl: (targetUrlOverride || targetUrl).trim() || "http://localhost:3001",
           projectId: activeProject.id,
           projectDir: selectedProjectDir,
+          uploadFilesDir: uploadFilesDir.trim() || undefined,
           credentials:
             username || password
               ? { username: username.trim(), password: password.trim() }
@@ -2927,12 +2987,18 @@ export default function AISimulatorPage() {
                         onOpenAiConfig={() => setIsAiConfigModalOpen(true)}
                         onCaptureCurrentScreen={handleCaptureCurrentScreen}
                         selectedProjectDir={selectedProjectDir}
-                        onSelectProjectDir={setSelectedProjectDir}
+                        onSelectProjectDir={handleSelectTestingProject}
                         availableProjects={availableProjects}
                         discoveredRoutes={discoveredRoutes}
                         onRescanRoutes={fetchLocalRoutes}
                         isScanningRoutes={isScanningRoutes}
                         onGenerateTestData={() => handleGenerateTestData()}
+                        onUploadTestFiles={handleUploadCustomTestFiles}
+                        uploadFilesDir={uploadFilesDir}
+                        onSelectUploadFilesDir={handleSelectTestFolder}
+                        availableTestFolders={testDataStatus?.availableFolders || []}
+                        testFilesCount={testDataStatus?.filesCount || 0}
+                        onOpenTestDataModal={() => setIsTestDataModalOpen(true)}
                         isGeneratingTestData={isGeneratingTestData}
                         onNavigateUrl={handleSimulatorUrlChange}
                         onConfirmVerification={handleConfirmVerification}
@@ -3284,13 +3350,71 @@ export default function AISimulatorPage() {
                   <span className="text-[10px] text-amber-400/80 font-mono">Real File Testing</span>
                 </div>
                 <p className="text-[11px] text-slate-400">
-                  Folder containing sample images, PDFs, CSVs, or documents to attach to upload inputs.
+                  Select a generated test-files folder or browse a custom folder containing PDFs, CSVs, images, or documents to attach to upload inputs.
                 </p>
+                {testDataStatus?.availableFolders && testDataStatus.availableFolders.length > 0 && (
+                  <div className="flex items-center gap-1.5">
+                    <select
+                      value={
+                        testDataStatus.availableFolders.find(
+                          (f) =>
+                            f.path.toLowerCase() === (uploadFilesDir || "").replace(/\\/g, "/").toLowerCase() ||
+                            f.label.toLowerCase() === (uploadFilesDir || "").replace(/\\/g, "/").toLowerCase()
+                        )?.path || ""
+                      }
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          handleSelectTestFolder(e.target.value)
+                        }
+                      }}
+                      className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-amber-200 font-mono focus:border-indigo-500 focus:outline-none cursor-pointer"
+                    >
+                      <option value="" disabled className="bg-slate-900 text-slate-400">
+                        Select generated test files folder...
+                      </option>
+                      {testDataStatus.availableFolders.map((f) => (
+                        <option key={f.path} value={f.path} className="bg-slate-900 text-white">
+                          {f.label} ({f.filesCount} files) — {f.path}
+                        </option>
+                      ))}
+                    </select>
+                    <label
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-indigo-950/70 hover:bg-indigo-900/70 text-indigo-300 border border-indigo-700/60 cursor-pointer transition text-xs font-semibold shrink-0"
+                      title="Browse and select a folder of test files from your computer"
+                    >
+                      <Folder className="h-3.5 w-3.5 text-indigo-400" />
+                      <span>Select Folder</span>
+                      <input
+                        type="file"
+                        {...({ webkitdirectory: "", directory: "" } as any)}
+                        multiple
+                        className="hidden"
+                        onChange={(e) => {
+                          const files = e.target.files
+                          if (files && files.length > 0) {
+                            handleUploadCustomTestFiles(files)
+                          }
+                          e.target.value = ""
+                        }}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => handleGenerateTestData()}
+                      disabled={isGeneratingTestData}
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/40 cursor-pointer transition text-xs font-semibold shrink-0 disabled:opacity-50"
+                      title="Generate test files in target project's test-files folder"
+                    >
+                      <Sparkles className="h-3.5 w-3.5 text-amber-400" />
+                      <span>Generate</span>
+                    </button>
+                  </div>
+                )}
                 <input
                   type="text"
                   value={uploadFilesDir}
                   onChange={(e) => setUploadFilesDir(e.target.value)}
-                  placeholder="e.g. scripts/fixtures or ./test-assets"
+                  placeholder="e.g. D:/wamp64/www/landlord-accounting-portal/test-files"
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 font-mono placeholder:text-slate-600 focus:border-indigo-500 focus:outline-none"
                 />
                 <div className="flex items-center gap-1.5 text-[10px] text-slate-500">
@@ -3529,6 +3653,57 @@ export default function AISimulatorPage() {
             </div>
 
             <div className="p-3.5 space-y-3 flex-1 overflow-y-auto custom-scrollbar text-xs">
+              <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                    Selected Test Folder:
+                  </span>
+                  <label
+                    className="flex items-center gap-1 px-2 py-0.5 rounded bg-indigo-950/70 hover:bg-indigo-900/70 text-indigo-300 border border-indigo-700/60 cursor-pointer transition text-[10px] font-semibold"
+                    title="Browse and select a folder from your computer"
+                  >
+                    <Folder className="h-3 w-3 text-indigo-400" />
+                    <span>Select Folder...</span>
+                    <input
+                      type="file"
+                      {...({ webkitdirectory: "", directory: "" } as any)}
+                      multiple
+                      className="hidden"
+                      onChange={(e) => {
+                        const files = e.target.files
+                        if (files && files.length > 0) {
+                          handleUploadCustomTestFiles(files)
+                        }
+                        e.target.value = ""
+                      }}
+                    />
+                  </label>
+                </div>
+                {testDataStatus.availableFolders && testDataStatus.availableFolders.length > 0 ? (
+                  <select
+                    value={
+                      testDataStatus.availableFolders.find(
+                        (f) => f.path.toLowerCase() === (testDataStatus.folderPath || "").replace(/\\/g, "/").toLowerCase()
+                      )?.path || testDataStatus.folderPath
+                    }
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        handleSelectTestFolder(e.target.value)
+                      }
+                    }}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-amber-200 font-mono focus:border-indigo-500 focus:outline-none cursor-pointer"
+                  >
+                    {testDataStatus.availableFolders.map((f) => (
+                      <option key={f.path} value={f.path} className="bg-slate-900 text-white">
+                        {f.label} ({f.filesCount} files) — {f.path}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="text-[11px] font-mono text-amber-200 truncate">{testDataStatus.folderPath}</div>
+                )}
+              </div>
+
               <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 flex items-center justify-between gap-2">
                 <div>
                   <span className="text-[11px] font-bold text-white block">
@@ -3635,6 +3810,7 @@ export default function AISimulatorPage() {
         userEmail={user?.email}
         userId={user?.id}
         initialTab={settingsTab}
+        theme={theme}
         onOpenFigmaImport={() => {
           window.location.href = "/?import=figma"
         }}
