@@ -57,105 +57,28 @@ interface TestFlowGraphProps {
   onCloseBeside?: () => void
 }
 
+import { calculateSugiyamaLayout } from "@/lib/ai-automation/sugiyama-layout"
+
 interface NodePos {
   x: number
   y: number
 }
 
-const CARD_WIDTH = 230
-const CARD_HEIGHT = 165
+const CARD_WIDTH = 268
+const CARD_HEIGHT = 510
 
 /**
- * Calculates default left-to-right hierarchical tree positions for nodes
- * Root screen (S001) on the left, child screens organized in clean columns
+ * Calculates default left-to-right hierarchical tree positions for phone screens
+ * Root screen on the left, child screens organized with Sugiyama crossing reduction
  */
 function calculateDefaultLayout(graph: FlowGraph): Record<string, NodePos> {
-  const positions: Record<string, NodePos> = {}
-  const nodes = graph.nodes
-  if (nodes.length === 0) return positions
-
-  // Find root node (default to S001 or first node)
-  const rootId = nodes.find((n) => n.id === "S001")?.id || nodes[0].id
-
-  // Determine levels using only FORWARD progression edges (ignore return/back cycles)
-  const levels = new Map<string, number>()
-  levels.set(rootId, 0)
-
-  // Outgoing map excluding explicit return/back actions
-  const forwardOutgoing = new Map<string, string[]>()
-  for (const e of graph.edges) {
-    if (e.from === e.to) continue
-    const isExplicitReturn = /back|return|cancel|close|previous|undo/i.test(e.label || "")
-    if (isExplicitReturn) continue
-
-    if (!forwardOutgoing.has(e.from)) forwardOutgoing.set(e.from, [])
-    forwardOutgoing.get(e.from)!.push(e.to)
-  }
-
-  // BFS with depth limit
-  const queue = [rootId]
-  const visited = new Set<string>([rootId])
-  while (queue.length > 0) {
-    const curr = queue.shift()!
-    const currLevel = levels.get(curr) || 0
-    const children = forwardOutgoing.get(curr) || []
-    for (const child of children) {
-      if (!visited.has(child)) {
-        visited.add(child)
-        levels.set(child, currLevel + 1)
-        queue.push(child)
-      }
-    }
-  }
-
-  // Any unreached nodes distributed across subsequent columns
-  let maxAssignedLevel = 0
-  for (const l of levels.values()) {
-    if (l > maxAssignedLevel) maxAssignedLevel = l
-  }
-  let unreachedCount = 0
-  for (const n of nodes) {
-    if (!levels.has(n.id)) {
-      const targetLvl = Math.max(1, Math.min(maxAssignedLevel, 1 + Math.floor(unreachedCount / 3)))
-      levels.set(n.id, targetLvl)
-      unreachedCount++
-    }
-  }
-
-  // Group nodes by level
-  const byLevel = new Map<number, string[]>()
-  for (const [id, lvl] of levels.entries()) {
-    if (!byLevel.has(lvl)) byLevel.set(lvl, [])
-    byLevel.get(lvl)!.push(id)
-  }
-
-  const colSpacingX = 460
-  const rowSpacingY = 280
-  const startX = 80
-  const startY = 80
-
-  const sortedLevels = Array.from(byLevel.keys()).sort((a, b) => a - b)
-
-  // Position root node centered vertically against first column
-  const lvl1Ids = byLevel.get(1) || []
-  const rootCenterY = startY + Math.max(0, (Math.min(3, lvl1Ids.length) - 1) * 140)
-  positions[rootId] = { x: startX, y: rootCenterY }
-
-  for (const lvl of sortedLevels) {
-    if (lvl === 0) continue
-    const ids = byLevel.get(lvl)!
-    // Maximum 3 cards per column before expanding horizontally to avoid card piling
-    const maxPerCol = 3
-    ids.forEach((id, idx) => {
-      const subCol = Math.floor(idx / maxPerCol)
-      const rowIdx = idx % maxPerCol
-      const x = startX + lvl * colSpacingX + subCol * 380
-      const y = startY + rowIdx * rowSpacingY
-      positions[id] = { x, y }
-    })
-  }
-
-  return positions
+  return calculateSugiyamaLayout(graph, {
+    cardWidth: CARD_WIDTH,
+    cardHeight: CARD_HEIGHT,
+    colSpacingX: 360,
+    rowSpacingY: 560,
+    maxPerSubCol: 2,
+  }).positions
 }
 
 /**
@@ -292,6 +215,10 @@ export default function TestFlowGraph({
   // Full screen toggle state
   const [isFullscreen, setIsFullscreen] = useState(false)
 
+  // OpenCV & AI Auto-Layout state
+  const [isOptimizingLayout, setIsOptimizingLayout] = useState(false)
+  const [layoutToast, setLayoutToast] = useState<{ message: string; sub?: string } | null>(null)
+
   // Pan & Zoom state
   const [zoom, setZoom] = useState<number>(1.0)
   const [pan, setPan] = useState({ x: 0, y: 0 })
@@ -303,9 +230,17 @@ export default function TestFlowGraph({
     calculateDefaultLayout(graph)
   )
 
-  // Active dragging card
+  // Figma Multi-Selection & Tool Mode State
+  const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set())
+  const [canvasTool, setCanvasTool] = useState<"select" | "pan">("select")
+  const [brokenImageIds, setBrokenImageIds] = useState<Set<string>>(new Set())
+  const [marquee, setMarquee] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null)
+  const isMarqueeRef = useRef(false)
+
+  // Active dragging card (supports moving single card OR entire multi-selection group together)
   const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null)
   const dragStartRef = useRef({ pointerX: 0, pointerY: 0, nodeX: 0, nodeY: 0 })
+  const groupDragInitialPosRef = useRef<Record<string, NodePos>>({})
   const hasDraggedRef = useRef(false)
 
   // Card Inspector state ("Big Card & Side Operations")
@@ -347,17 +282,55 @@ export default function TestFlowGraph({
     [inspectingNodeId, onDeleteScreen]
   )
 
-  // Re-initialize layout when graph nodes change
+  // Automatically compute optimal Zoom & Pan so all phone screens fit cleanly inside the visible viewport
+  const fitPositionsToViewport = useCallback(
+    (positionsMap: Record<string, NodePos>) => {
+      const activeIds = visibleNodes.map((n) => n.id)
+      const coords = activeIds.map((id) => positionsMap[id]).filter(Boolean)
+      if (coords.length === 0) return
+      const rect = containerRef.current?.getBoundingClientRect()
+      const viewW = rect?.width && rect.width > 200 ? rect.width : 1180
+      const viewH = rect?.height && rect.height > 200 ? rect.height : 620
+
+      const minX = Math.min(...coords.map((p) => p.x))
+      const maxX = Math.max(...coords.map((p) => p.x + CARD_WIDTH))
+      const minY = Math.min(...coords.map((p) => p.y))
+      const maxY = Math.max(...coords.map((p) => p.y + CARD_HEIGHT))
+
+      const contentW = Math.max(CARD_WIDTH, maxX - minX)
+      const contentH = Math.max(CARD_HEIGHT, maxY - minY)
+
+      // Leave comfortable margin around top toolbar & bottom dock
+      const availW = Math.max(320, viewW - 96)
+      const availH = Math.max(260, viewH - 120)
+
+      const scaleX = availW / contentW
+      const scaleY = availH / contentH
+      const idealZoom = Math.min(0.95, Math.max(0.08, +(Math.min(scaleX, scaleY)).toFixed(2)))
+
+      const centeredPanX = Math.round((viewW - contentW * idealZoom) / 2 - minX * idealZoom)
+      const centeredPanY = Math.round(54 + (availH - contentH * idealZoom) / 2 - minY * idealZoom)
+
+      setZoom(idealZoom)
+      setPan({ x: Math.max(28, centeredPanX), y: Math.max(48, centeredPanY) })
+    },
+    [visibleNodes]
+  )
+
+  // Re-initialize layout and fit to screen when graph nodes change
   useEffect(() => {
+    const def = calculateDefaultLayout(graph)
     setNodePositions((prev: Record<string, NodePos>) => {
-      const def = calculateDefaultLayout(graph)
-      // Preserve existing positions if already moved
       const merged = { ...def }
       for (const k of Object.keys(prev)) {
         if (merged[k]) merged[k] = prev[k]
       }
       return merged
     })
+    const timer = setTimeout(() => {
+      fitPositionsToViewport(def)
+    }, 60)
+    return () => clearTimeout(timer)
   }, [graph.nodes.length, graph.edges.length])
 
   // Escape key to exit fullscreen
@@ -371,13 +344,89 @@ export default function TestFlowGraph({
     return () => window.removeEventListener("keydown", handleKeyDown)
   }, [isFullscreen])
 
-  // Reset Layout to automatic hierarchical DAG
-  const handleResetLayout = () => {
-    setNodePositions(calculateDefaultLayout(graph))
+  // Quick Screen-Friendly Layout Presets (Storyboard Row, Widescreen Grid, or AI Flow)
+  const handleApplyPresetLayout = useCallback(
+    (mode: "row" | "grid") => {
+      const next: Record<string, NodePos> = {}
+      const count = visibleNodes.length
+      const cols = mode === "row" ? Math.max(1, count) : Math.max(2, Math.min(5, Math.ceil(Math.sqrt(count * 1.5))))
+      visibleNodes.forEach((n, idx) => {
+        const c = mode === "row" ? idx : idx % cols
+        const r = mode === "row" ? 0 : Math.floor(idx / cols)
+        next[n.id] = {
+          x: 80 + c * (CARD_WIDTH + 90),
+          y: 80 + r * (CARD_HEIGHT + 80),
+        }
+      })
+      setNodePositions(next)
+      fitPositionsToViewport(next)
+      setLayoutToast({
+        message: mode === "row" ? "Phone Storyboard Row Applied" : "Widescreen Phone Grid Applied",
+        sub: `${count} phone screens fitted to viewport`,
+      })
+      setTimeout(() => setLayoutToast(null), 2800)
+    },
+    [visibleNodes, fitPositionsToViewport]
+  )
+
+  // Reset Layout to automatic clean tree powered by OpenCV 5 and AI Sugiyama + auto-fit to screen
+  const handleResetLayout = async () => {
+    // If there are very few or no connecting edges, use a clean Widescreen Grid so phones fill the screen horizontally
+    if (visibleEdges.length === 0 && visibleNodes.length > 1) {
+      handleApplyPresetLayout("grid")
+      return
+    }
+    try {
+      setIsOptimizingLayout(true)
+      const res = await fetch("/api/ai-automation/auto-layout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          graph,
+          options: {
+            cardWidth: CARD_WIDTH,
+            cardHeight: CARD_HEIGHT,
+            colSpacingX: 360,
+            rowSpacingY: 560,
+            maxPerSubCol: 2,
+          },
+        }),
+      })
+
+      if (res.ok) {
+        const data = await res.json()
+        if (data.success && data.positions) {
+          setNodePositions(data.positions)
+          setShowForwardLines(true)
+          setShowReturnLines(true)
+          fitPositionsToViewport(data.positions)
+          setLayoutToast({
+            message: data.metrics?.opencvEnhanced
+              ? "AI & OpenCV 5 Auto-Layout Applied"
+              : "AI Sugiyama Auto-Layout Applied",
+            sub: `Fitted ${visibleNodes.length} phone screens to viewport • ${data.metrics?.cardCollisions ?? 0} collisions`,
+          })
+          setTimeout(() => setLayoutToast(null), 3500)
+          return
+        }
+      }
+    } catch (err) {
+      console.warn("[Auto-Layout] API request failed, applying local Sugiyama DAG:", err)
+    } finally {
+      setIsOptimizingLayout(false)
+    }
+
+    // High quality local fallback layout + auto-fit to screen
+    const fallback = calculateDefaultLayout(graph)
+    setNodePositions(fallback)
     setShowForwardLines(true)
     setShowReturnLines(true)
-    setZoom(0.9)
-    setPan({ x: 40, y: 30 })
+    fitPositionsToViewport(fallback)
+    setLayoutToast({
+      message: "AI Auto-Layout Applied",
+      sub: "Fitted all phone screens cleanly to viewport",
+    })
+    setTimeout(() => setLayoutToast(null), 3500)
   }
 
   // Export standalone interactive HTML map
@@ -408,31 +457,65 @@ export default function TestFlowGraph({
     }
   }, [plan, screens, transitions])
 
-  // Zoom controls
-  const handleZoomIn = () => setZoom((z: number) => Math.min(2.0, +(z + 0.15).toFixed(2)))
-  const handleZoomOut = () => setZoom((z: number) => Math.max(0.4, +(z - 0.15).toFixed(2)))
+  // Zoom controls (supports zooming all the way out to 5% and in to 250%)
+  const handleZoomIn = () =>
+    setZoom((z: number) => {
+      const step = z < 0.4 ? 0.05 : 0.15
+      return Math.min(2.5, +(z + step).toFixed(2))
+    })
+  const handleZoomOut = () =>
+    setZoom((z: number) => {
+      const step = z <= 0.4 ? 0.05 : 0.15
+      return Math.max(0.05, +(z - step).toFixed(2))
+    })
   const handleZoomReset = () => {
     setZoom(1.0)
     setPan({ x: 0, y: 0 })
   }
 
-  // Mouse wheel zoom (Ctrl + wheel or standard wheel)
+  // Mouse wheel zoom (supports both standard wheel and Ctrl/Cmd + wheel down to 5%)
   const handleWheel = (e: React.WheelEvent) => {
-    if (e.ctrlKey || e.metaKey) {
-      e.preventDefault()
-      const delta = e.deltaY < 0 ? 0.1 : -0.1
-      setZoom((z: number) => Math.max(0.4, Math.min(2.0, +(z + delta).toFixed(2))))
-    }
+    e.preventDefault()
+    const step = zoom <= 0.4 ? 0.04 : 0.08
+    const delta = e.deltaY < 0 ? step : -step
+    setZoom((z: number) => Math.max(0.05, Math.min(2.5, +(z + delta).toFixed(2))))
   }
 
-  // Canvas Panning Handlers
+  // Convert client pointer coordinates to canvas world coordinates
+  const clientToWorld = useCallback(
+    (clientX: number, clientY: number) => {
+      const rect = containerRef.current?.getBoundingClientRect()
+      if (!rect) return { x: 0, y: 0 }
+      return {
+        x: (clientX - rect.left - pan.x) / zoom,
+        y: (clientY - rect.top - pan.y) / zoom,
+      }
+    },
+    [pan.x, pan.y, zoom]
+  )
+
+  // Canvas Panning & Figma Marquee Box Selection Handlers
   const handleCanvasPointerDown = (e: React.PointerEvent) => {
-    // If clicked directly on canvas background (not a card)
-    if (
-      (e.target as HTMLElement).classList.contains("canvas-bg") ||
-      (e.target as HTMLElement).tagName === "svg" ||
-      (e.target as HTMLElement).dataset.canvasSurface
-    ) {
+    const target = e.target as HTMLElement
+    const isSurface =
+      target.classList.contains("canvas-bg") ||
+      target.tagName === "svg" ||
+      Boolean(target.dataset.canvasSurface)
+    if (!isSurface) return
+
+    // Middle mouse or Pan tool (without Shift) -> Pan canvas
+    const shouldMarquee = (canvasTool === "select" && e.button === 0 && !e.altKey) || e.shiftKey
+    if (shouldMarquee) {
+      const worldPt = clientToWorld(e.clientX, e.clientY)
+      isMarqueeRef.current = true
+      setMarquee({ startX: worldPt.x, startY: worldPt.y, currentX: worldPt.x, currentY: worldPt.y })
+      if (!e.shiftKey && !e.ctrlKey && !e.metaKey) {
+        setSelectedNodeIds(new Set())
+      }
+      try {
+        target.setPointerCapture(e.pointerId)
+      } catch {}
+    } else {
       setIsPanning(true)
       panStartRef.current = {
         pointerX: e.clientX,
@@ -440,12 +523,35 @@ export default function TestFlowGraph({
         panX: pan.x,
         panY: pan.y,
       }
-      ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+      try {
+        target.setPointerCapture(e.pointerId)
+      } catch {}
     }
   }
 
   const handleCanvasPointerMove = (e: React.PointerEvent) => {
-    if (isPanning) {
+    if (isMarqueeRef.current && marquee) {
+      const worldPt = clientToWorld(e.clientX, e.clientY)
+      const nextMarquee = { ...marquee, currentX: worldPt.x, currentY: worldPt.y }
+      setMarquee(nextMarquee)
+      const minX = Math.min(nextMarquee.startX, nextMarquee.currentX)
+      const maxX = Math.max(nextMarquee.startX, nextMarquee.currentX)
+      const minY = Math.min(nextMarquee.startY, nextMarquee.currentY)
+      const maxY = Math.max(nextMarquee.startY, nextMarquee.currentY)
+      if (maxX - minX > 4 || maxY - minY > 4) {
+        const hitIds = new Set<string>()
+        visibleNodes.forEach((n, idx) => {
+          const pos = nodePositions[n.id] || { x: 60 + (idx % 4) * 320, y: 60 + Math.floor(idx / 4) * 200 }
+          const intersects =
+            pos.x < maxX &&
+            pos.x + CARD_WIDTH > minX &&
+            pos.y < maxY &&
+            pos.y + CARD_HEIGHT > minY
+          if (intersects) hitIds.add(n.id)
+        })
+        setSelectedNodeIds(hitIds)
+      }
+    } else if (isPanning) {
       const dx = e.clientX - panStartRef.current.pointerX
       const dy = e.clientY - panStartRef.current.pointerY
       setPan({
@@ -455,17 +561,39 @@ export default function TestFlowGraph({
     } else if (draggingNodeId) {
       const dx = (e.clientX - dragStartRef.current.pointerX) / zoom
       const dy = (e.clientY - dragStartRef.current.pointerY) / zoom
-      setNodePositions((prev: Record<string, NodePos>) => ({
-        ...prev,
-        [draggingNodeId]: {
-          x: Math.round(dragStartRef.current.nodeX + dx),
-          y: Math.round(dragStartRef.current.nodeY + dy),
-        },
-      }))
+      const initialGroup = groupDragInitialPosRef.current
+      const groupKeys = Object.keys(initialGroup)
+      if (groupKeys.length > 1) {
+        setNodePositions((prev: Record<string, NodePos>) => {
+          const next = { ...prev }
+          for (const id of groupKeys) {
+            const base = initialGroup[id]
+            if (base) {
+              next[id] = { x: Math.round(base.x + dx), y: Math.round(base.y + dy) }
+            }
+          }
+          return next
+        })
+      } else {
+        setNodePositions((prev: Record<string, NodePos>) => ({
+          ...prev,
+          [draggingNodeId]: {
+            x: Math.round(dragStartRef.current.nodeX + dx),
+            y: Math.round(dragStartRef.current.nodeY + dy),
+          },
+        }))
+      }
     }
   }
 
   const handleCanvasPointerUp = (e: React.PointerEvent) => {
+    if (isMarqueeRef.current) {
+      isMarqueeRef.current = false
+      setMarquee(null)
+      try {
+        ;(e.target as HTMLElement).releasePointerCapture(e.pointerId)
+      } catch {}
+    }
     if (isPanning) {
       setIsPanning(false)
       try {
@@ -477,7 +605,7 @@ export default function TestFlowGraph({
     }
   }
 
-  // Card Dragging Handlers
+  // Card Dragging Handlers (Figma single or multi-card group drag)
   const handleCardPointerDown = (nodeId: string, e: React.PointerEvent) => {
     if (e.button !== 0) return
     e.stopPropagation()
@@ -490,6 +618,25 @@ export default function TestFlowGraph({
       nodeX: pos.x,
       nodeY: pos.y,
     }
+
+    // Determine active selection group for dragging
+    let nextSelected = new Set(selectedNodeIds)
+    if (e.shiftKey || e.ctrlKey || e.metaKey) {
+      if (nextSelected.has(nodeId)) nextSelected.delete(nodeId)
+      else nextSelected.add(nodeId)
+      setSelectedNodeIds(nextSelected)
+    } else if (!nextSelected.has(nodeId)) {
+      nextSelected = new Set([nodeId])
+      setSelectedNodeIds(nextSelected)
+    }
+
+    const snap: Record<string, NodePos> = {}
+    nextSelected.forEach((id) => {
+      if (nodePositions[id]) snap[id] = { ...nodePositions[id] }
+    })
+    if (!snap[nodeId]) snap[nodeId] = { ...pos }
+    groupDragInitialPosRef.current = snap
+
     try {
       ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
     } catch {}
@@ -503,13 +650,28 @@ export default function TestFlowGraph({
       if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
         hasDraggedRef.current = true
       }
-      setNodePositions((prev: Record<string, NodePos>) => ({
-        ...prev,
-        [nodeId]: {
-          x: Math.round(dragStartRef.current.nodeX + dx),
-          y: Math.round(dragStartRef.current.nodeY + dy),
-        },
-      }))
+      const initialGroup = groupDragInitialPosRef.current
+      const groupKeys = Object.keys(initialGroup)
+      if (groupKeys.length > 1) {
+        setNodePositions((prev: Record<string, NodePos>) => {
+          const next = { ...prev }
+          for (const id of groupKeys) {
+            const base = initialGroup[id]
+            if (base) {
+              next[id] = { x: Math.round(base.x + dx), y: Math.round(base.y + dy) }
+            }
+          }
+          return next
+        })
+      } else {
+        setNodePositions((prev: Record<string, NodePos>) => ({
+          ...prev,
+          [nodeId]: {
+            x: Math.round(dragStartRef.current.nodeX + dx),
+            y: Math.round(dragStartRef.current.nodeY + dy),
+          },
+        }))
+      }
     }
   }
 
@@ -522,6 +684,40 @@ export default function TestFlowGraph({
       } catch {}
     }
   }
+
+  // Figma Multi-Select Alignment & Arrangement Actions
+  const handleAlignSelected = useCallback(
+    (mode: "row" | "col" | "grid") => {
+      const ids = Array.from(selectedNodeIds).filter((id) => !deletedNodeIds.has(id))
+      if (ids.length < 2) return
+      setNodePositions((prev) => {
+        const next = { ...prev }
+        const sorted = [...ids].sort((a, b) => {
+          const pa = prev[a] || { x: 0, y: 0 }
+          const pb = prev[b] || { x: 0, y: 0 }
+          return mode === "col" ? pa.y - pb.y : pa.x - pb.x
+        })
+        const anchor = prev[sorted[0]] || { x: 80, y: 80 }
+        const cols = Math.ceil(Math.sqrt(sorted.length))
+        sorted.forEach((id, idx) => {
+          if (mode === "row") {
+            next[id] = { x: Math.round(anchor.x + idx * (CARD_WIDTH + 60)), y: Math.round(anchor.y) }
+          } else if (mode === "col") {
+            next[id] = { x: Math.round(anchor.x), y: Math.round(anchor.y + idx * (CARD_HEIGHT + 50)) }
+          } else {
+            const cIdx = idx % cols
+            const rIdx = Math.floor(idx / cols)
+            next[id] = {
+              x: Math.round(anchor.x + cIdx * (CARD_WIDTH + 60)),
+              y: Math.round(anchor.y + rIdx * (CARD_HEIGHT + 50)),
+            }
+          }
+        })
+        return next
+      })
+    },
+    [selectedNodeIds, deletedNodeIds]
+  )
 
   // Compute bounding box of all cards to size SVG canvas
   const canvasBounds = useMemo(() => {
@@ -544,6 +740,280 @@ export default function TestFlowGraph({
     }
     return m
   }, [screens, plan?.screens])
+
+  // Copy feedback state for user journey
+  const [copiedJourney, setCopiedJourney] = useState(false)
+
+  // Compute the Whole Previous User Journey when a screen (or multiple screens) is selected
+  const activeJourney = useMemo(() => {
+    const selArray = Array.from(selectedNodeIds).filter((id) => !deletedNodeIds.has(id))
+    if (selArray.length === 0) {
+      return {
+        active: false,
+        targetId: null as string | null,
+        orderedIds: [] as string[],
+        stepOrderMap: new Map<string, number>(),
+        edgeKeys: new Set<string>(),
+      }
+    }
+
+    const targetId = selArray[selArray.length - 1]
+    const nodeMap = new Map(visibleNodes.map((n) => [n.id, n]))
+
+    // Build forward & incoming adjacency lists from visibleEdges
+    const incoming = new Map<string, Array<{ from: string; label: string }>>()
+    const outgoing = new Map<string, Array<{ to: string; label: string }>>()
+    visibleNodes.forEach((n) => {
+      incoming.set(n.id, [])
+      outgoing.set(n.id, [])
+    })
+    visibleEdges.forEach((e) => {
+      if (e.from === e.to) return
+      const isRet = /back|return|close/i.test(e.label)
+      if (!isRet) {
+        outgoing.get(e.from)?.push({ to: e.to, label: e.label })
+        incoming.get(e.to)?.push({ from: e.from, label: e.label })
+      }
+    })
+    // Also include all edges as fallback if forward-only has no incoming path
+    visibleEdges.forEach((e) => {
+      if (e.from === e.to) return
+      if ((incoming.get(e.to)?.length || 0) === 0) {
+        incoming.get(e.to)?.push({ from: e.from, label: e.label })
+      }
+    })
+
+    let orderedIds: string[] = []
+    const edgeKeys = new Set<string>()
+
+    if (selArray.length === 1) {
+      // Find root node (prefer S001 or first visible node)
+      const rootId =
+        visibleNodes.find((n) => n.id === "S001")?.id ||
+        visibleNodes[0]?.id ||
+        targetId
+
+      // 1. Try BFS shortest path from rootId -> targetId
+      const queue: string[][] = [[rootId]]
+      const visited = new Set<string>([rootId])
+      let foundPath: string[] | null = null
+
+      while (queue.length > 0) {
+        const path = queue.shift()!
+        const curr = path[path.length - 1]
+        if (curr === targetId) {
+          foundPath = path
+          break
+        }
+        const nexts = outgoing.get(curr) || []
+        for (const nx of nexts) {
+          if (!visited.has(nx.to)) {
+            visited.add(nx.to)
+            queue.push([...path, nx.to])
+          }
+        }
+      }
+
+      // 2. If root BFS didn't reach targetId, walk backwards along incoming edges from targetId
+      if (!foundPath || foundPath.length <= 1) {
+        const revPath: string[] = [targetId]
+        const seen = new Set<string>([targetId])
+        let curr = targetId
+        while (true) {
+          const parents = (incoming.get(curr) || []).filter((p) => !seen.has(p.from))
+          if (parents.length === 0) break
+          const chosen = parents[0].from
+          seen.add(chosen)
+          revPath.unshift(chosen)
+          curr = chosen
+        }
+        if (revPath.length > 1) {
+          foundPath = revPath
+        }
+      }
+
+      // 3. Fallback when screens have no explicit edges yet: include previous sequential screens up to targetId
+      if (!foundPath || foundPath.length <= 1) {
+        const targetIdx = visibleNodes.findIndex((n) => n.id === targetId)
+        if (targetIdx > 0 && visibleEdges.length === 0) {
+          foundPath = visibleNodes.slice(0, targetIdx + 1).map((n) => n.id)
+        } else {
+          foundPath = [targetId]
+        }
+      }
+
+      orderedIds = foundPath.filter((id) => nodeMap.has(id))
+    } else {
+      // Multiple screens selected: preserve screen flow order and also include any connecting ancestor chain
+      orderedIds = visibleNodes.filter((n) => selectedNodeIds.has(n.id)).map((n) => n.id)
+    }
+
+    // Mark connecting edges along the ordered journey (plus any direct edge between journey nodes)
+    const journeySet = new Set(orderedIds)
+    for (let i = 0; i < orderedIds.length - 1; i++) {
+      edgeKeys.add(`${orderedIds[i]}->${orderedIds[i + 1]}`)
+    }
+    visibleEdges.forEach((e) => {
+      if (journeySet.has(e.from) && journeySet.has(e.to)) {
+        edgeKeys.add(`${e.from}->${e.to}`)
+      }
+    })
+
+    const stepOrderMap = new Map<string, number>()
+    orderedIds.forEach((id, idx) => stepOrderMap.set(id, idx + 1))
+
+    return {
+      active: orderedIds.length > 0,
+      targetId,
+      orderedIds,
+      stepOrderMap,
+      edgeKeys,
+    }
+  }, [selectedNodeIds, deletedNodeIds, visibleNodes, visibleEdges])
+
+  // Copy the highlighted journey to clipboard as structured text/markdown
+  const handleCopyJourney = useCallback(async () => {
+    if (!activeJourney.active || activeJourney.orderedIds.length === 0) return
+    const allSteps = steps || plan?.steps || []
+    const lines: string[] = []
+    lines.push(`# User Journey (${activeJourney.orderedIds.length} Screens: ${activeJourney.orderedIds.join(" → ")})`)
+    lines.push("")
+
+    activeJourney.orderedIds.forEach((id, idx) => {
+      const node = visibleNodes.find((n) => n.id === id)
+      const scr = screensMap.get(id)
+      const title = scr?.name || node?.title?.replace(/^S\d+\s*/i, "") || id
+      const url = scr?.path || scr?.url || node?.url || "/"
+      lines.push(`## Step ${idx + 1}: [${id}] ${title} (${url})`)
+
+      const scrSteps = allSteps.filter(
+        (s) =>
+          s.screenId === id ||
+          (scr && s.screenName?.toLowerCase() === scr.name?.toLowerCase()) ||
+          (node && s.screenName?.toLowerCase() === node.title?.toLowerCase())
+      )
+      if (scrSteps.length > 0) {
+        scrSteps.forEach((st, sIdx) => {
+          const val = st.syntheticValue ? ` = "${st.syntheticValue}"` : ""
+          lines.push(`  - ${sIdx + 1}. [${(st.actionType || "STEP").toUpperCase()}] ${st.targetName || st.expectedResult || "Action"}${val} (${st.status || "pending"})`)
+        })
+      }
+
+      if (idx < activeJourney.orderedIds.length - 1) {
+        const nextId = activeJourney.orderedIds[idx + 1]
+        const edge = visibleEdges.find((e) => e.from === id && e.to === nextId)
+        lines.push(`  ↳ Transition to ${nextId}: ${edge?.label || "Navigate →"}`)
+      }
+      lines.push("")
+    })
+
+    const text = lines.join("\n")
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopiedJourney(true)
+      setLayoutToast({
+        message: "Journey Copied to Clipboard",
+        sub: `${activeJourney.orderedIds.join(" → ")}`,
+      })
+      setTimeout(() => {
+        setCopiedJourney(false)
+        setLayoutToast(null)
+      }, 2800)
+    } catch (err) {
+      console.error("Failed to copy journey:", err)
+    }
+  }, [activeJourney, visibleNodes, visibleEdges, screensMap, steps, plan?.steps])
+
+  // Export ONLY the highlighted journey as a standalone interactive HTML file
+  const handleExportJourneyHtml = useCallback(() => {
+    if (!activeJourney.active || activeJourney.orderedIds.length === 0) return
+    try {
+      const journeySet = new Set(activeJourney.orderedIds)
+      const allScreens = screens || plan?.screens || []
+      const journeyScreens: AppScreenNode[] = activeJourney.orderedIds.map((id) => {
+        const existing = allScreens.find((s) => s.id === id)
+        if (existing) return existing
+        const n = visibleNodes.find((vn) => vn.id === id)
+        return {
+          id,
+          name: n?.title || id,
+          url: n?.url || "/",
+          path: n?.url || "/",
+          screenshotUrl: n?.screenshotUrl,
+          actionableElements: [],
+          forms: [],
+          discoveredAt: new Date().toISOString(),
+        } as AppScreenNode
+      })
+
+      const allTransitions = transitions || plan?.transitions || []
+      const journeyTransitions: AppWorkflowTransition[] = []
+      for (let i = 0; i < activeJourney.orderedIds.length - 1; i++) {
+        const fromId = activeJourney.orderedIds[i]
+        const toId = activeJourney.orderedIds[i + 1]
+        const matchedT = allTransitions.find((t) => t.fromScreenId === fromId && t.toScreenId === toId)
+        const matchedE = visibleEdges.find((e) => e.from === fromId && e.to === toId)
+        journeyTransitions.push(
+          matchedT || {
+            id: `journey-trans-${fromId}-${toId}`,
+            fromScreenId: fromId,
+            toScreenId: toId,
+            action: matchedE?.label || `Step ${i + 1} → Step ${i + 2}`,
+            actionType: "click",
+          }
+        )
+      }
+
+      const allSteps = steps || plan?.steps || []
+      const journeySteps = allSteps.filter((s) => s.screenId && journeySet.has(s.screenId))
+      const journeyGraph: FlowGraph = {
+        nodes: activeJourney.orderedIds
+          .map((id) => visibleNodes.find((n) => n.id === id))
+          .filter(Boolean) as FlowGraph["nodes"],
+        edges: journeyTransitions.map((t) => ({
+          from: t.fromScreenId,
+          to: t.toScreenId,
+          label: t.action,
+        })),
+      }
+
+      const html = generateAppMapHtml({
+        plan: plan
+          ? {
+              ...plan,
+              screens: journeyScreens,
+              transitions: journeyTransitions,
+              steps: journeySteps,
+              flowGraph: journeyGraph,
+            }
+          : undefined,
+        screens: journeyScreens,
+        transitions: journeyTransitions,
+        title: `User Journey: ${activeJourney.orderedIds.join(" → ")}`,
+        timestamp: new Date().toISOString(),
+      })
+
+      const blob = new Blob([html], { type: "text/html;charset=utf-8" })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      const startId = activeJourney.orderedIds[0]
+      const endId = activeJourney.orderedIds[activeJourney.orderedIds.length - 1]
+      a.download = `journey-${startId}-to-${endId}.html`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+
+      setLayoutToast({
+        message: "Journey Exported as HTML",
+        sub: `journey-${startId}-to-${endId}.html downloaded`,
+      })
+      setTimeout(() => setLayoutToast(null), 2800)
+    } catch (err) {
+      console.error("Failed to export journey HTML:", err)
+    }
+  }, [activeJourney, screens, plan, transitions, steps, visibleNodes, visibleEdges])
 
   // Search tested screens in map
   const [searchInput, setSearchInput] = useState("")
@@ -757,8 +1227,38 @@ export default function TestFlowGraph({
     >
       {/* 1. FIGMA TOP TOOLBAR */}
       <div className="absolute top-3 left-3 right-3 z-30 flex items-center justify-between pointer-events-none gap-2">
-        {/* Left: Search Tested Screens */}
-        <div className="relative pointer-events-auto">
+        {/* Left: Figma Pointer Tool Switcher (Select Box vs Hand Pan) + Search */}
+        <div className="flex items-center gap-2 pointer-events-auto">
+          <div className="flex items-center bg-slate-900/95 backdrop-blur-md p-1 rounded-lg border border-slate-700/80 shadow-lg text-xs">
+            <button
+              type="button"
+              onClick={() => setCanvasTool("select")}
+              className={`px-2 py-1 rounded flex items-center gap-1 font-semibold transition cursor-pointer ${
+                canvasTool === "select"
+                  ? "bg-indigo-600 text-white shadow-xs"
+                  : "text-slate-400 hover:text-white"
+              }`}
+              title="Select & Box-Select Cards (Drag canvas to select multiple cards, drag any selected card to move group)"
+            >
+              <MousePointer className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Select</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setCanvasTool("pan")}
+              className={`px-2 py-1 rounded flex items-center gap-1 font-semibold transition cursor-pointer ${
+                canvasTool === "pan"
+                  ? "bg-indigo-600 text-white shadow-xs"
+                  : "text-slate-400 hover:text-white"
+              }`}
+              title="Pan Canvas (Drag canvas to move around)"
+            >
+              <Compass className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Pan</span>
+            </button>
+          </div>
+
+          <div className="relative">
           <form
             onSubmit={(e) => {
               e.preventDefault()
@@ -845,6 +1345,7 @@ export default function TestFlowGraph({
               ))}
             </div>
           )}
+          </div>
         </div>
 
         {/* Right Controls */}
@@ -881,15 +1382,52 @@ export default function TestFlowGraph({
 
           <div className="w-px h-4 bg-slate-700 mx-0.5" />
 
-          {/* Auto Arrange / Reset Layout */}
+          {/* Auto Arrange / Reset Layout + Screen Presets */}
           <button
             type="button"
             onClick={handleResetLayout}
-            className="p-1.5 rounded hover:bg-slate-800 text-slate-300 hover:text-indigo-300 transition cursor-pointer flex items-center gap-1 text-[11px]"
-            title="Auto-arrange cards in clean tree layout"
+            disabled={isOptimizingLayout}
+            className={`px-2 py-1 rounded transition cursor-pointer flex items-center gap-1.5 text-[11px] font-semibold ${
+              isOptimizingLayout
+                ? "bg-indigo-600/30 text-indigo-300 border border-indigo-500/50 cursor-wait animate-pulse"
+                : "bg-indigo-600/20 hover:bg-indigo-600 text-indigo-200 hover:text-white border border-indigo-500/40"
+            }`}
+            title="Auto-arrange phone screens in a clean flow and fit to screen"
           >
-            <LayoutGrid className="h-3.5 w-3.5" />
-            <span className="hidden md:inline">Auto-Layout</span>
+            <Sparkles className={`h-3.5 w-3.5 text-indigo-400 ${isOptimizingLayout ? "animate-spin" : ""}`} />
+            <span className="hidden md:inline">
+              {isOptimizingLayout ? "Fitting..." : "Auto-Layout"}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleApplyPresetLayout("row")}
+            className="px-2 py-1 rounded hover:bg-slate-800 text-slate-300 hover:text-white transition cursor-pointer flex items-center gap-1 text-[11px] font-medium"
+            title="Arrange all phone screens side-by-side in a horizontal storyboard row"
+          >
+            <Columns className="h-3.5 w-3.5 text-sky-400" />
+            <span className="hidden lg:inline">Row</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleApplyPresetLayout("grid")}
+            className="px-2 py-1 rounded hover:bg-slate-800 text-slate-300 hover:text-white transition cursor-pointer flex items-center gap-1 text-[11px] font-medium"
+            title="Arrange all phone screens in a widescreen grid fitted to screen"
+          >
+            <LayoutGrid className="h-3.5 w-3.5 text-purple-400" />
+            <span className="hidden lg:inline">Grid</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => fitPositionsToViewport(nodePositions)}
+            className="px-2 py-1 rounded hover:bg-slate-800 text-slate-300 hover:text-white transition cursor-pointer flex items-center gap-1 text-[11px] font-medium"
+            title="Fit all phone screens into visible screen area"
+          >
+            <RotateCcw className="h-3.5 w-3.5 text-emerald-400" />
+            <span className="hidden xl:inline">Fit</span>
           </button>
 
           <div className="w-px h-4 bg-slate-700 mx-0.5" />
@@ -993,6 +1531,22 @@ export default function TestFlowGraph({
         </div>
       </div>
 
+      {/* AI & OpenCV Layout Toast Notification */}
+      {layoutToast && (
+        <div className="absolute top-14 left-1/2 -translate-x-1/2 z-50 pointer-events-none transition-all duration-300 animate-in fade-in slide-in-from-top-2">
+          <div className="px-4 py-2 rounded-full bg-slate-900/95 border border-indigo-500/50 shadow-2xl backdrop-blur-md flex items-center gap-2.5 text-xs text-white">
+            <Sparkles className="h-4 w-4 text-indigo-400 shrink-0 animate-pulse" />
+            <span className="font-semibold text-indigo-200">{layoutToast.message}</span>
+            {layoutToast.sub && (
+              <>
+                <span className="text-slate-500">•</span>
+                <span className="text-slate-300 text-[11px] font-mono">{layoutToast.sub}</span>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* 2. INFINITE DOT GRID CANVAS SURFACE */}
       <div
         className="canvas-bg absolute inset-0 cursor-grab active:cursor-grabbing overflow-hidden"
@@ -1038,6 +1592,16 @@ export default function TestFlowGraph({
               >
                 <path d="M0,2 L8,5 L0,8 z" fill="#10b981" />
               </marker>
+              <marker
+                id="figma-arrowhead-journey"
+                markerWidth="11"
+                markerHeight="11"
+                refX="8"
+                refY="5"
+                orient="auto"
+              >
+                <path d="M0,1.5 L9,5 L0,8.5 z" fill="#f59e0b" />
+              </marker>
               <filter id="glow-indigo" x="-20%" y="-20%" width="140%" height="140%">
                 <feDropShadow dx="0" dy="0" stdDeviation="3" floodColor="#6366f1" floodOpacity="0.4" />
               </filter>
@@ -1061,31 +1625,45 @@ export default function TestFlowGraph({
                 CARD_HEIGHT
               )
 
-              const labelText = e.label.length > 28 ? e.label.slice(0, 27) + "…" : e.label
+              const isJourneyEdge = activeJourney.active && activeJourney.edgeKeys.has(`${e.from}->${e.to}`)
+              const isDimmedEdge = activeJourney.active && !isJourneyEdge
+              const fromStepNum = activeJourney.stepOrderMap.get(e.from)
+              const toStepNum = activeJourney.stepOrderMap.get(e.to)
+              const baseLabel = e.label.length > 26 ? e.label.slice(0, 25) + "…" : e.label
+              const labelText =
+                isJourneyEdge && fromStepNum && toStepNum
+                  ? `#${fromStepNum}→#${toStepNum} ${baseLabel}`
+                  : baseLabel
 
               return (
-                <g key={`edge-${e.from}-${e.to}-${idx}`}>
-                  {/* Subtle Background Glow Line */}
+                <g key={`edge-${e.from}-${e.to}-${idx}`} style={{ opacity: isDimmedEdge ? 0.18 : 1 }}>
+                  {/* Background Glow Line */}
                   <path
                     d={path}
                     fill="none"
-                    stroke={isReturn ? "#064e3b" : "#4338ca"}
-                    strokeOpacity="0.3"
-                    strokeWidth="4"
+                    stroke={isJourneyEdge ? "#f59e0b" : isReturn ? "#064e3b" : "#4338ca"}
+                    strokeOpacity={isJourneyEdge ? "0.45" : "0.3"}
+                    strokeWidth={isJourneyEdge ? "8" : "4"}
                   />
 
-                  {/* Main Bezier Connecting Line (Return edges dashed emerald) */}
+                  {/* Main Bezier Connecting Line */}
                   <path
                     d={path}
                     fill="none"
-                    stroke={isReturn ? "#10b981" : "#6366f1"}
-                    strokeOpacity={isReturn ? 0.9 : 0.85}
-                    strokeWidth="2"
-                    strokeDasharray={isReturn ? "5 3" : undefined}
-                    markerEnd={isReturn ? "url(#figma-arrowhead-return)" : "url(#figma-arrowhead)"}
+                    stroke={isJourneyEdge ? "#fbbf24" : isReturn ? "#10b981" : "#6366f1"}
+                    strokeOpacity={isJourneyEdge ? 1 : isReturn ? 0.9 : 0.85}
+                    strokeWidth={isJourneyEdge ? "3.2" : "2"}
+                    strokeDasharray={isReturn && !isJourneyEdge ? "5 3" : undefined}
+                    markerEnd={
+                      isJourneyEdge
+                        ? "url(#figma-arrowhead-journey)"
+                        : isReturn
+                        ? "url(#figma-arrowhead-return)"
+                        : "url(#figma-arrowhead)"
+                    }
                   />
 
-                  {/* Midpoint Pill Label with Backdrop so text is never hidden */}
+                  {/* Midpoint Pill Label with Backdrop */}
                   <g
                     transform={`translate(${midX}, ${midY})`}
                     className="pointer-events-auto cursor-pointer group/edge"
@@ -1102,19 +1680,19 @@ export default function TestFlowGraph({
                       width={labelText.length * 6.6 + 16}
                       height="20"
                       rx="6"
-                      fill={isReturn ? "#064e3b" : "#0f172a"}
-                      stroke={isReturn ? "#059669" : "#4338ca"}
-                      strokeWidth="1"
-                      className="shadow-md group-hover/edge:stroke-emerald-400 group-hover/edge:fill-emerald-950/80 transition-colors"
+                      fill={isJourneyEdge ? "#451a03" : isReturn ? "#064e3b" : "#0f172a"}
+                      stroke={isJourneyEdge ? "#f59e0b" : isReturn ? "#059669" : "#4338ca"}
+                      strokeWidth={isJourneyEdge ? "1.5" : "1"}
+                      className="shadow-md group-hover/edge:stroke-amber-400 transition-colors"
                     />
                     <text
                       x="0"
                       y="3"
                       textAnchor="middle"
-                      fill={isReturn ? "#6ee7b7" : "#c7d2fe"}
+                      fill={isJourneyEdge ? "#fde68a" : isReturn ? "#6ee7b7" : "#c7d2fe"}
                       fontSize="9.5"
                       fontFamily="ui-monospace, monospace"
-                      fontWeight="600"
+                      fontWeight="700"
                       className="group-hover/edge:fill-white transition-colors"
                     >
                       {labelText}
@@ -1125,17 +1703,152 @@ export default function TestFlowGraph({
             })}
           </svg>
 
-          {/* HTML LAYER: MOVABLE / DRAGGABLE CARDS */}
+          {/* FIGMA MARQUEE SELECTION BOX */}
+          {marquee && (
+            <div
+              className="absolute border-2 border-indigo-400 bg-indigo-500/15 rounded pointer-events-none z-50 shadow-lg"
+              style={{
+                left: `${Math.min(marquee.startX, marquee.currentX)}px`,
+                top: `${Math.min(marquee.startY, marquee.currentY)}px`,
+                width: `${Math.abs(marquee.currentX - marquee.startX)}px`,
+                height: `${Math.abs(marquee.currentY - marquee.startY)}px`,
+              }}
+            />
+          )}
+
+          {/* HTML LAYER: FIGMA MOBILE PHONE SCREEN FRAMES (Full Tall Phone Preview + Multi-Select + Group Drag) */}
           {visibleNodes.map((node, i) => {
             const pos = nodePositions[node.id] || {
-              x: 60 + (i % 4) * 320,
-              y: 60 + Math.floor(i / 4) * 200,
+              x: 80 + (i % 4) * 350,
+              y: 80 + Math.floor(i / 4) * 580,
             }
-            const isDragging = draggingNodeId === node.id
+            const isDragging =
+              draggingNodeId === node.id ||
+              (Boolean(draggingNodeId) && selectedNodeIds.has(node.id) && selectedNodeIds.has(draggingNodeId!))
+            const isSelected = selectedNodeIds.has(node.id)
             const matchedScreen = screensMap.get(node.id)
-            const elementsCount = matchedScreen?.actionableElements?.length ?? 0
+            const allSteps = steps || plan?.steps || []
+            const nodeSteps = allSteps.filter(
+              (s) =>
+                s.screenId === node.id ||
+                (matchedScreen && s.screenName?.toLowerCase() === matchedScreen.name?.toLowerCase()) ||
+                s.screenName?.toLowerCase() === node.title?.toLowerCase()
+            )
+            const elementsList = matchedScreen?.actionableElements || []
+            const elementsCount = elementsList.length
             const isMatch = matchingNodeIds.has(node.id)
-            const isDimmed = searchQuery.trim().length > 0 && !isMatch
+            const journeyStepNum = activeJourney.stepOrderMap.get(node.id)
+            const isInJourney = Boolean(journeyStepNum)
+            const isJourneyTarget = activeJourney.targetId === node.id
+            const isDimmed =
+              (searchQuery.trim().length > 0 && !isMatch) ||
+              (activeJourney.active && activeJourney.orderedIds.length > 1 && !isInJourney)
+
+            // Clean up raw title & classify what kind of screen this is so user immediately knows what it is
+            const rawTitle =
+              matchedScreen?.name || node.title.replace(/^S\d+\s*/i, "") || `Screen ${node.id}`
+            const is404 = /^404$/i.test(rawTitle.trim()) || /404|not found/i.test(rawTitle)
+            const isFormScenario = /form_scenario|form\s*"?form/i.test(rawTitle)
+            const isClickAction = /\(click\)$/i.test(rawTitle.trim())
+            const isLoginScreen = /sign\s*in|log\s*in|auth|reset password/i.test(rawTitle)
+
+            const cleanTitle = rawTitle
+              .replace(/\s*\(form_scenario\)\s*/gi, "")
+              .replace(/\s*\(click\)\s*/gi, "")
+              .replace(/^Form\s*"([^"]+)"\s*/i, "$1: ")
+              .trim()
+
+            // Clean up URL-encoded hash paths
+            let rawRoute = matchedScreen?.path || "/"
+            if (!matchedScreen?.path && node.url) {
+              try {
+                const u = new URL(node.url)
+                rawRoute = (u.pathname || "/") + (u.hash || "")
+              } catch {
+                rawRoute = node.url
+              }
+            }
+            let routePath = rawRoute
+            try {
+              routePath = decodeURIComponent(rawRoute)
+            } catch {}
+            if (routePath.includes("#action-")) {
+              routePath = routePath.split("#action-")[0] || "/"
+            }
+
+            const screenCategory = is404
+              ? { label: "404 BROKEN ROUTE", cls: "bg-rose-500/25 text-rose-300 border-rose-500/40" }
+              : isFormScenario
+              ? { label: "FORM TEST", cls: "bg-purple-500/25 text-purple-300 border-purple-500/40" }
+              : isLoginScreen
+              ? { label: "AUTH / LOGIN", cls: "bg-amber-500/25 text-amber-300 border-amber-500/40" }
+              : isClickAction
+              ? { label: "UI ACTION", cls: "bg-sky-500/25 text-sky-300 border-sky-500/40" }
+              : { label: "APP SCREEN", cls: "bg-indigo-500/25 text-indigo-300 border-indigo-500/40" }
+
+            const shotUrl =
+              node.screenshotUrl ||
+              matchedScreen?.screenshotUrl ||
+              nodeSteps.find((st) => st.screenshotUrl)?.screenshotUrl
+            const showScreenshot = Boolean(shotUrl) && !brokenImageIds.has(node.id)
+            const passedCount = nodeSteps.filter((s) => s.status === "passed").length
+            const failedCount = nodeSteps.filter((s) => s.status === "failed").length
+
+            // Build visible UI content rows (combine steps + actionable elements so you ALWAYS see what is inside the screen)
+            const previewRows: Array<{
+              id: string
+              badge: string
+              label: string
+              sub?: string
+              status?: string
+              kind: "step" | "element"
+            }> = []
+            const seenLabels = new Set<string>()
+
+            nodeSteps.forEach((st) => {
+              const lbl = (st.targetName || st.expectedResult || "Test Step")
+                .replace(/\s*\(form_scenario\)\s*/gi, "")
+                .trim()
+              const key = `${st.actionType}-${lbl.toLowerCase()}`
+              if (seenLabels.has(key) || previewRows.length >= 4) return
+              seenLabels.add(key)
+              previewRows.push({
+                id: `st-${st.id}`,
+                badge:
+                  st.actionType === "fill"
+                    ? "INPUT"
+                    : st.actionType === "form_scenario"
+                    ? "FORM"
+                    : (st.actionType || "STEP").toUpperCase().slice(0, 6),
+                label: lbl,
+                sub: st.syntheticValue ? `"${st.syntheticValue}"` : undefined,
+                status: st.status,
+                kind: "step",
+              })
+            })
+
+            elementsList.forEach((el, eIdx) => {
+              if (previewRows.length >= 4) return
+              const lbl = (el.name || el.selector || "UI Element")
+                .replace(/Landlord Accounting\s*[—\-–]\s*/i, "")
+                .trim()
+              const key = lbl.toLowerCase()
+              if (!lbl || seenLabels.has(key)) return
+              seenLabels.add(key)
+              previewRows.push({
+                id: `el-${el.id || eIdx}`,
+                badge:
+                  el.type === "input"
+                    ? "FIELD"
+                    : el.type === "button" || el.type === "clickable"
+                    ? "BTN"
+                    : (el.type || "UI").toUpperCase().slice(0, 5),
+                label: lbl,
+                sub: el.selector,
+                status: el.testStatus,
+                kind: "element",
+              })
+            })
 
             return (
               <div
@@ -1144,26 +1857,24 @@ export default function TestFlowGraph({
                 onPointerMove={(e) => handleCardPointerMove(node.id, e)}
                 onPointerUp={(e) => handleCardPointerUp(node.id, e)}
                 onPointerCancel={(e) => handleCardPointerUp(node.id, e)}
-                onClick={(e) => {
+                onDoubleClick={(e) => {
                   e.stopPropagation()
-                  if (!hasDraggedRef.current) {
-                    setInspectingNodeId(node.id)
-                    setInspectorSubTab("operations")
-                    if (onSelectScreen) {
-                      onSelectScreen(node.id)
-                    }
-                  }
+                  setInspectingNodeId(node.id)
+                  setInspectorSubTab("operations")
+                  onSelectScreen?.(node.id)
                 }}
-                className={`absolute select-none rounded-xl border cursor-grab active:cursor-grabbing flex flex-col justify-between overflow-hidden ${
+                className={`absolute select-none cursor-grab active:cursor-grabbing flex flex-col overflow-visible group/phone ${
                   isDragging
-                    ? "z-40 border-indigo-400 bg-slate-900 shadow-2xl shadow-indigo-500/30 scale-[1.03] transition-none"
+                    ? "z-40 scale-[1.02] transition-none"
+                    : isSelected
+                    ? "z-30 transition-all duration-150"
                     : isMatch
-                    ? "z-30 border-emerald-400 bg-slate-900 shadow-2xl shadow-emerald-500/40 ring-2 ring-emerald-400/80 scale-[1.02] transition-all"
+                    ? "z-30 scale-[1.02] transition-all duration-300"
                     : inspectingNodeId === node.id
-                    ? "z-30 border-indigo-400 bg-slate-900 shadow-2xl shadow-indigo-500/50 ring-2 ring-indigo-500/60 transition-all"
+                    ? "z-30 transition-all duration-300"
                     : isDimmed
-                    ? "z-10 border-slate-800 bg-slate-950/80 opacity-30 grayscale-[70%] transition-all"
-                    : "z-20 border-slate-700/80 bg-slate-900/95 hover:border-indigo-500/70 hover:shadow-xl shadow-lg transition-all"
+                    ? "z-10 opacity-30 grayscale-[70%] transition-all duration-300"
+                    : "z-20 transition-all duration-200"
                 }`}
                 style={{
                   width: `${CARD_WIDTH}px`,
@@ -1172,72 +1883,308 @@ export default function TestFlowGraph({
                   touchAction: "none",
                 }}
               >
-                {/* 1. Card Header */}
-                <div className="px-2.5 py-1.5 bg-slate-950/80 border-b border-slate-800 flex items-center justify-between gap-1.5 shrink-0">
+                {/* Journey Step Ribbon when part of highlighted user journey */}
+                {isInJourney && (
+                  <div
+                    className={`-mt-5 mb-1 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold flex items-center justify-between border shadow-md ${
+                      isJourneyTarget
+                        ? "bg-indigo-600/95 border-indigo-300 text-white"
+                        : "bg-amber-500/95 border-amber-300 text-slate-950"
+                    }`}
+                  >
+                    <span>
+                      STEP {journeyStepNum} OF {activeJourney.orderedIds.length}
+                    </span>
+                    <span>{isJourneyTarget ? "★ SELECTED" : "JOURNEY →"}</span>
+                  </div>
+                )}
+
+                {/* Figma Artboard Title Bar floating right above the Phone Frame */}
+                <div className="mb-1.5 px-1 flex items-center justify-between gap-1.5 shrink-0">
                   <div className="flex items-center gap-1.5 min-w-0">
-                    <span className="px-1.5 py-0.5 rounded font-mono font-bold text-[10px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                    <button
+                      type="button"
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setSelectedNodeIds((prev) => {
+                          const next = new Set(prev)
+                          if (next.has(node.id)) next.delete(node.id)
+                          else next.add(node.id)
+                          return next
+                        })
+                      }}
+                      className={`w-4 h-4 rounded flex items-center justify-center border transition cursor-pointer shrink-0 ${
+                        isSelected
+                          ? "bg-indigo-600 border-indigo-400 text-white shadow-sm shadow-indigo-500/50"
+                          : "bg-slate-900 border-slate-700 text-transparent hover:border-indigo-400"
+                      }`}
+                      title={isSelected ? "Deselect phone" : "Select phone (highlights journey & allows group move)"}
+                    >
+                      <Check className="h-2.5 w-2.5" />
+                    </button>
+                    <span className="px-1.5 py-0.5 rounded font-mono font-extrabold text-[11px] bg-indigo-500/30 text-indigo-200 border border-indigo-500/50 shrink-0">
                       {node.id}
                     </span>
-                    {isMatch && (
-                      <span className="px-1.5 py-0.2 rounded font-mono font-bold text-[9px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
-                        MATCH
-                      </span>
-                    )}
-                    <span className="text-[11px] font-bold text-white truncate max-w-[105px]" title={node.title}>
-                      {node.title.replace(/^S\d+\s*/i, "")}
+                    <span className="text-xs font-extrabold text-white truncate" title={cleanTitle}>
+                      {is404 ? `404: ${routePath}` : cleanTitle}
                     </span>
                   </div>
 
-                  <div className="flex items-center gap-0.5 text-slate-400">
+                  <div className="flex items-center gap-1 shrink-0">
+                    {is404 ? (
+                      <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-rose-500/25 text-rose-300 border border-rose-500/40">
+                        404
+                      </span>
+                    ) : failedCount > 0 ? (
+                      <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40">
+                        {failedCount} FAIL
+                      </span>
+                    ) : passedCount > 0 ? (
+                      <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                        PASS
+                      </span>
+                    ) : null}
                     <button
                       type="button"
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setInspectingNodeId(node.id)
+                        setInspectorSubTab("operations")
+                        onSelectScreen?.(node.id)
+                      }}
+                      className="p-1 rounded bg-slate-900/90 border border-slate-700/80 text-slate-300 hover:text-white hover:bg-indigo-600 hover:border-indigo-500 transition cursor-pointer"
+                      title="Inspect full phone screen & operations"
+                    >
+                      <Eye className="h-3 w-3" />
+                    </button>
+                    <button
+                      type="button"
+                      onPointerDown={(e) => e.stopPropagation()}
                       onClick={(e) => handleDeleteNode(node.id, e)}
-                      className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-950/60 transition cursor-pointer"
-                      title={`Delete screen ${node.id}`}
-                      aria-label={`Delete screen ${node.id}`}
+                      className="p-1 rounded bg-slate-900/90 border border-slate-800 text-slate-500 hover:text-rose-300 hover:bg-rose-950/70 transition cursor-pointer"
+                      title={`Delete phone screen ${node.id}`}
                     >
                       <Trash2 className="h-3 w-3" />
                     </button>
-                    <GripVertical className="h-3.5 w-3.5 text-slate-500" />
                   </div>
                 </div>
 
-                {/* 2. Screenshot Thumbnail View */}
-                <div className="flex-1 min-h-0 relative bg-slate-950 overflow-hidden group/img">
-                  {node.screenshotUrl ? (
-                    <img
-                      src={node.screenshotUrl}
-                      alt={node.title}
-                      className="w-full h-full object-cover object-top pointer-events-none select-none"
-                      draggable={false}
-                      loading="lazy"
-                    />
-                  ) : (
-                    <div className="w-full h-full flex flex-col items-center justify-center text-slate-600 bg-slate-950/60 p-2">
-                      <Layers className="h-6 w-6 mb-1 text-slate-700" />
-                      <span className="text-[10px] font-mono text-slate-500">Screen Rendered</span>
-                    </div>
+                {/* PHONE HARDWARE CHASSIS / BEZEL */}
+                <div
+                  className={`relative flex-1 min-h-0 rounded-[34px] p-2 bg-slate-950 flex flex-col justify-between shadow-2xl border-[3px] transition-colors ${
+                    isDragging || isSelected
+                      ? "border-indigo-400 shadow-indigo-500/40 ring-2 ring-indigo-500/60"
+                      : isInJourney
+                      ? "border-amber-400 shadow-amber-500/35 ring-2 ring-amber-400/70"
+                      : isMatch
+                      ? "border-emerald-400 shadow-emerald-500/35 ring-2 ring-emerald-400/60"
+                      : inspectingNodeId === node.id
+                      ? "border-indigo-400 shadow-indigo-500/40 ring-2 ring-indigo-500/50"
+                      : is404
+                      ? "border-rose-800/80 group-hover/phone:border-rose-500/80"
+                      : "border-slate-700/90 group-hover/phone:border-indigo-400/80"
+                  }`}
+                >
+                  {/* Side Hardware Button Accents (Volume + Power) */}
+                  <span className="absolute -left-[5px] top-16 w-[3px] h-7 rounded-l bg-slate-700 pointer-events-none" />
+                  <span className="absolute -left-[5px] top-26 w-[3px] h-7 rounded-l bg-slate-700 pointer-events-none" />
+                  <span className="absolute -right-[5px] top-20 w-[3px] h-10 rounded-r bg-slate-700 pointer-events-none" />
+
+                  {/* Figma Selection Corner Handles */}
+                  {isSelected && (
+                    <>
+                      <span className="absolute -top-1.5 -left-1.5 w-3 h-3 bg-white border-2 border-indigo-500 rounded-[3px] pointer-events-none z-50" />
+                      <span className="absolute -top-1.5 -right-1.5 w-3 h-3 bg-white border-2 border-indigo-500 rounded-[3px] pointer-events-none z-50" />
+                      <span className="absolute -bottom-1.5 -left-1.5 w-3 h-3 bg-white border-2 border-indigo-500 rounded-[3px] pointer-events-none z-50" />
+                      <span className="absolute -bottom-1.5 -right-1.5 w-3 h-3 bg-white border-2 border-indigo-500 rounded-[3px] pointer-events-none z-50" />
+                    </>
                   )}
-                </div>
 
-                {/* 3. Card Footer */}
-                <div className="px-2.5 py-1.5 bg-slate-950/90 border-t border-slate-800/80 flex items-center justify-between text-[10px] shrink-0 gap-1">
-                  <div className="flex flex-col min-w-0 max-w-[135px]">
-                    <span className="text-slate-400 font-mono truncate text-[10px]">
-                      {node.url ? new URL(node.url).pathname || "/" : "/"}
-                    </span>
-                    {(node.componentLocation || matchedScreen?.componentLocation) && (
-                      <span
-                        className="text-[9px] font-mono text-purple-300 truncate"
-                        title={node.componentLocation || matchedScreen?.componentLocation}
+                  {/* INNER PHONE OLED DISPLAY */}
+                  <div className="flex-1 min-h-0 rounded-[25px] bg-slate-900 border border-slate-800/90 overflow-hidden flex flex-col justify-between relative">
+                    {/* 1. iOS Status Bar + Dynamic Island Notch */}
+                    <div className="px-3 pt-1.5 pb-1 bg-slate-950 flex items-center justify-between text-[9px] font-semibold text-slate-300 shrink-0">
+                      <span className="font-mono text-[9px]">9:41</span>
+                      <div className="w-14 h-3 rounded-full bg-black border border-slate-800/90 flex items-center justify-end pr-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-950 border border-indigo-500/40" />
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <span className="inline-block w-2 h-1.5 rounded-[1px] bg-slate-300" />
+                        <span className="inline-block w-3 h-1.5 rounded-[2px] border border-slate-300 p-[0.5px]">
+                          <span className="block w-full h-full bg-emerald-400" />
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* 2. CLEAR SCREEN IDENTITY BANNER (Always legible even when zoomed out!) */}
+                    <div className="px-3 py-2 bg-gradient-to-b from-slate-950 to-slate-900 border-b border-slate-800/90 shrink-0">
+                      <div className="flex items-center justify-between gap-1.5 mb-1">
+                        <span
+                          className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-extrabold border ${screenCategory.cls}`}
+                        >
+                          {screenCategory.label}
+                        </span>
+                        <span
+                          className="text-[10px] font-mono text-slate-300 bg-slate-950 px-1.5 py-0.5 rounded border border-slate-800 truncate max-w-[125px]"
+                          title={routePath}
+                        >
+                          {routePath}
+                        </span>
+                      </div>
+                      <div
+                        className="text-[13px] font-extrabold text-white leading-tight line-clamp-2"
+                        title={cleanTitle}
                       >
-                        📄 {(node.componentLocation || matchedScreen?.componentLocation)?.split("/").slice(-2).join("/")}
-                      </span>
-                    )}
+                        {is404 ? `Page Not Found (${routePath})` : cleanTitle}
+                      </div>
+                    </div>
+
+                    {/* 3. SCREENSHOT PREVIEW WINDOW (Uncropped object-contain + clear 404 state) */}
+                    <div className="h-[125px] relative bg-slate-950 border-b border-slate-800/90 overflow-hidden shrink-0 flex items-center justify-center">
+                      {is404 ? (
+                        <div className="w-full h-full p-3 bg-gradient-to-b from-rose-950/40 to-slate-950 flex flex-col items-center justify-center text-center">
+                          <span className="px-2.5 py-0.5 rounded-full bg-rose-500/20 border border-rose-500/40 text-rose-300 font-mono text-xs font-extrabold mb-1">
+                            HTTP 404 ERROR
+                          </span>
+                          <p className="text-[11px] font-semibold text-slate-200 truncate max-w-full">
+                            Route {routePath}
+                          </p>
+                          <p className="text-[9.5px] text-slate-400 mt-0.5">
+                            Target URL returned 404 Not Found
+                          </p>
+                        </div>
+                      ) : showScreenshot ? (
+                        <>
+                          <img
+                            src={shotUrl}
+                            alt={cleanTitle}
+                            onError={() => {
+                              setBrokenImageIds((prev) => {
+                                const next = new Set(prev)
+                                next.add(node.id)
+                                return next
+                              })
+                            }}
+                            className="w-full h-full object-contain bg-slate-950 pointer-events-none select-none"
+                            draggable={false}
+                            loading="lazy"
+                          />
+                          <span className="absolute bottom-1 right-1.5 px-1.5 py-0.2 rounded bg-slate-950/85 border border-slate-700/80 text-[8.5px] font-mono text-slate-300">
+                            Live Capture
+                          </span>
+                        </>
+                      ) : (
+                        <div className="w-full h-full p-3 bg-gradient-to-b from-indigo-950/30 to-slate-950 flex flex-col items-center justify-center text-center">
+                          <span className="text-[11px] font-bold text-indigo-300">{cleanTitle}</span>
+                          <span className="text-[9.5px] font-mono text-slate-400 mt-0.5">
+                            {elementsCount} interactive controls discovered
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 4. ALWAYS-VISIBLE INTERACTIVE UI CONTROLS & TEST STEPS INSIDE PHONE */}
+                    <div className="flex-1 min-h-0 p-2.5 bg-slate-900/95 flex flex-col justify-between overflow-hidden">
+                      <div className="flex items-center justify-between text-[9.5px] font-mono uppercase tracking-wider text-slate-400 mb-1 shrink-0">
+                        <span className="font-bold text-slate-300">Screen UI & Actions</span>
+                        <span className="text-indigo-300 font-semibold">
+                          {elementsCount > 0 ? `${elementsCount} controls` : `${nodeSteps.length} steps`}
+                        </span>
+                      </div>
+
+                      <div className="flex-1 min-h-0 space-y-1.5 overflow-hidden flex flex-col justify-start">
+                        {previewRows.length > 0 ? (
+                          previewRows.slice(0, 4).map((row) => {
+                            const isBtn = row.badge === "CLICK" || row.badge === "BTN"
+                            const isInput = row.badge === "FILL" || row.badge === "INPUT" || row.badge === "FIELD"
+                            return (
+                              <div
+                                key={row.id}
+                                className={`px-2 py-1.5 rounded-lg border flex items-center justify-between gap-1.5 text-[10.5px] ${
+                                  isBtn
+                                    ? "bg-indigo-600/20 border-indigo-500/40 text-indigo-100 font-semibold"
+                                    : isInput
+                                    ? "bg-slate-950/95 border-purple-500/35 text-slate-100"
+                                    : "bg-slate-950/85 border-slate-800 text-slate-200"
+                                }`}
+                              >
+                                <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                                  <span
+                                    className={`px-1.5 py-0.2 rounded font-mono font-extrabold text-[8.5px] uppercase shrink-0 ${
+                                      isInput
+                                        ? "bg-purple-500/25 text-purple-200 border border-purple-500/40"
+                                        : isBtn
+                                        ? "bg-indigo-500/35 text-indigo-200 border border-indigo-400/50"
+                                        : "bg-slate-800 text-slate-300 border border-slate-700"
+                                    }`}
+                                  >
+                                    {row.badge}
+                                  </span>
+                                  <div className="min-w-0 flex-1">
+                                    <div className="truncate font-semibold leading-tight" title={row.label}>
+                                      {row.label}
+                                    </div>
+                                    {row.sub && (
+                                      <div className="text-[9px] font-mono text-slate-400 truncate">
+                                        {row.sub}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                                {row.status === "passed" ? (
+                                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                                ) : row.status === "failed" ? (
+                                  <XCircle className="h-3.5 w-3.5 text-rose-400 shrink-0" />
+                                ) : (
+                                  <ArrowRight className="h-3 w-3 text-slate-500 shrink-0" />
+                                )}
+                              </div>
+                            )
+                          })
+                        ) : is404 ? (
+                          <div className="p-2.5 rounded-lg bg-rose-950/30 border border-rose-800/40 text-[10px] text-rose-200 space-y-1">
+                            <div className="font-bold">Broken Navigation Link</div>
+                            <div className="text-slate-300 font-mono text-[9.5px]">
+                              Navigating to {routePath} yielded no interactive DOM controls (404).
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="p-2.5 rounded-lg bg-slate-950/80 border border-slate-800 text-[10px] text-slate-300">
+                            <div className="font-semibold text-white">{cleanTitle}</div>
+                            <div className="text-[9.5px] text-slate-400 font-mono mt-0.5">
+                              Double-click to inspect full screen details
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* 5. Phone Bottom Bar & iOS Home Indicator */}
+                    <div className="px-2.5 pt-1.5 pb-1.5 bg-slate-950 border-t border-slate-800/90 flex flex-col gap-1 shrink-0">
+                      <div className="flex items-center justify-between text-[10px]">
+                        <span className="text-slate-300 font-mono font-semibold">
+                          {elementsCount} UI Els · {nodeSteps.length} Steps
+                        </span>
+                        <button
+                          type="button"
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setInspectingNodeId(node.id)
+                            setInspectorSubTab("operations")
+                            onSelectScreen?.(node.id)
+                          }}
+                          className="px-2 py-0.5 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white font-bold transition cursor-pointer shadow-xs"
+                        >
+                          Open Screen ↗
+                        </button>
+                      </div>
+                      {/* Home Bar Pill */}
+                      <div className="w-20 h-1 rounded-full bg-slate-600/80 mx-auto" />
+                    </div>
                   </div>
-                  <span className="px-1.5 py-0.5 rounded bg-indigo-950/50 text-indigo-300 font-semibold border border-indigo-800/40 shrink-0">
-                    {elementsCount > 0 ? `${elementsCount} elements` : "View Screen"}
-                  </span>
                 </div>
               </div>
             )
@@ -1245,11 +2192,114 @@ export default function TestFlowGraph({
         </div>
       </div>
 
-      {/* 3. Floating Bottom Instruction Helper */}
-      <div className="absolute bottom-3 left-3 z-30 pointer-events-none hidden sm:flex items-center gap-2 bg-slate-900/85 backdrop-blur px-2.5 py-1 rounded-md border border-slate-800 text-[10px] text-slate-400 shadow">
-        <MousePointer className="h-3 w-3 text-indigo-400" />
-        <span>Click card to inspect operations • Drag cards to reposition • Drag canvas to pan</span>
-      </div>
+      {/* 3. Figma Journey & Multi-Select Floating Dock */}
+      {selectedNodeIds.size > 0 ? (
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-40 flex flex-wrap items-center justify-center gap-2 bg-slate-900/95 backdrop-blur-md px-3.5 py-2 rounded-xl border border-amber-500/50 shadow-2xl text-xs text-white animate-in fade-in slide-in-from-bottom-2 duration-150 max-w-[95vw]">
+          <span className="px-2 py-0.5 rounded-md bg-amber-500 text-slate-950 font-bold font-mono text-[11px] shrink-0">
+            Journey ({activeJourney.orderedIds.length} {activeJourney.orderedIds.length === 1 ? "Screen" : "Screens"})
+          </span>
+          <span
+            className="text-[11px] font-mono text-amber-200 bg-slate-950/90 border border-amber-500/30 px-2 py-0.5 rounded-md truncate max-w-[260px] sm:max-w-[360px]"
+            title={activeJourney.orderedIds.join(" → ")}
+          >
+            {activeJourney.orderedIds.join(" → ")}
+          </span>
+          <button
+            type="button"
+            onClick={handleCopyJourney}
+            className={`px-2.5 py-1 rounded font-semibold transition cursor-pointer flex items-center gap-1 shrink-0 ${
+              copiedJourney
+                ? "bg-emerald-600 text-white"
+                : "bg-amber-500/20 hover:bg-amber-500 text-amber-200 hover:text-slate-950 border border-amber-500/40"
+            }`}
+            title="Copy whole user journey (screens, transitions, and steps) to clipboard"
+          >
+            <Check className="h-3 w-3" />
+            <span>{copiedJourney ? "Copied!" : "Copy Journey"}</span>
+          </button>
+          <button
+            type="button"
+            onClick={handleExportJourneyHtml}
+            className="px-2.5 py-1 rounded bg-emerald-600/20 hover:bg-emerald-600 text-emerald-200 hover:text-white border border-emerald-500/40 font-semibold transition cursor-pointer flex items-center gap-1 shrink-0"
+            title="Export this highlighted screen journey as a standalone interactive HTML file"
+          >
+            <FileCode className="h-3 w-3" />
+            <span>Export Journey HTML</span>
+          </button>
+          <div className="w-px h-4 bg-slate-700 mx-0.5" />
+          <button
+            type="button"
+            onClick={() => setSelectedNodeIds(new Set(visibleNodes.map((n) => n.id)))}
+            className="px-2 py-1 rounded hover:bg-slate-800 text-slate-200 font-medium transition cursor-pointer"
+            title="Select all cards"
+          >
+            Select All
+          </button>
+          {selectedNodeIds.size >= 2 && (
+            <>
+              <button
+                type="button"
+                onClick={() => handleAlignSelected("row")}
+                className="px-2 py-1 rounded bg-slate-800 hover:bg-indigo-600 text-slate-200 hover:text-white font-medium transition cursor-pointer flex items-center gap-1"
+                title="Align selected cards in a horizontal row"
+              >
+                <Columns className="h-3 w-3" />
+                <span>Align Row</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleAlignSelected("grid")}
+                className="px-2 py-1 rounded bg-slate-800 hover:bg-indigo-600 text-slate-200 hover:text-white font-medium transition cursor-pointer flex items-center gap-1"
+                title="Pack selected cards into a tidy grid"
+              >
+                <LayoutGrid className="h-3 w-3" />
+                <span>Grid</span>
+              </button>
+            </>
+          )}
+          {selectedNodeIds.size === 1 && (
+            <button
+              type="button"
+              onClick={() => {
+                const onlyId = Array.from(selectedNodeIds)[0]
+                if (onlyId) {
+                  setInspectingNodeId(onlyId)
+                  setInspectorSubTab("operations")
+                }
+              }}
+              className="px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-semibold transition cursor-pointer flex items-center gap-1"
+            >
+              <Eye className="h-3 w-3" />
+              <span>Inspect</span>
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              selectedNodeIds.forEach((id) => handleDeleteNode(id))
+              setSelectedNodeIds(new Set())
+            }}
+            className="px-2 py-1 rounded hover:bg-rose-950/60 text-rose-400 hover:text-rose-200 font-medium transition cursor-pointer flex items-center gap-1"
+            title="Delete selected cards"
+          >
+            <Trash2 className="h-3 w-3" />
+            <span className="hidden sm:inline">Delete</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedNodeIds(new Set())}
+            className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition cursor-pointer"
+            title="Clear selection (Esc)"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      ) : (
+        <div className="absolute bottom-3 left-3 z-30 pointer-events-none hidden sm:flex items-center gap-2 bg-slate-900/85 backdrop-blur px-2.5 py-1 rounded-md border border-slate-800 text-[10px] text-slate-400 shadow">
+          <MousePointer className="h-3 w-3 text-indigo-400" />
+          <span>Drag box or Shift+click to select multiple cards • Drag any selected card to move group • Double-click to inspect</span>
+        </div>
+      )}
 
       {/* 4. BIG CARD & SIDE OPERATIONS INSPECTOR MODAL */}
       {inspectingNode && (

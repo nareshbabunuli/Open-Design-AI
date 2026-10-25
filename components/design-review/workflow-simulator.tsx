@@ -1751,8 +1751,16 @@ export function WorkflowSimulator({
 
   return (
     <div className="flex flex-col h-full w-full bg-slate-100 dark:bg-[#0b0c10] text-slate-800 dark:text-[#e2e4ea] select-none font-sans overflow-hidden transition-colors duration-150 relative">
-      {/* ================= TOP HEADER: identity + primary mode switch only (Hidden in Fullscreen) ================= */}
-      {!isFullscreen && (
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp"
+        className="hidden"
+        onChange={handleExactScreenshotSelect}
+      />
+
+      {/* ================= TOP HEADER: identity + primary mode switch only (Hidden in Fullscreen or liveOnly mode) ================= */}
+      {!isFullscreen && !liveOnly && (
         <header className="min-h-12 h-auto border-b border-slate-200 dark:border-[#1e222d] bg-white dark:bg-[#111319] px-2 sm:px-4 py-1.5 sm:py-2 flex flex-wrap items-center justify-between gap-1.5 sm:gap-2 z-20 shrink-0 transition-colors overflow-visible">
         
         {/* Left: workflow selector and navigation - Hidden on mobile or in liveOnly mode */}
@@ -1939,14 +1947,6 @@ export function WorkflowSimulator({
             <ChevronUp className="w-3.5 h-3.5 text-indigo-500" />
             <span className="hidden xl:inline text-[10px]">Hide Header</span>
           </button>
-
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
-            className="hidden"
-            onChange={handleExactScreenshotSelect}
-          />
         </div>
       </header>
       )}
@@ -2117,15 +2117,17 @@ export function WorkflowSimulator({
             </div>
           )}
 
-          <button
-            type="button"
-            onClick={() => setShowGrid(!showGrid)}
-            aria-pressed={showGrid}
-            className={`px-2.5 py-1 rounded border flex items-center gap-1.5 transition text-[11px] font-medium cursor-pointer ${showGrid ? "bg-indigo-50 dark:bg-indigo-500/15 border-indigo-300 dark:border-indigo-500/30 text-indigo-700 dark:text-indigo-300" : "bg-white dark:bg-[#1b1e29] border-slate-300 dark:border-[#272b38] text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white shadow-xs"
-              }`}
-          >
-            Redlines
-          </button>
+          {!liveOnly && (
+            <button
+              type="button"
+              onClick={() => setShowGrid(!showGrid)}
+              aria-pressed={showGrid}
+              className={`px-2.5 py-1 rounded border flex items-center gap-1.5 transition text-[11px] font-medium cursor-pointer ${showGrid ? "bg-indigo-50 dark:bg-indigo-500/15 border-indigo-300 dark:border-indigo-500/30 text-indigo-700 dark:text-indigo-300" : "bg-white dark:bg-[#1b1e29] border-slate-300 dark:border-[#272b38] text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white shadow-xs"
+                }`}
+            >
+              Redlines
+            </button>
+          )}
 
           {/* Snip Area Selection Toggle */}
           <button
@@ -2412,6 +2414,24 @@ export function WorkflowSimulator({
                   <ExternalLink className="w-3.5 h-3.5" />
                 </a>
 
+                {/* Device & Viewport Options toggle in liveOnly mode (Hick's Law: merges 2 headers into 1) */}
+                {liveOnly && (
+                  <button
+                    type="button"
+                    onClick={() => setShowOptions((prev) => !prev)}
+                    className={`px-2 py-0.5 rounded text-[10px] font-semibold border flex items-center gap-1 transition cursor-pointer shrink-0 ${
+                      showOptions
+                        ? "bg-indigo-600/20 border-indigo-500/60 text-indigo-300"
+                        : "bg-slate-100 dark:bg-[#181a22] border-slate-300 dark:border-[#272b38] text-slate-600 dark:text-[#8e95a5] hover:text-slate-900 dark:hover:text-white"
+                    }`}
+                    title="Toggle Device Preset, Zoom & Selection Options"
+                  >
+                    <Smartphone className="w-3 h-3" />
+                    <span className="hidden md:inline">{viewportWidth}×{viewportHeight}</span>
+                    <ChevronDown className={`w-2.5 h-2.5 transition-transform ${showOptions ? "rotate-180" : ""}`} />
+                  </button>
+                )}
+
                 {/* Auth Credentials Modal Trigger */}
                 <button
                   type="button"
@@ -2423,44 +2443,60 @@ export function WorkflowSimulator({
                   title="Configure App Credentials for auto-login & screenshot capture"
                 >
                   <Key className="w-3 h-3" />
-                  <span>Credentials</span>
+                  <span className={liveOnly ? "hidden xl:inline" : ""}>Credentials</span>
                   {(authConfig.username || authConfig.cookie || authConfig.token) && (
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                   )}
                 </button>
 
-                {/* Mode Toggle: Live URL view vs Captured Screenshot */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    const next = !isLiveCanvas
-                    setIsLiveCanvas(next)
-                    if (typeof window !== "undefined") {
-                      localStorage.setItem("simulator_is_live_mode", String(next))
-                    }
-                    triggerToast(next ? "Showing Live Preview" : (currentWorkflow?.designB ? "Showing App Screenshot" : "Showing Dev Sandbox"))
-                  }}
-                  className={`hidden sm:flex px-2 py-0.5 rounded text-[10px] font-semibold border items-center gap-1 transition cursor-pointer shrink-0 ${
-                    isLiveCanvas
-                      ? "bg-purple-50 dark:bg-purple-950/60 border-purple-300 dark:border-purple-600/50 text-purple-700 dark:text-purple-300"
-                      : "bg-emerald-50 dark:bg-emerald-950/60 border-emerald-300 dark:border-emerald-600/50 text-emerald-700 dark:text-emerald-300"
-                  }`}
-                  title={isLiveCanvas ? "Switch to saved screenshot" : "Switch to interactive live preview"}
-                >
-                  {isLiveCanvas ? <Globe className="w-3 h-3" /> : <Camera className="w-3 h-3" />}
-                  <span>{isLiveCanvas ? "Live App" : "Screenshot"}</span>
-                </button>
-
-                {/* Capture button in Panel B for fullscreen mode */}
-                {isFullscreen && (
+                {/* Mode Toggle: Live URL view vs Captured Screenshot (only when not liveOnly or when a screenshot exists) */}
+                {(!liveOnly || Boolean(currentWorkflow?.designB)) && (
                   <button
                     type="button"
-                    onClick={() => handleLiveScreenCapture(false)}
+                    onClick={() => {
+                      const next = !isLiveCanvas
+                      setIsLiveCanvas(next)
+                      if (typeof window !== "undefined") {
+                        localStorage.setItem("simulator_is_live_mode", String(next))
+                      }
+                      triggerToast(next ? "Showing Live Preview" : (currentWorkflow?.designB ? "Showing App Screenshot" : "Showing Dev Sandbox"))
+                    }}
+                    className={`hidden sm:flex px-2 py-0.5 rounded text-[10px] font-semibold border items-center gap-1 transition cursor-pointer shrink-0 ${
+                      isLiveCanvas
+                        ? "bg-purple-50 dark:bg-purple-950/60 border-purple-300 dark:border-purple-600/50 text-purple-700 dark:text-purple-300"
+                        : "bg-emerald-50 dark:bg-emerald-950/60 border-emerald-300 dark:border-emerald-600/50 text-emerald-700 dark:text-emerald-300"
+                    }`}
+                    title={isLiveCanvas ? "Switch to saved screenshot" : "Switch to interactive live preview"}
+                  >
+                    {isLiveCanvas ? <Globe className="w-3 h-3" /> : <Camera className="w-3 h-3" />}
+                    <span>{isLiveCanvas ? "Live" : "Shot"}</span>
+                  </button>
+                )}
+
+                {/* Capture button in Panel B for fullscreen or liveOnly mode */}
+                {(isFullscreen || liveOnly) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (isAreaSelectionActive && selectionBoxRef.current) {
+                        const style = window.getComputedStyle(selectionBoxRef.current)
+                        const left = parseFloat(style.left) || 0
+                        const top = parseFloat(style.top) || 0
+                        const width = parseFloat(style.width) || viewportWidth
+                        const height = parseFloat(style.height) || viewportHeight
+                        handleLiveScreenCapture(false, { x: left, y: top, width, height })
+                      } else {
+                        handleLiveScreenCapture(false)
+                      }
+                    }}
                     disabled={isCapturing || isSavingScreenshot}
-                    className="p-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white transition cursor-pointer shadow-xs disabled:opacity-50 shrink-0"
-                    title="Capture App Screen"
+                    className={`px-2 py-0.5 rounded text-[10px] font-semibold text-white flex items-center gap-1 transition cursor-pointer shadow-xs disabled:opacity-50 shrink-0 ${
+                      isAreaSelectionActive ? "bg-emerald-600 hover:bg-emerald-500" : "bg-indigo-600 hover:bg-indigo-500"
+                    }`}
+                    title={isAreaSelectionActive ? "Capture Selected Area" : "Capture App Screen"}
                   >
                     <Camera className="w-3 h-3" />
+                    <span className="hidden lg:inline">{isCapturing ? "…" : isAreaSelectionActive ? "Crop" : "Capture"}</span>
                   </button>
                 )}
               </div>

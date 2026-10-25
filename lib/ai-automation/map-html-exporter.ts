@@ -1062,25 +1062,37 @@ export function generateAppMapHtml({
         byLevel.get(lvl).push(id);
       }
 
-      const colSpacingX = allExpanded ? 480 : 400;
-      const rowSpacingY = allExpanded ? 340 : 260;
+      const colSpacingX = allExpanded ? 480 : 420;
+      const rowSpacingY = allExpanded ? 340 : 230;
       const startX = 80;
       const startY = 80;
 
-      const lvl1Ids = byLevel.get(1) || [];
-      const rootCenterY = startY + Math.max(0, (Math.min(3, lvl1Ids.length) - 1) * 140);
-      nodePositions[rootId] = { x: startX, y: rootCenterY };
-
       const sortedLevels = Array.from(byLevel.keys()).sort((a, b) => a - b);
+      const layerColumnX = new Map();
+      let currentX = startX;
+      const cardW = allExpanded ? 320 : 260;
+      const maxPerCol = 5;
+
+      sortedLevels.forEach((lvl) => {
+        const ids = byLevel.get(lvl);
+        layerColumnX.set(lvl, currentX);
+        const numSubCols = Math.max(1, Math.ceil(ids.length / maxPerCol));
+        currentX += colSpacingX + (numSubCols - 1) * (cardW + 60);
+      });
+
+      const lvl1Count = (byLevel.get(1) || []).length;
+      const rootY = startY + Math.max(0, (Math.min(maxPerCol, lvl1Count) - 1) * (rowSpacingY / 2));
+      nodePositions[rootId] = { x: startX, y: rootY };
+
       sortedLevels.forEach((lvl) => {
         if (lvl === 0) return;
         const ids = byLevel.get(lvl);
-        const maxPerCol = 3;
+        const baseX = layerColumnX.get(lvl) || startX;
         ids.forEach((id, idx) => {
           const subCol = Math.floor(idx / maxPerCol);
           const rowIdx = idx % maxPerCol;
           nodePositions[id] = {
-            x: startX + lvl * colSpacingX + subCol * (allExpanded ? 350 : 300),
+            x: baseX + subCol * (cardW + 60),
             y: startY + rowIdx * rowSpacingY,
           };
         });

@@ -322,14 +322,14 @@ export function detectInteractionPatterns(state: PatternState): InteractionPatte
     // action controls have dedicated patterns; specialized inputs need
     // type-aware values and must not be treated as generic text fields.
     const textEntryTypes = new Set([
-      "text", "email", "search", "tel", "url", "password",
+      "text", "email", "search", "tel", "url", "password", "file",
     ])
     const isTextEntry = tag === "textarea" || (tag === "input" && textEntryTypes.has(type))
     if (isTextEntry) {
       if (type !== "search") {
-        add(out, "valid_input", [t], "Text-entry field can be tested with a type-appropriate synthetic value.", 0.9)
+        add(out, "valid_input", [t], "Text-entry or file field can be tested with a type-appropriate synthetic value.", 0.9)
       }
-      if (el.required) add(out, "required_validation", [t], "Required text-entry field can be tested empty without submitting.", 0.98)
+      if (el.required && type !== "file") add(out, "required_validation", [t], "Required text-entry field can be tested empty without submitting.", 0.98)
       if (type === "email" || type === "url") {
         add(out, "invalid_input", [t], "Typed field supports malformed-input validation.", 0.96)
       }

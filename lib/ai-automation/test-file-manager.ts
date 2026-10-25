@@ -249,6 +249,8 @@ export function pickUploadFile(
   if (inventory && inventory.files.length > 0) {
     const acceptTokens = (criteria.acceptAttr || "")
       .split(",")
+      .map((t) => t.trim().toLowerCase())
+      .filter(Boolean)
     // 1. If fileTypeRequired is specified, check if any file in that category satisfies acceptTokens
     if (criteria.fileTypeRequired && inventory.filesByType[criteria.fileTypeRequired]?.length > 0) {
       const candidates = inventory.filesByType[criteria.fileTypeRequired]

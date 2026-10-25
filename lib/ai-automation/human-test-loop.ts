@@ -24,6 +24,7 @@ import { inspectPageDom, exploreInternalLinkAndReturn, installDomNavigationObser
 import { reconcileActionLedger } from "./action-ledger-reconciliation"
 import { logActionExecution } from "./stagehand-config"
 import { isSameOriginUrl } from "./full-app-utils"
+import { resolveUploadFolder, scanUploadFolder, pickUploadFile } from "./test-file-manager"
 
 const MAX_LOOP_STEPS = 24
 const LAYA_THRESHOLD = 0.35
@@ -481,6 +482,36 @@ async function executeCandidate(page: Page, candidate: CandidateTest, job: Autom
       await setInputValue(original).catch(() => {})
       await target.dispose().catch(() => {})
       return { ok: false, observation: "Invalid-input interaction failed: " + (error?.message || String(error)) }
+    }
+  }
+
+  if (targetInfo.type === "file") {
+    try {
+      const acceptAttr = await target.evaluate((el) => el.getAttribute("accept") || "").catch(() => "")
+      const uploadDir = resolveUploadFolder({
+        uploadFilesDir: job.uploadFilesDir,
+        projectDir: job.projectDir,
+        prompt: candidate.title,
+      })
+      const inv = uploadDir ? scanUploadFolder(uploadDir) : null
+      const picked = pickUploadFile(inv, {
+        acceptAttr,
+        targetName: candidate.target?.label || candidate.title,
+      })
+      await (target as any).uploadFile(picked.filePath)
+      await target.evaluate((el) => {
+        el.dispatchEvent(new Event("input", { bubbles: true }))
+        el.dispatchEvent(new Event("change", { bubbles: true }))
+      }).catch(() => {})
+      await new Promise((resolve) => setTimeout(resolve, 400))
+      const attached = await target.evaluate((el) => ((el as HTMLInputElement).files?.length || 0) > 0).catch(() => false)
+      await target.dispose().catch(() => {})
+      return attached
+        ? { ok: true, observation: `Attached test file "${picked.fileName}" to ${candidate.title}.` }
+        : { ok: false, observation: `Failed to attach file to ${candidate.title}.` }
+    } catch (error: any) {
+      await target.dispose().catch(() => {})
+      return { ok: false, observation: "File upload interaction failed: " + (error?.message || String(error)) }
     }
   }
 

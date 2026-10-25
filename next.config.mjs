@@ -6,6 +6,7 @@ const nextConfig = {
     '@ffmpeg-installer/ffmpeg',
     '@browserbasehq/stagehand',
     'sharp',
+    '@techstark/opencv-js',
   ],
   typescript: {
     ignoreBuildErrors: true,

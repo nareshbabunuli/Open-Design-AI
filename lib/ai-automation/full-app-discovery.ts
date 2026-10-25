@@ -1561,8 +1561,15 @@ export async function completeJourneyReturnAndLogout(
           const href = el.getAttribute("href") || ""
           const testId = el.getAttribute("data-testid") || ""
           const actionAttr = el.getAttribute("data-action") || ""
+          const svgEl = el.querySelector("svg")
+          const svgHtml = svgEl?.innerHTML || ""
+          const hasLogoutSvgPath = svgHtml.includes("M9 21H5") && (svgHtml.includes("16 17l5-5-5-5") || svgHtml.includes("M21 12H9"))
           const combined = `${label} ${href} ${testId} ${actionAttr}`
-          if (/\b(log\s*out|sign\s*out|log\s*off)\b/i.test(combined) || /(logout|signout|sign-out)/i.test(href + " " + testId + " " + actionAttr)) {
+          if (
+            hasLogoutSvgPath ||
+            /\b(log\s*out|sign\s*out|log\s*off)\b/i.test(combined) ||
+            /(logout|signout|sign-out)/i.test(href + " " + testId + " " + actionAttr)
+          ) {
             el.click()
             return label.slice(0, 40) || "Log Out"
           }

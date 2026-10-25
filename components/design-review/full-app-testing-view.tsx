@@ -7,6 +7,8 @@ import type {
   AppScreenNode,
   TestPlanStep,
   ActionableElement,
+  FeatureWorkflowSpec,
+  FeatureWorkflowEdgeCase,
 } from "@/lib/ai-automation/types"
 import TestFlowGraph from "./test-flow-graph"
 import ActionLedgerPanel from "./action-ledger-panel"
@@ -30,6 +32,7 @@ import {
   Maximize2,
   ChevronRight,
   ShieldAlert,
+  ShieldCheck,
   ExternalLink,
   Check,
   Clock,
@@ -75,6 +78,8 @@ interface FullAppTestingViewProps {
   onToggleFullStage?: () => void
   testingMode?: "full_app" | "feature_workflow"
   onSelectTestingMode?: (mode: "full_app" | "feature_workflow") => void
+  fallbackPlan?: FullAppTestPlan | null
+  fallbackSpec?: FeatureWorkflowSpec | null
 }
 
 export default function FullAppTestingView({
@@ -96,13 +101,21 @@ export default function FullAppTestingView({
   onToggleFullStage,
   testingMode = "full_app",
   onSelectTestingMode,
+  fallbackPlan = null,
+  fallbackSpec = null,
 }: FullAppTestingViewProps) {
   const plan = useMemo(() => {
     if (job?.fullAppTestPlan && job.fullAppTestPlan.screens?.length > 0) {
       return job.fullAppTestPlan
     }
-    return synthesizeFullAppPlanFromJob(job)
-  }, [job])
+    const synth = synthesizeFullAppPlanFromJob(job)
+    if (synth && synth.screens?.length > 0) return synth
+    return fallbackPlan || null
+  }, [job, fallbackPlan])
+
+  const activeEdgeCases = useMemo(() => {
+    return job?.edgeCasesTested || job?.featureWorkflowSpec?.edgeCases || fallbackSpec?.edgeCases || []
+  }, [job?.edgeCasesTested, job?.featureWorkflowSpec?.edgeCases, fallbackSpec?.edgeCases])
 
   const flowGraph = useMemo(() => {
     if (job?.flowGraph && job.flowGraph.nodes.length > 0) return job.flowGraph
@@ -114,6 +127,12 @@ export default function FullAppTestingView({
     "chat" | "map" | "screens" | "plan" | "execution" | "files" | "coverage"
   >("map")
   const activeSubTab = controlledSubTab || internalSubTab
+  const [planSection, setPlanSection] = useState<"steps" | "screens" | "files">("steps")
+
+  useEffect(() => {
+    if (activeSubTab === "screens") setPlanSection("screens")
+    else if (activeSubTab === "files") setPlanSection("files")
+  }, [activeSubTab])
 
   const handleSubTabChange = (tab: "chat" | "map" | "screens" | "plan" | "execution" | "files" | "coverage") => {
     setInternalSubTab(tab)
@@ -791,32 +810,32 @@ export default function FullAppTestingView({
         </div>
       )}
 
-      {/* 3. Sub-Tab Navigation */}
+      {/* 3. Unified Sub-Tab Navigation (Hick's Law: 4 non-overlapping stage views) */}
       {!hideSubNav && (
-        <div className="px-4 border-b border-slate-800 bg-slate-900/50 flex items-center justify-between text-xs shrink-0 overflow-x-auto custom-scrollbar">
-          <div className="flex gap-1 py-1.5">
+        <div className="px-3 py-1.5 border-b border-slate-800 bg-slate-900/80 flex items-center justify-between gap-2 text-xs shrink-0 overflow-x-auto custom-scrollbar">
+          <div className="flex items-center gap-1">
             {[
-              { id: "chat", label: "Testing Bot Chat", icon: MessageSquare, isLive: job?.status === "running" },
-              { id: "map", label: "App Map", icon: MapIcon, count: plan?.screens.length },
-              { id: "screens", label: "Discovered Screens", icon: Layers, count: plan?.screens.length },
-              { id: "plan", label: "Structured Test Plan", icon: ListChecks, count: plan?.steps.length },
-              { id: "execution", label: "Live Execution & Evidence", icon: Play },
-              { id: "files", label: "Test Files Provisioning", icon: FileUp, count: plan?.requiredFileTypes.length },
+              { id: "chat", label: "Chat", icon: MessageSquare, isLive: job?.status === "running" },
+              { id: "plan", label: "Plan & Screens", icon: ListChecks, count: plan?.steps.length },
+              { id: "map", label: "Flow Map", icon: MapIcon, count: plan?.screens.length },
               {
                 id: "coverage",
-                label: "Coverage & Issues",
+                label: "Report",
                 icon: ShieldAlert,
-                count: job?.issues && job.issues.length > 0 ? `${job.issues.length} bugs` : `${coverage.percentage}%`,
+                count: job?.issues && job.issues.length > 0 ? `${job.issues.length} bugs` : coverage.percentage > 0 ? `${coverage.percentage}%` : undefined,
               },
             ].map((tab) => {
               const Icon = tab.icon
-              const isActive = activeSubTab === tab.id
+              const isActive =
+                activeSubTab === tab.id ||
+                (tab.id === "plan" && (activeSubTab === "screens" || activeSubTab === "files")) ||
+                (tab.id === "coverage" && activeSubTab === "execution")
               return (
                 <button
                   key={tab.id}
                   type="button"
                   onClick={() => handleSubTabChange(tab.id as any)}
-                  className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 font-semibold transition cursor-pointer whitespace-nowrap ${
+                  className={`px-2.5 py-1.5 rounded-lg flex items-center gap-1.5 font-semibold transition cursor-pointer whitespace-nowrap ${
                     isActive
                       ? "bg-indigo-600 text-white shadow-sm shadow-indigo-950"
                       : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/60"
@@ -840,39 +859,27 @@ export default function FullAppTestingView({
             })}
           </div>
 
-          {!fullPageView && job?.id && (
-            <div className="flex items-center gap-1.5 shrink-0 ml-auto my-1">
+          <div className="flex items-center gap-2 shrink-0">
+            {isRunning ? (
               <button
                 type="button"
-                onClick={() => window.open(`/api/ai-automation/html-report?jobId=${job.id}`, '_blank')}
-                className="px-2.5 py-1 rounded-lg bg-blue-600/30 hover:bg-blue-600 border border-blue-500/50 text-blue-200 hover:text-white text-[11px] font-semibold flex items-center gap-1 transition cursor-pointer"
-                title="View comprehensive HTML report in browser (with print-to-PDF)"
+                onClick={onCancelJob}
+                className="px-3 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-sm"
               >
-                <FileBarChart className="h-3 w-3" />
-                <span>View Report</span>
+                <Ban className="h-3 w-3" />
+                <span>Stop</span>
               </button>
+            ) : (
               <button
                 type="button"
-                onClick={handleExportZip}
-                disabled={isExportingZip}
-                className="px-2.5 py-1 rounded-lg bg-indigo-600/30 hover:bg-indigo-600 border border-indigo-500/50 text-indigo-200 hover:text-white text-[11px] font-semibold flex items-center gap-1 transition cursor-pointer disabled:opacity-50"
-                title="Download complete test bundle as ZIP (PDF report, HTML, evidence screenshots, and JSON)"
+                onClick={() => onStartFullAppTest(dummyFiles)}
+                className="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-sm"
               >
-                {isExportingZip ? <Loader2 className="h-3 w-3 animate-spin" /> : <Archive className="h-3 w-3" />}
-                <span>{isExportingZip ? "Packaging..." : "Save Test ZIP"}</span>
+                <Play className="h-3 w-3 fill-current" />
+                <span>{plan ? "Re-Run Full App" : "Full App Test"}</span>
               </button>
-              <button
-                type="button"
-                onClick={handleResetData}
-                disabled={isResettingData}
-                className="px-2 py-1 rounded-lg bg-slate-900 hover:bg-rose-950/40 border border-slate-800 hover:border-rose-500/50 text-slate-400 hover:text-rose-200 text-[11px] font-medium flex items-center gap-1 transition cursor-pointer disabled:opacity-50"
-                title="Reset discovered map screens and test plan data"
-              >
-                {isResettingData ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
-                <span>Reset Data</span>
-              </button>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       )}
 
@@ -880,39 +887,9 @@ export default function FullAppTestingView({
       <div className={`flex-1 min-h-0 overflow-y-auto custom-scrollbar ${fullPageView && activeSubTab === "map" ? "p-0 flex flex-col" : "p-4"}`}>
         {/* SUBTAB 1: FIGMA-STYLE APPLICATION MAP */}
         {activeSubTab === "map" && (
-          <div className={`space-y-4 ${fullPageView ? "flex-1 flex flex-col min-h-0" : ""}`}>
-            {!fullPageView && (
-              <div className="flex items-center justify-between shrink-0">
-                <div>
-                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                    <MapIcon className="h-4 w-4 text-indigo-400" />
-                    Visual Application Workflow Map
-                  </h3>
-                  <p className="text-xs text-slate-400">
-                    Node cards represent discovered screens; arrows indicate tested user transitions (e.g. S001 Login → S002 Register).
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="text-xs text-slate-400 font-mono">
-                    {plan ? `${plan.screens.length} Screens · ${plan.transitions.length} Transitions` : "Mapping Pending"}
-                  </div>
-                  {(onOpenMapPage || onOpenBesideScreen) && (
-                    <button
-                      type="button"
-                      onClick={onOpenMapPage || onOpenBesideScreen}
-                      className="px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-sm bg-indigo-600 hover:bg-indigo-500 text-white border border-indigo-400/50 shadow-indigo-950/50"
-                      title="Open map like another page in full view"
-                    >
-                      <Maximize2 className="h-3.5 w-3.5" />
-                      <span>Open Full Page Map</span>
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
-
+          <div className={fullPageView ? "flex-1 flex flex-col min-h-0 h-full" : "space-y-4"}>
             {flowGraph && flowGraph.nodes.length > 0 ? (
-              <div className={fullPageView ? "flex-1 min-h-[580px]" : ""}>
+              <div className={fullPageView ? "flex-1 flex flex-col min-h-[580px] h-full" : ""}>
                 <TestFlowGraph
                   graph={flowGraph}
                   screens={plan?.screens}
@@ -942,8 +919,86 @@ export default function FullAppTestingView({
           </div>
         )}
 
+        {/* UNIFIED PLAN, SCREENS & TEST FILES SUB-SWITCHER (Hick's Law: 3 related setup views in 1 tab) */}
+        {(activeSubTab === "plan" || activeSubTab === "screens" || activeSubTab === "files") && (
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-800">
+            <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800 text-xs">
+              <button
+                type="button"
+                onClick={() => {
+                  setPlanSection("steps")
+                  if (activeSubTab !== "plan") handleSubTabChange("plan")
+                }}
+                className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 font-semibold transition cursor-pointer ${
+                  planSection === "steps" && activeSubTab !== "screens" && activeSubTab !== "files"
+                    ? "bg-indigo-600 text-white shadow-xs"
+                    : "text-slate-400 hover:text-white"
+                }`}
+              >
+                <ListChecks className="h-3.5 w-3.5" />
+                <span>Test Steps</span>
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-slate-950/60 text-slate-200">
+                  {plan?.steps.length || 0}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPlanSection("screens")
+                  if (activeSubTab !== "plan") handleSubTabChange("plan")
+                }}
+                className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 font-semibold transition cursor-pointer ${
+                  planSection === "screens" || activeSubTab === "screens"
+                    ? "bg-indigo-600 text-white shadow-xs"
+                    : "text-slate-400 hover:text-white"
+                }`}
+              >
+                <Layers className="h-3.5 w-3.5" />
+                <span>Screens &amp; DOM</span>
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-slate-950/60 text-slate-200">
+                  {plan?.screens.length || 0}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPlanSection("files")
+                  if (activeSubTab !== "plan") handleSubTabChange("plan")
+                }}
+                className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 font-semibold transition cursor-pointer ${
+                  planSection === "files" || activeSubTab === "files"
+                    ? "bg-indigo-600 text-white shadow-xs"
+                    : "text-slate-400 hover:text-white"
+                }`}
+              >
+                <FileUp className="h-3.5 w-3.5" />
+                <span>Test Files</span>
+              </button>
+            </div>
+
+            {plan && planSection === "steps" && activeSubTab === "plan" && (
+              <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-lg border border-slate-800 text-xs">
+                {["all", "passed", "failed", "blocked", "pending"].map((st) => (
+                  <button
+                    key={st}
+                    type="button"
+                    onClick={() => setFilterStepStatus(st)}
+                    className={`px-2.5 py-1 rounded capitalize font-medium transition cursor-pointer ${
+                      filterStepStatus === st
+                        ? "bg-indigo-600 text-white font-bold"
+                        : "text-slate-400 hover:text-white"
+                    }`}
+                  >
+                    {st}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* SUBTAB 2: DISCOVERED SCREENS & ACTION INVENTORY */}
-        {activeSubTab === "screens" && (
+        {(activeSubTab === "screens" || (activeSubTab === "plan" && planSection === "screens")) && (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <div>
@@ -1137,66 +1192,31 @@ export default function FullAppTestingView({
         )}
 
         {/* SUBTAB 3: STRUCTURED TEST PLAN */}
-        {activeSubTab === "plan" && (
+        {activeSubTab === "plan" && planSection === "steps" && (
           <div className="space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <ListChecks className="h-4 w-4 text-indigo-400" />
-                  Pre-Flight Test Plan
-                </h3>
-                <p className="text-xs text-slate-400">
-                  Every step is planned before execution starts. Synthetic faker data is injected for safety.
-                </p>
-              </div>
-
-              {/* Status Filters & Actions */}
-              <div className="flex items-center gap-2 flex-wrap">
-                {plan && (
-                  <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-lg border border-slate-800 text-xs">
-                    {["all", "passed", "failed", "blocked", "pending"].map((st) => (
-                      <button
-                        key={st}
-                        type="button"
-                        onClick={() => setFilterStepStatus(st)}
-                        className={`px-2.5 py-1 rounded capitalize font-medium transition cursor-pointer ${
-                          filterStepStatus === st
-                            ? "bg-indigo-600 text-white font-bold"
-                            : "text-slate-400 hover:text-white"
-                        }`}
-                      >
-                        {st}
-                      </button>
-                    ))}
+            {/* Blocked Steps Resolution Alert Banner */}
+            {plan && plan.steps.some((s) => s.status === "blocked") && (
+              <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-500/50 flex items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-2">
+                  <ShieldAlert className="h-4 w-4 text-amber-400 shrink-0" />
+                  <div>
+                    <span className="font-bold text-amber-200 block">
+                      {plan.steps.filter((s) => s.status === "blocked").length} Step(s) Blocked
+                    </span>
+                    <span className="text-[11px] text-slate-300">
+                      Open Chat to provide credentials or synthetic data and unblock these steps.
+                    </span>
                   </div>
-                )}
-
-                {job?.id && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={handleExportZip}
-                      disabled={isExportingZip}
-                      className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
-                      title="Save complete test as ZIP file (PDF report, HTML, evidence screenshots, and JSON)"
-                    >
-                      {isExportingZip ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Archive className="h-3.5 w-3.5" />}
-                      <span>{isExportingZip ? "Generating ZIP..." : "Save Test ZIP"}</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleResetData}
-                      disabled={isResettingData}
-                      className="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-rose-950/40 border border-slate-800 hover:border-rose-500/50 text-slate-300 hover:text-rose-200 disabled:opacity-50 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
-                      title="Reset discovered map screens and test plan data"
-                    >
-                      {isResettingData ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
-                      <span>Reset Data</span>
-                    </button>
-                  </>
-                )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleSubTabChange("chat")}
+                  className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs shrink-0 cursor-pointer shadow-md shadow-amber-950"
+                >
+                  Open Chat to Unblock →
+                </button>
               </div>
-            </div>
+            )}
 
             {/* Quick Test Credentials Bar */}
             <div className="rounded-xl border border-indigo-500/30 bg-slate-900/90 p-3 flex flex-wrap items-center justify-between gap-3 shadow-sm">
@@ -1457,186 +1477,8 @@ export default function FullAppTestingView({
           </div>
         )}
 
-        {/* SUBTAB 4: LIVE EXECUTION & EVIDENCE */}
-        {activeSubTab === "execution" && (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <Play className="h-4 w-4 text-indigo-400" />
-                  Live Testing Protocol & Evidence Stream
-                </h3>
-                <p className="text-xs text-slate-400">
-                  Strict cycle: <span className="font-semibold text-slate-200">Action → Observe → Verify → Record → Continue</span>
-                </p>
-              </div>
-              <div className="text-xs font-mono text-slate-400">
-                {plan ? `${coverage.actionsTested} / ${coverage.totalActions} Executed` : "Idle"}
-              </div>
-            </div>
-
-            {/* Search Tested Screens Bar & Quick Screen Filter Pills */}
-            <div className="p-3 rounded-xl bg-slate-900/90 border border-slate-800 shadow-md space-y-2.5">
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault()
-                  setEvidenceSearchQuery(evidenceSearchInput.trim())
-                }}
-                className="flex items-center gap-2"
-              >
-                <Search className="h-4 w-4 text-indigo-400 shrink-0" />
-                <input
-                  type="text"
-                  value={evidenceSearchInput}
-                  onChange={(e) => setEvidenceSearchInput(e.target.value)}
-                  placeholder="Search tested screens (e.g. Settings, Dashboard, Tabs, S001)..."
-                  className="w-full bg-transparent border-none text-xs text-white placeholder-slate-400 focus:outline-none"
-                />
-                <button
-                  type="submit"
-                  disabled={!evidenceSearchInput.trim() && !evidenceSearchQuery}
-                  className="px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white font-semibold text-[11px] transition cursor-pointer shrink-0 shadow-xs"
-                  title="Submit search (Enter)"
-                >
-                  Submit
-                </button>
-                {(evidenceSearchInput || evidenceSearchQuery) && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEvidenceSearchInput("")
-                      setEvidenceSearchQuery("")
-                    }}
-                    className="p-1 rounded text-slate-400 hover:text-white transition cursor-pointer"
-                    title="Clear search"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </form>
-
-              {testedScreensList.length > 0 && (
-                <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-800/80">
-                  <span className="text-[10px] text-slate-400 font-semibold uppercase">Tested Screens:</span>
-                  {testedScreensList.map((sName) => (
-                    <button
-                      key={sName}
-                      type="button"
-                      onClick={() => {
-                        const next = evidenceSearchQuery.toLowerCase() === sName.toLowerCase() ? "" : sName
-                        setEvidenceSearchInput(next)
-                        setEvidenceSearchQuery(next)
-                      }}
-                      className={`px-2 py-0.5 rounded-md text-[10px] font-medium transition cursor-pointer ${
-                        evidenceSearchQuery.toLowerCase() === sName.toLowerCase()
-                          ? "bg-indigo-600 text-white font-bold shadow-xs"
-                          : "bg-slate-800/90 hover:bg-slate-700 text-slate-300"
-                      }`}
-                    >
-                      {sName}
-                    </button>
-                  ))}
-                  {evidenceSearchQuery && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEvidenceSearchInput("")
-                        setEvidenceSearchQuery("")
-                      }}
-                      className="text-[10px] text-indigo-400 hover:underline cursor-pointer ml-1"
-                    >
-                      Reset filter
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Reusable Action Queue: filtered by screen search query */}
-            <ActionLedgerPanel
-              actionLedger={actionLedger}
-              onViewEvidence={setScreenshotModal}
-              autoExpand={isRunning}
-              searchQuery={evidenceSearchQuery}
-            />
-
-            {/* Current Active Step Banner */}
-            {isRunning && job?.currentStep && (
-              <div className="p-3.5 rounded-xl bg-gradient-to-r from-indigo-950/60 to-slate-900 border border-indigo-500/50 shadow-lg">
-                <div className="flex items-center gap-2 mb-1 text-xs font-bold text-indigo-300">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                  <span>CURRENT STEP IN FLIGHT</span>
-                </div>
-                <div className="text-sm font-semibold text-white font-mono">{job.currentStep}</div>
-              </div>
-            )}
-
-            {/* Evidence Gallery */}
-            {plan && (plan.steps.filter((s) => s.screenshotUrl).length > 0 || evidenceSearchQuery) ? (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">
-                    Captured Step Evidence ({filteredEvidenceSteps.length}
-                    {evidenceSearchQuery ? ` of ${plan.steps.filter((s) => s.screenshotUrl).length}` : ""})
-                  </h4>
-                  {evidenceSearchQuery && (
-                    <span className="text-[11px] text-indigo-300 font-mono">
-                      Filtered by &quot;{evidenceSearchQuery}&quot;
-                    </span>
-                  )}
-                </div>
-
-                {filteredEvidenceSteps.length > 0 ? (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                    {filteredEvidenceSteps.map((step) => (
-                      <div
-                        key={step.id}
-                        onClick={() => setScreenshotModal(step.screenshotUrl!)}
-                        className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800 hover:border-indigo-500/60 transition cursor-pointer group"
-                      >
-                        <div className="aspect-video rounded-lg overflow-hidden bg-slate-950 border border-slate-800/80 relative">
-                          <img
-                            src={step.screenshotUrl}
-                            alt={step.targetName}
-                            className="w-full h-full object-cover object-top"
-                          />
-                          <div className="absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase font-mono bg-slate-950/80 text-white border border-slate-700">
-                            {step.status}
-                          </div>
-                        </div>
-                        <div className="mt-2 text-xs">
-                          <div className="font-bold text-white truncate">{step.targetName}</div>
-                          <div className="text-[10px] text-slate-400 font-mono truncate">{step.screenName}</div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="p-8 rounded-xl bg-slate-900/40 border border-dashed border-slate-800 text-center space-y-1.5">
-                    <Search className="h-5 w-5 text-slate-500 mx-auto" />
-                    <div className="text-xs font-semibold text-slate-300">
-                      No captured evidence matching &quot;{evidenceSearchQuery}&quot;
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setEvidenceSearchQuery("")}
-                      className="text-xs text-indigo-400 hover:underline cursor-pointer"
-                    >
-                      Clear search filter
-                    </button>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="p-8 rounded-xl bg-slate-900/30 border border-dashed border-slate-800 text-center text-xs text-slate-500">
-                Screenshots and test evidence will stream here as the systematic plan executes.
-              </div>
-            )}
-          </div>
-        )}
-
         {/* SUBTAB 5: TEST FILES PROVISIONING */}
-        {activeSubTab === "files" && (
+        {(activeSubTab === "files" || (activeSubTab === "plan" && planSection === "files")) && (
           <div className="space-y-4">
             <div>
               <h3 className="text-sm font-bold text-white flex items-center gap-2">
@@ -1697,89 +1539,231 @@ export default function FullAppTestingView({
           </div>
         )}
 
-        {/* SUBTAB 6: COVERAGE & ISSUES */}
-        {activeSubTab === "coverage" && (
+        {/* SUBTAB 6: UNIFIED REPORT, EVIDENCE GALLERY, VIDEO & EDGE CASES */}
+        {(activeSubTab === "coverage" || activeSubTab === "execution") && (
           <div className="space-y-4">
-            <div>
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <ShieldAlert className="h-4 w-4 text-indigo-400" />
-                Coverage Analysis & Detected Issues
-              </h3>
-              <p className="text-xs text-slate-400">
-                Comprehensive audit metrics covering discovered routes, actionable controls, form safety, and console JavaScript exceptions.
-              </p>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <ShieldCheck className="h-4 w-4 text-emerald-400" />
+                  Coverage, Step Evidence &amp; Issues Report
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Unified audit report with screen/action coverage, session video, captured step screenshots, edge cases, and exceptions.
+                </p>
+              </div>
+              {job?.id && (
+                <button
+                  type="button"
+                  onClick={() => window.open(`/api/ai-automation/html-report?jobId=${job.id}`, "_blank")}
+                  className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-sm"
+                >
+                  <FileBarChart className="h-3.5 w-3.5" />
+                  <span>Open Printable Report ↗</span>
+                </button>
+              )}
             </div>
+
+            {/* Current Active Step Banner when running */}
+            {isRunning && job?.currentStep && (
+              <div className="p-3 rounded-xl bg-gradient-to-r from-indigo-950/60 to-slate-900 border border-indigo-500/50 shadow-lg flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 text-xs font-bold text-indigo-300 min-w-0">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping shrink-0" />
+                  <span className="font-mono text-white truncate">{job.currentStep}</span>
+                </div>
+                <span className="text-xs font-mono text-indigo-300 font-bold shrink-0">{job.progress || 0}%</span>
+              </div>
+            )}
 
             {/* Coverage Summary Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800 text-center">
-                <div className="text-2xl font-bold font-mono text-indigo-400">{coverage.percentage}%</div>
-                <div className="text-xs font-semibold text-white mt-1">Action Coverage</div>
-                <div className="text-[10px] text-slate-400 mt-0.5">
-                  {coverage.actionsTested} of {coverage.totalActions} planned steps
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 text-center">
+                <div className="text-xl font-bold font-mono text-indigo-400">{coverage.percentage}%</div>
+                <div className="text-xs font-semibold text-white mt-0.5">Action Coverage</div>
+                <div className="text-[10px] text-slate-400">
+                  {coverage.actionsTested} / {coverage.totalActions} steps
                 </div>
               </div>
 
-              <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800 text-center">
-                <div className="text-2xl font-bold font-mono text-emerald-400">
+              <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 text-center">
+                <div className="text-xl font-bold font-mono text-emerald-400">
                   {coverage.totalScreens > 0 ? Math.round((coverage.screensTested / coverage.totalScreens) * 100) : 0}%
                 </div>
-                <div className="text-xs font-semibold text-white mt-1">Screen Coverage</div>
-                <div className="text-[10px] text-slate-400 mt-0.5">
-                  {coverage.screensTested} of {coverage.totalScreens} discovered screens
+                <div className="text-xs font-semibold text-white mt-0.5">Screen Coverage</div>
+                <div className="text-[10px] text-slate-400">
+                  {coverage.screensTested} / {coverage.totalScreens} screens
                 </div>
               </div>
 
-              <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800 text-center">
-                <div className="text-2xl font-bold font-mono text-purple-400">
-                  {coverage.newDiscoveries}
+              <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 text-center">
+                <div className="text-xl font-bold font-mono text-purple-400">
+                  {activeEdgeCases.length > 0 ? activeEdgeCases.length : coverage.newDiscoveries}
                 </div>
-                <div className="text-xs font-semibold text-white mt-1">New Discoveries</div>
-                <div className="text-[10px] text-slate-400 mt-0.5">Screens found during execution</div>
+                <div className="text-xs font-semibold text-white mt-0.5">
+                  {activeEdgeCases.length > 0 ? "Edge Cases" : "New Discoveries"}
+                </div>
+                <div className="text-[10px] text-slate-400">
+                  {activeEdgeCases.length > 0 ? "Boundary scenarios" : "Found in run"}
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 text-center">
+                <div className="text-xl font-bold font-mono text-amber-400">
+                  {job?.issues?.length || 0}
+                </div>
+                <div className="text-xs font-semibold text-white mt-0.5">Issues Found</div>
+                <div className="text-[10px] text-slate-400">Console / DOM</div>
               </div>
             </div>
 
+            {/* Executive Summary & Recommendations */}
+            {job?.report && (
+              <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-2 text-xs">
+                <span className="font-bold text-white block">Executive Summary</span>
+                <p className="text-slate-300 leading-relaxed">{job.report.summary}</p>
+                {job.report.recommendations && job.report.recommendations.length > 0 && (
+                  <div className="pt-2 border-t border-slate-800 space-y-1">
+                    <span className="font-semibold text-slate-400 text-[11px] block">Recommendations:</span>
+                    <ul className="list-disc list-inside space-y-0.5 text-slate-300 text-[11px]">
+                      {job.report.recommendations.map((rec, rIdx) => (
+                        <li key={rIdx}>{rec}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Session Video Recording */}
-            {(job?.recordingUrl || (job?.recordingSegments && job.recordingSegments.length > 0)) && (
+            {(job?.report?.recordingUrl || job?.recordingUrl || (job?.recordingSegments && job.recordingSegments.length > 0)) && (
               <div className="space-y-2">
                 <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
                   <Video className="h-3.5 w-3.5 text-indigo-400" />
                   Session Video Recording
                 </h4>
                 <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-3">
-                  {job.recordingUrl && (
-                    <div className="space-y-2">
-                      <p className="text-xs text-slate-400">
-                        Complete session recording with visible cursor movements, click ripples, and interaction overlays
-                      </p>
-                      <video
-                        controls
-                        preload="metadata"
-                        src={job.recordingUrl}
-                        className="w-full max-h-[420px] rounded-lg border border-slate-700 bg-black"
-                        aria-label="Recorded Full App Testing session"
-                      />
+                  {(job?.report?.recordingUrl || job?.recordingUrl) && (
+                    <video
+                      controls
+                      preload="metadata"
+                      src={job.report?.recordingUrl || job.recordingUrl}
+                      className="w-full max-h-[420px] rounded-lg border border-slate-700 bg-black"
+                      aria-label="Recorded session video"
+                    />
+                  )}
+                  {job?.recordingSegments && job.recordingSegments.length > 1 && (
+                    <div className="flex flex-wrap gap-2">
+                      {job.recordingSegments.map((url, index) => (
+                        <a
+                          key={url}
+                          href={url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-indigo-300 hover:text-indigo-200 font-medium transition flex items-center gap-1.5"
+                        >
+                          <Film className="h-3.5 w-3.5" />
+                          Segment {index + 1}
+                        </a>
+                      ))}
                     </div>
                   )}
-                  {job.recordingSegments && job.recordingSegments.length > 1 && (
-                    <div className="space-y-1.5">
-                      <span className="text-[11px] text-slate-400 font-semibold block">Recording Segments:</span>
-                      <div className="flex flex-wrap gap-2">
-                        {job.recordingSegments.map((url, index) => (
-                          <a
-                            key={url}
-                            href={url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-indigo-300 hover:text-indigo-200 font-medium transition flex items-center gap-1.5"
-                          >
-                            <Film className="h-3.5 w-3.5" />
-                            Segment {index + 1}
-                          </a>
-                        ))}
+                </div>
+              </div>
+            )}
+
+            {/* Captured Step Evidence Gallery with Screen Filter */}
+            {plan && plan.steps.some((s) => s.screenshotUrl) && (
+              <div className="space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+                    Captured Step Evidence ({filteredEvidenceSteps.length})
+                  </h4>
+                  {testedScreensList.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1">
+                      {testedScreensList.map((sName) => (
+                        <button
+                          key={sName}
+                          type="button"
+                          onClick={() => {
+                            const next = evidenceSearchQuery.toLowerCase() === sName.toLowerCase() ? "" : sName
+                            setEvidenceSearchInput(next)
+                            setEvidenceSearchQuery(next)
+                          }}
+                          className={`px-2 py-0.5 rounded text-[10px] font-medium transition cursor-pointer ${
+                            evidenceSearchQuery.toLowerCase() === sName.toLowerCase()
+                              ? "bg-indigo-600 text-white font-bold"
+                              : "bg-slate-800 hover:bg-slate-700 text-slate-300"
+                          }`}
+                        >
+                          {sName}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {filteredEvidenceSteps.map((step) => (
+                    <div
+                      key={step.id}
+                      onClick={() => setScreenshotModal(step.screenshotUrl!)}
+                      className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800 hover:border-indigo-500/60 transition cursor-pointer group"
+                    >
+                      <div className="aspect-video rounded-lg overflow-hidden bg-slate-950 border border-slate-800/80 relative">
+                        <img
+                          src={step.screenshotUrl}
+                          alt={step.targetName}
+                          className="w-full h-full object-cover object-top"
+                        />
+                        <div className="absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase font-mono bg-slate-950/80 text-white border border-slate-700">
+                          {step.status}
+                        </div>
+                      </div>
+                      <div className="mt-2 text-xs">
+                        <div className="font-bold text-white truncate">{step.targetName}</div>
+                        <div className="text-[10px] text-slate-400 font-mono truncate">{step.screenName}</div>
                       </div>
                     </div>
-                  )}
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Tested Edge Cases (when available from workflow spec or run) */}
+            {activeEdgeCases.length > 0 && (
+              <div className="space-y-2">
+                <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+                  Tested Edge Cases ({activeEdgeCases.length})
+                </h4>
+                <div className="space-y-2">
+                  {activeEdgeCases.map((ec: FeatureWorkflowEdgeCase) => {
+                    const isPassed = ec.status === "passed" || job?.status === "completed"
+                    return (
+                      <div
+                        key={ec.id}
+                        className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800 flex items-start justify-between gap-3 text-xs"
+                      >
+                        <div className="space-y-0.5 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-bold text-purple-400 text-[11px]">{ec.id}</span>
+                            <span className="font-bold text-white">{ec.name}</span>
+                            <span className="text-[9px] font-mono uppercase px-1 rounded bg-slate-800 text-slate-400">
+                              {ec.type}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-400">{ec.description}</p>
+                        </div>
+                        <span
+                          className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase shrink-0 ${
+                            isPassed
+                              ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                              : "bg-slate-800 text-slate-400"
+                          }`}
+                        >
+                          {isPassed ? "PASSED" : ec.status || "PENDING"}
+                        </span>
+                      </div>
+                    )
+                  })}
                 </div>
               </div>
             )}
@@ -1787,7 +1771,7 @@ export default function FullAppTestingView({
             {/* Issues List */}
             <div className="space-y-2">
               <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">
-                Detected Issues & Exceptions ({job?.issues?.length || 0})
+                Detected Issues &amp; Exceptions ({job?.issues?.length || 0})
               </h4>
               {job?.issues && job.issues.length > 0 ? (
                 job.issues.map((issue) => (

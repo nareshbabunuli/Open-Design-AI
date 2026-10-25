@@ -42,6 +42,9 @@ import {
   CheckSquare,
   Clock,
   ShieldAlert,
+  ShieldCheck,
+  Zap,
+  Ban,
   X,
   Map as MapIcon,
   Maximize2,
@@ -86,6 +89,8 @@ import type {
   AgentChatMessage,
   AIThinkingModel,
   ChecklistTestItem,
+  FullAppTestPlan,
+  FeatureWorkflowSpec,
 } from "@/lib/ai-automation/types"
 
 type ProjectRow = {
@@ -312,6 +317,7 @@ export default function AISimulatorPage() {
 
   const [isSavingData, setIsSavingData] = useState(false)
   const [saveDataSuccess, setSaveDataSuccess] = useState(false)
+  const [isExportMenuOpen, setIsExportMenuOpen] = useState(false)
 
   const handleSaveTestData = async () => {
     if (!currentJob?.id || isSavingData) return
@@ -516,10 +522,99 @@ export default function AISimulatorPage() {
     fetchProject()
   }, [supabase])
 
-  // Full App Test Plan & Figma-Style Workflow Map Synthesis
+  const [previewPlanState, setPreviewPlanState] = useState<FullAppTestPlan | null>(null)
+  const [analyzedSpecState, setAnalyzedSpecState] = useState<FeatureWorkflowSpec | null>(null)
+
+  // Full App Test Plan & Figma-Style Workflow Map Synthesis (with Project Workflows fallback)
   const activePlan = useMemo(() => {
-    return synthesizeFullAppPlanFromJob(currentJob)
-  }, [currentJob])
+    const proj = projects.find((p) => p.id === activeProjectId) || projects[0] || DEFAULT_AI_PROJECT
+    const synth = synthesizeFullAppPlanFromJob(currentJob)
+    if (synth && synth.screens?.length > 0) {
+      if (proj?.workflows?.length) {
+        synth.screens = synth.screens.map((s, idx) => {
+          if (s.screenshotUrl) return s
+          const matchedWf = proj.workflows[idx] || proj.workflows[0]
+          const wfShot = matchedWf?.designB || matchedWf?.designA || undefined
+          return wfShot ? { ...s, screenshotUrl: wfShot } : s
+        })
+      }
+      return synth
+    }
+    if (previewPlanState && previewPlanState.screens?.length > 0) return previewPlanState
+    if (proj?.workflows && proj.workflows.length > 0) {
+      const wfScreens = proj.workflows.map((wf, idx) => {
+        const sId = `S${String(idx + 1).padStart(3, "0")}`
+        const shot = wf.designB || wf.designA || undefined
+        const notesLines = (wf.ourNotes || wf.clientMessage || "").split("\n").map((l) => l.trim()).filter(Boolean)
+        return {
+          id: sId,
+          name: wf.title || `Screen ${idx + 1}`,
+          url: targetUrl ? `${targetUrl.replace(/\/$/, "")}/#${wf.id}` : `http://localhost:3001/#${wf.id}`,
+          path: `/#${wf.id}`,
+          screenshotUrl: shot,
+          actionableElements: [
+            {
+              id: `${sId}-el-1`,
+              name: wf.title || `View ${sId}`,
+              type: "button" as const,
+              isInteractive: true,
+              tested: Boolean(wf.isDone),
+              testStatus: wf.isDone ? ("passed" as const) : ("pending" as const),
+            },
+            ...notesLines.slice(0, 3).map((line, lIdx) => ({
+              id: `${sId}-el-${lIdx + 2}`,
+              name: line.slice(0, 48),
+              type: (/input|fill|email|password/i.test(line) ? "input" : "link") as any,
+              isInteractive: true,
+              tested: Boolean(wf.isDone),
+              testStatus: wf.isDone ? ("passed" as const) : ("pending" as const),
+            })),
+          ],
+          forms: [],
+          discoveredAt: new Date().toISOString(),
+        }
+      })
+      const wfTransitions = wfScreens.slice(0, -1).map((s, idx) => ({
+        id: `tr-wf-${idx + 1}`,
+        fromScreenId: s.id,
+        toScreenId: wfScreens[idx + 1].id,
+        action: `Navigate to ${wfScreens[idx + 1].name}`,
+        actionType: "navigation" as const,
+      }))
+      const wfSteps = wfScreens.map((s, idx) => ({
+        id: `step-wf-${idx + 1}`,
+        screenId: s.id,
+        screenName: s.name,
+        stepIndex: idx + 1,
+        actionType: "click" as const,
+        targetName: s.name,
+        expectedResult: proj.workflows[idx]?.reason || proj.workflows[idx]?.clientMessage || `Verify ${s.name} UI & interactions`,
+        actualResult: proj.workflows[idx]?.ourNotes || (proj.workflows[idx]?.isDone ? "Verified screen layout & workflow" : undefined),
+        status: proj.workflows[idx]?.isDone ? ("passed" as const) : ("pending" as const),
+        screenshotUrl: s.screenshotUrl,
+      }))
+      const passedCount = wfSteps.filter((st) => st.status === "passed").length
+      return {
+        id: `plan-proj-${proj.id}`,
+        targetUrl: targetUrl || "http://localhost:3001",
+        screens: wfScreens,
+        transitions: wfTransitions,
+        steps: wfSteps,
+        requiredFileTypes: [],
+        status: "planned" as const,
+        coverage: {
+          screensTested: passedCount,
+          totalScreens: wfScreens.length,
+          actionsTested: passedCount,
+          totalActions: wfSteps.length,
+          formsTested: 0,
+          totalForms: 0,
+          percentage: wfSteps.length > 0 ? Math.round((passedCount / wfSteps.length) * 100) : 0,
+        },
+      }
+    }
+    return null
+  }, [currentJob, previewPlanState, projects, activeProjectId, targetUrl])
 
   const activeFlowGraph = useMemo(() => {
     if (!activePlan) return null
@@ -651,7 +746,7 @@ export default function AISimulatorPage() {
   const [isTestDataModalOpen, setIsTestDataModalOpen] = useState<boolean>(false)
 
   const fetchTestDataStatus = useCallback(async (projectName?: string) => {
-    const proj = projectName || selectedProjectDir
+    const proj = typeof projectName === "string" && projectName.trim() ? projectName.trim() : (typeof selectedProjectDir === "string" ? selectedProjectDir.trim() : "")
     if (!proj) return
     setIsCheckingTestData(true)
     try {
@@ -668,7 +763,7 @@ export default function AISimulatorPage() {
   }, [selectedProjectDir])
 
   const handleGenerateTestData = useCallback(async (projectName?: string) => {
-    const proj = projectName || selectedProjectDir
+    const proj = typeof projectName === "string" && projectName.trim() ? projectName.trim() : (typeof selectedProjectDir === "string" ? selectedProjectDir.trim() : "")
     if (!proj) return
     setIsGeneratingTestData(true)
     try {
@@ -2325,27 +2420,8 @@ export default function AISimulatorPage() {
                 </Link>
               </div>
 
-              {/* Bottom Activity Icons: GitHub, Theme, Fullscreen, Profile */}
+              {/* Bottom Activity Icons: Theme, Fullscreen, Profile */}
               <div className="flex flex-col items-center gap-2 w-full pt-2 pb-2.5 border-t border-slate-800/60 relative">
-
-                {/* GitHub Repository Link */}
-                <a
-                  href="https://github.com/nareshbabunuli/Design-Review"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="p-2 rounded-lg text-slate-500 hover:text-white hover:bg-slate-800/60 transition cursor-pointer"
-                  title="GitHub: nareshbabunuli/Design-Review"
-                  aria-label="GitHub Repository"
-                >
-                  <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                    <path
-                      fillRule="evenodd"
-                      d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                </a>
-
                 {/* Theme Toggle Icon */}
                 <div className="scale-85">
                   <ThemeToggle theme={theme} onToggle={toggleTheme} />
@@ -2398,21 +2474,7 @@ export default function AISimulatorPage() {
                         </div>
                       </div>
 
-                      {/* Third-Party Integrations */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsProfileMenuOpen(false)
-                          setSettingsTab("integrations")
-                          setIsSettingsOpen(true)
-                        }}
-                        className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-slate-300 hover:bg-slate-800 hover:text-white transition-colors text-left cursor-pointer"
-                      >
-                        <Plug className="h-4 w-4 text-purple-400" />
-                        <span>Third-Party Integrations</span>
-                      </button>
-
-                      {/* Account Settings */}
+                      {/* Unified Settings & Integrations */}
                       <button
                         type="button"
                         onClick={() => {
@@ -2422,8 +2484,8 @@ export default function AISimulatorPage() {
                         }}
                         className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-slate-300 hover:bg-slate-800 hover:text-white transition-colors text-left cursor-pointer"
                       >
-                        <Settings className="h-4 w-4 text-slate-400" />
-                        <span>Account Settings</span>
+                        <Settings className="h-4 w-4 text-indigo-400" />
+                        <span>Account &amp; Integrations</span>
                       </button>
 
                       <div className="h-px bg-slate-800 my-1" />
@@ -2449,23 +2511,23 @@ export default function AISimulatorPage() {
 
             {/* 1. CORE WORKSPACE: PHONE SIMULATOR PAGE OR FULL PAGE TABS OR SIDE-BY-SIDE */}
             <div className="flex-1 h-full w-full flex flex-col overflow-hidden relative">
-              {/* Top View Mode Switcher Header */}
-              <div className="h-9 px-3 bg-[#0c0e14] border-b border-slate-800 flex items-center justify-between text-xs shrink-0 select-none z-20">
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mr-1">AI Testing</span>
-                  <div className="flex items-center bg-slate-900 border border-slate-800 rounded-md p-0.5">
+              {/* Unified Top Navigation Bar (Hick's Law: Layout switcher + 4 Stage Tabs + Run/Stop + Export & Settings in 1 bar) */}
+              <div className="h-10 px-3 bg-[#0c0e14] border-b border-slate-800 flex items-center justify-between gap-2 text-xs shrink-0 select-none z-20">
+                {/* Left: Workspace Layout Switcher + 4 Non-Overlapping Stage Tabs */}
+                <div className="flex items-center gap-2 overflow-x-auto custom-scrollbar">
+                  <div className="flex items-center bg-slate-900 border border-slate-800 rounded-md p-0.5 shrink-0">
                     <button
                       type="button"
                       onClick={() => {
                         setWorkspaceLayoutMode("split")
                         if (stageViewMode === "simulator") setStageViewMode("chat")
                       }}
-                      className={`px-2 py-0.5 rounded text-[11px] font-medium transition cursor-pointer flex items-center gap-1 ${
+                      className={`px-2 py-1 rounded text-[11px] font-medium transition cursor-pointer flex items-center gap-1 ${
                         workspaceLayoutMode === "split"
                           ? "bg-indigo-600 text-white shadow-xs"
                           : "text-slate-400 hover:text-white"
                       }`}
-                      title="Split View: Live Phone + AI Section"
+                      title="Split View: Live Phone + AI Workspace"
                     >
                       <Columns className="h-3 w-3" />
                       <span>Split</span>
@@ -2476,7 +2538,7 @@ export default function AISimulatorPage() {
                         setWorkspaceLayoutMode("stage")
                         if (stageViewMode === "simulator") setStageViewMode("chat")
                       }}
-                      className={`px-2 py-0.5 rounded text-[11px] font-medium transition cursor-pointer flex items-center gap-1 ${
+                      className={`px-2 py-1 rounded text-[11px] font-medium transition cursor-pointer flex items-center gap-1 ${
                         workspaceLayoutMode === "stage"
                           ? "bg-indigo-600 text-white shadow-xs"
                           : "text-slate-400 hover:text-white"
@@ -2491,7 +2553,7 @@ export default function AISimulatorPage() {
                       onClick={() => {
                         setWorkspaceLayoutMode("device")
                       }}
-                      className={`px-2 py-0.5 rounded text-[11px] font-medium transition cursor-pointer flex items-center gap-1 ${
+                      className={`px-2 py-1 rounded text-[11px] font-medium transition cursor-pointer flex items-center gap-1 ${
                         workspaceLayoutMode === "device"
                           ? "bg-indigo-600 text-white shadow-xs"
                           : "text-slate-400 hover:text-white"
@@ -2502,106 +2564,256 @@ export default function AISimulatorPage() {
                       <span>Phone Only</span>
                     </button>
                   </div>
+
+                  {workspaceLayoutMode !== "device" && (
+                    <>
+                      <div className="w-px h-4 bg-slate-800 shrink-0" />
+                      <div className="flex items-center gap-1 shrink-0">
+                        {[
+                          {
+                            id: "chat",
+                            label: "Chat",
+                            icon: MessageSquare,
+                            isActive: stageViewMode === "chat" || stageViewMode === "simulator",
+                            isLive: currentJob?.status === "running",
+                          },
+                          {
+                            id: "plan",
+                            label: "Plan & Screens",
+                            icon: ListChecks,
+                            isActive: stageViewMode === "plan" || stageViewMode === "screens" || stageViewMode === "files",
+                            count: activePlan?.steps?.length,
+                          },
+                          {
+                            id: "map",
+                            label: "Flow Map",
+                            icon: MapIcon,
+                            isActive: stageViewMode === "map",
+                            count: activePlan?.screens?.length,
+                          },
+                          {
+                            id: "coverage",
+                            label: "Report",
+                            icon: ShieldCheck,
+                            isActive: stageViewMode === "coverage" || stageViewMode === "execution",
+                            count:
+                              currentJob?.issues && currentJob.issues.length > 0
+                                ? `${currentJob.issues.length} bugs`
+                                : activePlan?.coverage?.percentage
+                                ? `${activePlan.coverage.percentage}%`
+                                : undefined,
+                          },
+                        ].map((tab) => {
+                          const Icon = tab.icon
+                          return (
+                            <button
+                              key={tab.id}
+                              type="button"
+                              onClick={() => handleSelectWorkspaceTab(tab.id as StageViewMode)}
+                              className={`px-2.5 py-1 rounded-md flex items-center gap-1.5 text-[11px] font-semibold transition cursor-pointer whitespace-nowrap ${
+                                tab.isActive
+                                  ? "bg-indigo-600/25 text-indigo-200 border border-indigo-500/50"
+                                  : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-transparent"
+                              }`}
+                            >
+                              <Icon className="h-3.5 w-3.5" />
+                              <span>{tab.label}</span>
+                              {tab.count !== undefined && (
+                                <span
+                                  className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                                    tab.isActive
+                                      ? "bg-indigo-600 text-white"
+                                      : "bg-slate-800 text-slate-400 border border-slate-700"
+                                  }`}
+                                >
+                                  {tab.count}
+                                </span>
+                              )}
+                              {tab.isLive && (
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                              )}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </>
+                  )}
                 </div>
 
-                <div className="flex items-center gap-2">
+                {/* Right: Laya Pill + Primary Run/Stop CTA + Export & Data Dropdown + Settings */}
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleToggleLaya(!enableLaya)}
+                    className={`hidden sm:flex items-center gap-1 px-2 py-1 rounded-md border text-[10px] cursor-pointer transition ${
+                      enableLaya && isLayaLive
+                        ? "bg-emerald-950/60 border-emerald-500/40 text-emerald-300"
+                        : enableLaya
+                        ? "bg-amber-950/40 border-amber-500/30 text-amber-300"
+                        : "bg-slate-900 border-slate-800 text-slate-500 hover:text-slate-300"
+                    }`}
+                    title={
+                      enableLaya && isLayaLive
+                        ? `Laya System-1 Reflex: Active (~30ms local decisions on ${layaBaseUrl})`
+                        : `Laya System-1 (${layaBaseUrl}) — click to toggle`
+                    }
+                  >
+                    <Zap className={`h-3 w-3 ${enableLaya && isLayaLive ? "text-emerald-400 fill-current" : "text-slate-500"}`} />
+                    <span className="font-semibold">Laya {enableLaya && isLayaLive ? "30ms" : "Off"}</span>
+                  </button>
+
+                  {currentJob?.status === "running" || currentJob?.status === "queued" || isSubmitting ? (
+                    <div className="flex items-center gap-1">
+                      {currentJob?.status === "running" && currentJob.recordingControl !== "stopped" && (
+                        <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[10px] font-mono">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+                          {currentJob.recordingControl === "paused" ? (
+                            <button
+                              type="button"
+                              onClick={() => handleRecordingControl("resume_recording")}
+                              className="text-emerald-300 hover:text-white font-semibold cursor-pointer flex items-center gap-0.5"
+                              title="Resume session video recording"
+                            >
+                              <Play className="h-2.5 w-2.5 fill-current" />
+                              <span>Rec</span>
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleRecordingControl("pause_recording")}
+                              className="text-amber-300 hover:text-white font-semibold cursor-pointer flex items-center gap-0.5"
+                              title="Pause session video recording"
+                            >
+                              <Pause className="h-2.5 w-2.5" />
+                              <span>Pause</span>
+                            </button>
+                          )}
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        onClick={handleStopAutomation}
+                        className="px-2.5 py-1 rounded-md bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold flex items-center gap-1 transition cursor-pointer shadow-xs"
+                        title="Stop running test"
+                      >
+                        <Ban className="h-3 w-3" />
+                        <span>Stop</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleStartFullAppTesting()}
+                      className="px-2.5 py-1 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                      title="Discover and test the full application automatically"
+                    >
+                      <Play className="h-3 w-3 fill-current" />
+                      <span>{activePlan ? "Re-Run App Test" : "Full App Test"}</span>
+                    </button>
+                  )}
+
+                  {currentJob?.id && (
+                    <div className="relative flex items-center">
+                      <button
+                        type="button"
+                        onClick={() => setIsExportMenuOpen((prev) => !prev)}
+                        className="px-2.5 py-1 rounded-md bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-slate-300 hover:text-white text-xs font-medium flex items-center gap-1 transition cursor-pointer"
+                        title="Printable Report, Map HTML, ZIP Bundle, Save or Reset Data"
+                      >
+                        <Archive className="h-3.5 w-3.5 text-indigo-400" />
+                        <span className="hidden md:inline">Export &amp; Data</span>
+                        <ChevronDown className="h-3 w-3 text-slate-400" />
+                      </button>
+
+                      {isExportMenuOpen && (
+                        <>
+                          <div
+                            className="fixed inset-0 z-40"
+                            onClick={() => setIsExportMenuOpen(false)}
+                          />
+                          <div className="absolute right-0 top-8 w-56 rounded-xl border border-slate-800 bg-[#0f1118] p-1.5 shadow-2xl z-50 flex flex-col text-xs text-slate-200">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsExportMenuOpen(false)
+                                window.open(`/api/ai-automation/html-report?jobId=${currentJob.id}`, "_blank")
+                              }}
+                              className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-slate-300 hover:bg-slate-800 hover:text-white transition cursor-pointer text-left"
+                            >
+                              <FileBarChart className="h-3.5 w-3.5 text-indigo-400 shrink-0" />
+                              <span>Printable HTML / PDF Report ↗</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsExportMenuOpen(false)
+                                window.open(`/api/ai-automation/map-html?jobId=${currentJob.id}`, "_blank")
+                              }}
+                              className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-slate-300 hover:bg-slate-800 hover:text-white transition cursor-pointer text-left"
+                            >
+                              <FileCode className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                              <span>Interactive Map HTML ↗</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsExportMenuOpen(false)
+                                handleExportZip()
+                              }}
+                              disabled={isExportingZip}
+                              className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-slate-300 hover:bg-slate-800 hover:text-white transition cursor-pointer text-left disabled:opacity-50"
+                            >
+                              {isExportingZip ? <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-400 shrink-0" /> : <Archive className="h-3.5 w-3.5 text-indigo-400 shrink-0" />}
+                              <span>{isExportingZip ? "Packaging ZIP..." : "Download Test ZIP"}</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsExportMenuOpen(false)
+                                handleSaveTestData()
+                              }}
+                              disabled={isSavingData}
+                              className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-slate-300 hover:bg-slate-800 hover:text-white transition cursor-pointer text-left disabled:opacity-50"
+                            >
+                              {isSavingData ? <Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-400 shrink-0" /> : <Save className="h-3.5 w-3.5 text-emerald-400 shrink-0" />}
+                              <span>{saveDataSuccess ? "Saved!" : "Save Session Data"}</span>
+                            </button>
+                            <div className="h-px bg-slate-800 my-1" />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsExportMenuOpen(false)
+                                handleResetData()
+                              }}
+                              disabled={isResettingData}
+                              className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-rose-400 hover:bg-rose-950/40 transition cursor-pointer text-left disabled:opacity-50"
+                            >
+                              {isResettingData ? <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" /> : <RotateCcw className="h-3.5 w-3.5 shrink-0" />}
+                              <span>Reset Session Data</span>
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
+
                   <button
                     type="button"
                     onClick={() => {
                       setSettingsTab("ai")
                       setIsSettingsOpen(true)
                     }}
-                    className="px-2.5 py-1 rounded-md bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-slate-200 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                    className="px-2.5 py-1 rounded-md bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-slate-300 hover:text-white text-xs font-medium flex items-center gap-1.5 transition cursor-pointer"
                     title="Settings: AI Engine, Integrations & Account"
                   >
                     <Settings className="h-3.5 w-3.5 text-slate-400" />
-                    <span>Settings</span>
-                    <span className="text-[10px] text-purple-300 font-mono hidden sm:inline px-1.5 py-0.2 rounded bg-purple-950/60 border border-purple-800/40">
-                      {aiProvider === "omnirouter" ? omniRouterModel || "fast" : (selectedAiModel || "Nemotron-3-Nano").split("/").pop()}
-                    </span>
+                    <span className="hidden sm:inline">Settings</span>
                   </button>
-
-                  {currentJob?.id && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => window.open(`/api/ai-automation/html-report?jobId=${currentJob.id}`, '_blank')}
-                        className="px-2.5 py-1 rounded-md bg-blue-600/30 hover:bg-blue-600 border border-blue-500/50 text-blue-200 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
-                        title="View comprehensive HTML report in browser (with print-to-PDF)"
-                      >
-                        <FileBarChart className="h-3 w-3" />
-                        <span>View Report</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => window.open(`/api/ai-automation/map-html?jobId=${currentJob.id}`, '_blank')}
-                        className="px-2.5 py-1 rounded-md bg-emerald-600/30 hover:bg-emerald-600 border border-emerald-500/50 text-emerald-200 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
-                        title="View interactive standalone App Map in browser (with search, pan-zoom, & element inspector)"
-                      >
-                        <FileCode className="h-3 w-3 text-emerald-300" />
-                        <span>Map HTML</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleSaveTestData}
-                        disabled={isSavingData}
-                        className="px-2.5 py-1 rounded-md bg-emerald-950/40 hover:bg-emerald-800/60 border border-emerald-500/50 text-emerald-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50"
-                        title="Save session test data and discovered map durably so nothing is lost when closing"
-                      >
-                        {isSavingData ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3 text-emerald-400" />}
-                        <span>{saveDataSuccess ? "Saved!" : isSavingData ? "Saving..." : "Save Data"}</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleExportZip}
-                        disabled={isExportingZip}
-                        className="px-2.5 py-1 rounded-md bg-indigo-600/30 hover:bg-indigo-600 border border-indigo-500/50 text-indigo-200 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50"
-                        title="Download complete test bundle as ZIP (PDF report, HTML, evidence screenshots, and JSON)"
-                      >
-                        {isExportingZip ? <Loader2 className="h-3 w-3 animate-spin" /> : <Archive className="h-3 w-3" />}
-                        <span>{isExportingZip ? "Packaging..." : "Save Test ZIP"}</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleResetData}
-                        disabled={isResettingData}
-                        className="px-2 py-1 rounded-md bg-slate-900 hover:bg-rose-950/40 border border-slate-800 hover:border-rose-500/50 text-slate-400 hover:text-rose-200 text-xs font-medium flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50"
-                        title="Reset discovered map screens and test plan data"
-                      >
-                        {isResettingData ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
-                        <span>Reset Data</span>
-                      </button>
-                    </>
-                  )}
-
-                  {currentJob?.status === "running" && (
-                    <>
-                      <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[10px] font-mono">
-                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
-                        <span>Live Testing In Flight</span>
-                      </div>
-                      {currentJob.recordingControl === "paused" ? (
-                        <button type="button" onClick={() => handleRecordingControl("resume_recording")} className="px-2 py-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 text-emerald-300 text-[10px] font-medium">
-                          Resume Recording
-                        </button>
-                      ) : currentJob.recordingControl !== "stopped" ? (
-                        <button type="button" onClick={() => handleRecordingControl("pause_recording")} className="px-2 py-1 rounded-md border border-amber-500/30 bg-amber-500/10 text-amber-300 text-[10px] font-medium">
-                          Pause Recording
-                        </button>
-                      ) : null}
-                      {currentJob.recordingControl !== "stopped" && (
-                        <button type="button" onClick={() => handleRecordingControl("stop_recording")} className="px-2 py-1 rounded-md border border-red-500/30 bg-red-500/10 text-red-300 text-[10px] font-medium">
-                          Stop Recording
-                        </button>
-                      )}
-                    </>
-                  )}
                 </div>
               </div>
 
               {/* Main Content Workspace Panes */}
               <div className="flex-1 w-full h-full flex overflow-hidden relative">
-                {/* 1. Live Device Pane: shown in "device" or "split" mode */}
                 {/* 1. Live Device Pane: shown in "device" or "split" mode */}
                 {(workspaceLayoutMode === "device" || workspaceLayoutMode === "split") && (
                   <div
@@ -2672,15 +2884,15 @@ export default function AISimulatorPage() {
                   />
                 )}
 
-                {/* Stage View Pane (Map / Screens / Plan / Execution) - Full Width */}
+                {/* Stage View Pane: Chat (kept mounted) vs Unified Plan/Map/Report Inspector */}
                 {workspaceLayoutMode !== "device" && (
                   <div className={`flex-1 h-full flex flex-col overflow-hidden bg-slate-950 relative min-w-0 ${isDraggingSplitter ? "pointer-events-none select-none" : ""}`}>
-                    {stageViewMode === "chat" || testingMode === "feature_workflow" ? (
+                    <div className={stageViewMode === "chat" || stageViewMode === "simulator" ? "flex-1 flex flex-col min-h-0 overflow-hidden" : "hidden"}>
                       <FeatureWorkflowView
                         job={currentJob}
                         isRunning={currentJob?.status === "running" || currentJob?.status === "queued" || isSubmitting}
                         targetUrl={targetUrl}
-                        activeSubTab={stageViewMode === "simulator" ? "chat" : stageViewMode}
+                        activeSubTab="chat"
                         onSubTabChange={(tab) => handleSelectWorkspaceTab(tab)}
                         onStartWorkflowTest={handleStartWorkflowTesting}
                         onStartFullAppTest={handleStartFullAppTesting}
@@ -2690,8 +2902,11 @@ export default function AISimulatorPage() {
                         testingMode={testingMode}
                         onSelectTestingMode={(m) => setTestingMode(m)}
                         fullPageView={true}
+                        hideSubNav={true}
                         isFullStage={true}
                         onToggleFullStage={() => {}}
+                        onPreviewPlanChange={setPreviewPlanState}
+                        onAnalyzedSpecChange={setAnalyzedSpecState}
                         aiProvider={aiProvider}
                         onUpdateAiProvider={handleUpdateAiProvider}
                         nebiusApiKey={nebiusApiKey}
@@ -2717,7 +2932,7 @@ export default function AISimulatorPage() {
                         discoveredRoutes={discoveredRoutes}
                         onRescanRoutes={fetchLocalRoutes}
                         isScanningRoutes={isScanningRoutes}
-                        onGenerateTestData={handleGenerateTestData}
+                        onGenerateTestData={() => handleGenerateTestData()}
                         isGeneratingTestData={isGeneratingTestData}
                         onNavigateUrl={handleSimulatorUrlChange}
                         onConfirmVerification={handleConfirmVerification}
@@ -2731,7 +2946,9 @@ export default function AISimulatorPage() {
                         onUpdateLayaUrl={handleUpdateLayaUrl}
                         isLayaLive={isLayaLive}
                       />
-                    ) : (
+                    </div>
+
+                    {stageViewMode !== "chat" && stageViewMode !== "simulator" && (
                       <FullAppTestingView
                         job={currentJob}
                         isRunning={currentJob?.status === "running" || currentJob?.status === "queued" || isSubmitting}
@@ -2739,10 +2956,10 @@ export default function AISimulatorPage() {
                         onStartFullAppTest={handleStartFullAppTesting}
                         onCancelJob={handleStopAutomation}
                         onJobUpdate={(updated) => setCurrentJob(updated)}
-                        activeSubTab={stageViewMode === "simulator" ? "map" : stageViewMode}
+                        activeSubTab={stageViewMode}
                         onSubTabChange={(tab) => handleSelectWorkspaceTab(tab)}
                         fullPageView={true}
-                        hideSubNav={false}
+                        hideSubNav={true}
                         onOpenMapPage={() => handleSelectWorkspaceTab("map")}
                         isMapPageActive={stageViewMode === "map"}
                         testingMode={testingMode}
@@ -2750,6 +2967,8 @@ export default function AISimulatorPage() {
                         isFullStage={true}
                         isBesideScreen={false}
                         onToggleFullStage={() => {}}
+                        fallbackPlan={activePlan}
+                        fallbackSpec={analyzedSpecState}
                       />
                     )}
                   </div>
@@ -2783,24 +3002,23 @@ export default function AISimulatorPage() {
         )}
       </main>
 
-      {/* VS Code Collapsible Bottom Panel (Drawer above Status Bar) */}
+      {/* VS Code Collapsible Bottom Panel (Hick's Law: Only Console & Duo Agent — no duplicate Coverage/Plan tabs) */}
       {isBottomPanelOpen && (
         <div className="h-64 bg-[#0a0c12] border-t border-slate-800 flex flex-col shrink-0 z-20 text-xs font-mono select-none animate-in slide-in-from-bottom-2 duration-150">
           {/* Bottom Panel Header / Tabs */}
           <div className="h-8 px-3 bg-[#0d0f17] border-b border-slate-800/80 flex items-center justify-between shrink-0">
             <div className="flex items-center gap-1">
-              {/* Terminal & Logs Tab */}
               <button
                 type="button"
                 onClick={() => setBottomPanelTab("terminal")}
                 className={`px-3 py-1 flex items-center gap-1.5 rounded-t text-xs font-medium transition cursor-pointer ${
-                  bottomPanelTab === "terminal"
+                  bottomPanelTab !== "duo"
                     ? "bg-[#0a0c12] text-indigo-400 border-t-2 border-indigo-500 text-white"
                     : "text-slate-400 hover:text-slate-200"
                 }`}
               >
                 <Terminal className="h-3.5 w-3.5" />
-                <span>Terminal</span>
+                <span>Console</span>
                 {(currentJob?.logs?.length || 0) > 0 && (
                   <span className="px-1.5 py-0.2 rounded-full bg-slate-800 text-[10px] text-slate-300">
                     {currentJob?.logs?.length}
@@ -2808,45 +3026,6 @@ export default function AISimulatorPage() {
                 )}
               </button>
 
-              {/* Coverage Metrics Tab */}
-              <button
-                type="button"
-                onClick={() => setBottomPanelTab("coverage")}
-                className={`px-3 py-1 flex items-center gap-1.5 rounded-t text-xs font-medium transition cursor-pointer ${
-                  bottomPanelTab === "coverage"
-                    ? "bg-[#0a0c12] text-indigo-400 border-t-2 border-indigo-500 text-white"
-                    : "text-slate-400 hover:text-slate-200"
-                }`}
-              >
-                <CheckCircle2 className="h-3.5 w-3.5" />
-                <span>Coverage</span>
-                {activePlan?.coverage && (
-                  <span className="px-1.5 py-0.2 rounded-full bg-indigo-950 text-indigo-300 border border-indigo-800/60 text-[10px]">
-                    {activePlan.coverage.percentage}%
-                  </span>
-                )}
-              </button>
-
-              {/* Action Trace Tab */}
-              <button
-                type="button"
-                onClick={() => setBottomPanelTab("actions")}
-                className={`px-3 py-1 flex items-center gap-1.5 rounded-t text-xs font-medium transition cursor-pointer ${
-                  bottomPanelTab === "actions"
-                    ? "bg-[#0a0c12] text-indigo-400 border-t-2 border-indigo-500 text-white"
-                    : "text-slate-400 hover:text-slate-200"
-                }`}
-              >
-                <Activity className="h-3.5 w-3.5" />
-                <span>Action Trace</span>
-                {(activePlan?.steps?.length || 0) > 0 && (
-                  <span className="px-1.5 py-0.2 rounded-full bg-slate-800 text-[10px] text-slate-300">
-                    {activePlan?.steps?.length}
-                  </span>
-                )}
-              </button>
-
-              {/* GitLab Duo Fix Review Tab */}
               <button
                 type="button"
                 onClick={() => setBottomPanelTab("duo")}
@@ -2861,7 +3040,6 @@ export default function AISimulatorPage() {
               </button>
             </div>
 
-            {/* Right Controls */}
             <div className="flex items-center gap-2">
               <span className="text-[10px] text-slate-500 hidden sm:inline">
                 Target: {targetUrl || "http://localhost:3001"}
@@ -2879,7 +3057,7 @@ export default function AISimulatorPage() {
 
           {/* Bottom Panel Content */}
           <div className="flex-1 overflow-y-auto custom-scrollbar p-3">
-            {bottomPanelTab === "terminal" && (
+            {bottomPanelTab !== "duo" ? (
               <div className="space-y-1 text-slate-300">
                 <div className="text-slate-500 text-[11px] pb-1 border-b border-slate-800/60 flex items-center justify-between">
                   <span>antigravity-test-runner v2.4.0 • Target: {targetUrl}</span>
@@ -2888,9 +3066,8 @@ export default function AISimulatorPage() {
                 {(!currentJob?.logs || currentJob.logs.length === 0) ? (
                   <div className="pt-2 text-slate-400 space-y-1">
                     <p className="text-emerald-400">$ antigravity init --mode=systematic-full-app</p>
-                    <p className="text-slate-400">&gt; Standby for autonomous crawler & live execution events.</p>
+                    <p className="text-slate-400">&gt; Standby for autonomous crawler &amp; live execution events.</p>
                     <p className="text-slate-500">&gt; Phase: {currentJob?.testingPhase ? currentJob.testingPhase.toUpperCase() : "READY"}</p>
-                    <p className="text-slate-500">&gt; Click &apos;▶ Run Test&apos; on the top bar or activity bar to start.</p>
                   </div>
                 ) : (
                   currentJob.logs.map((log, idx) => (
@@ -2916,108 +3093,7 @@ export default function AISimulatorPage() {
                   ))
                 )}
               </div>
-            )}
-
-            {bottomPanelTab === "coverage" && (
-              <div className="space-y-3">
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 flex flex-col justify-between">
-                    <span className="text-[11px] text-slate-400">Screens Discovered &amp; Tested</span>
-                    <div className="flex items-baseline justify-between mt-1">
-                      <strong className="text-lg text-white font-sans">
-                        {activePlan?.coverage?.screensTested || 0} / {activePlan?.coverage?.totalScreens || activePlan?.screens?.length || 0}
-                      </strong>
-                      <span className="text-xs text-indigo-400 font-semibold">
-                        {activePlan?.coverage ? Math.round((activePlan.coverage.screensTested / (activePlan.coverage.totalScreens || 1)) * 100) : 0}%
-                      </span>
-                    </div>
-                    <div className="w-full bg-slate-800 rounded-full h-1 mt-2 overflow-hidden">
-                      <div
-                        className="bg-indigo-500 h-full rounded-full transition-all duration-300"
-                        style={{
-                          width: `${activePlan?.coverage ? Math.min(100, Math.round((activePlan.coverage.screensTested / (activePlan.coverage.totalScreens || 1)) * 100)) : 0}%`,
-                        }}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 flex flex-col justify-between">
-                    <span className="text-[11px] text-slate-400">Actions &amp; Assertions Passed</span>
-                    <div className="flex items-baseline justify-between mt-1">
-                      <strong className="text-lg text-white font-sans">
-                        {activePlan?.steps?.filter((s) => s.status === "passed").length || 0} / {activePlan?.steps?.length || 0}
-                      </strong>
-                      <span className="text-xs text-emerald-400 font-semibold">
-                        {activePlan?.steps && activePlan.steps.length > 0
-                          ? Math.round(((activePlan.steps.filter((s) => s.status === "passed").length) / activePlan.steps.length) * 100)
-                          : 0}%
-                      </span>
-                    </div>
-                    <div className="w-full bg-slate-800 rounded-full h-1 mt-2 overflow-hidden">
-                      <div
-                        className="bg-emerald-500 h-full rounded-full transition-all duration-300"
-                        style={{
-                          width: `${
-                            activePlan?.steps && activePlan.steps.length > 0
-                              ? Math.min(100, Math.round(((activePlan.steps.filter((s) => s.status === "passed").length) / activePlan.steps.length) * 100))
-                              : 0
-                          }%`,
-                        }}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 flex flex-col justify-between">
-                    <span className="text-[11px] text-slate-400">Synthetic Form Generation</span>
-                    <div className="flex items-baseline justify-between mt-1">
-                      <strong className="text-lg text-emerald-400 font-sans">100%</strong>
-                      <span className="text-xs text-slate-400">Synthetic Payloads</span>
-                    </div>
-                    <div className="w-full bg-slate-800 rounded-full h-1 mt-2 overflow-hidden">
-                      <div className="bg-indigo-500 h-full rounded-full w-full" />
-                    </div>
-                  </div>
-                </div>
-
-                {/* Discovered Screens Quick List */}
-                <div className="p-2 rounded-lg bg-slate-900/60 border border-slate-800">
-                  <div className="text-[11px] font-semibold text-slate-400 mb-1.5 flex items-center justify-between">
-                    <span>Discovered Nodes</span>
-                    <button
-                      type="button"
-                      onClick={() => handleSelectWorkspaceTab("screens")}
-                      className="text-indigo-400 hover:text-indigo-300 text-[10px] underline"
-                    >
-                      View Screens Grid →
-                    </button>
-                  </div>
-                  <div className="space-y-1">
-                    {activePlan?.screens?.map((screen) => (
-                      <div key={screen.id} className="flex items-center justify-between text-[11px] px-2 py-1 bg-slate-950/40 rounded border border-slate-800/40">
-                        <div className="flex items-center gap-2">
-                          <span className="px-1 py-0.2 bg-slate-800 text-slate-300 rounded text-[9px] font-bold">{screen.id}</span>
-                          <span className="text-slate-200 font-medium">{screen.name}</span>
-                          <span className="text-slate-500 hidden sm:inline">{screen.path}</span>
-                        </div>
-                        <span className="text-slate-400 text-[10px]">
-                          {screen.actionableElements.length} elements mapped
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {bottomPanelTab === "actions" && (
-              <ActionLedger
-                live={actionLedgerLive}
-                queue={actionLedgerQueue}
-                history={actionLedgerHistory}
-              />
-            )}
-
-            {bottomPanelTab === "duo" && (
+            ) : (
               <div className="h-full overflow-y-auto custom-scrollbar p-2">
                 <DuoAgentFixReviewPanel job={currentJob} plan={activePlan} />
               </div>
@@ -3026,11 +3102,11 @@ export default function AISimulatorPage() {
         </div>
       )}
 
-      {/* VS Code Bottom Status Bar */}
+      {/* VS Code Bottom Status Bar (Hick's Law: Consolidated scannable telemetry + drawer toggles) */}
       <footer className="h-6 px-3 bg-[#0d0e15] border-t border-slate-800/80 text-[11px] font-mono flex items-center justify-between shrink-0 select-none z-20 text-slate-400">
-        {/* Left: Telemetry & Test Pipeline Metrics */}
+        {/* Left: Consolidated Status & Coverage Summary */}
         <div className="flex items-center gap-3 overflow-x-auto custom-scrollbar whitespace-nowrap">
-          {/* Running / Ready status (clickable to open terminal) */}
+          {/* 1. Running / Ready status + Phase (clickable to open terminal) */}
           <button
             type="button"
             onClick={() => {
@@ -3038,7 +3114,7 @@ export default function AISimulatorPage() {
               setBottomPanelTab("terminal")
             }}
             className="flex items-center gap-1.5 font-semibold hover:text-white transition cursor-pointer"
-            title="Open Terminal & Logs"
+            title="Open Terminal & Pipeline Logs"
           >
             {currentJob?.status === "running" ? (
               <>
@@ -3056,94 +3132,47 @@ export default function AISimulatorPage() {
                 <span className="text-slate-300">Ready</span>
               </>
             )}
-          </button>
-
-          <div className="w-px h-3.5 bg-slate-800" />
-
-          {/* Phase Badge */}
-          <button
-            type="button"
-            onClick={() => {
-              setIsBottomPanelOpen(true)
-              setBottomPanelTab("terminal")
-            }}
-            className="text-slate-300 hover:text-white transition cursor-pointer"
-            title="Open Pipeline Logs"
-          >
-            Phase: <strong className="text-indigo-300">{currentJob?.testingPhase ? currentJob.testingPhase.toUpperCase() : "DISCOVER & MAP"}</strong>
-          </button>
-
-          <div className="w-px h-3.5 bg-slate-800" />
-
-          {/* Screens Mapped (clickable to open coverage) */}
-          <button
-            type="button"
-            onClick={() => {
-              setIsBottomPanelOpen(true)
-              setBottomPanelTab("coverage")
-            }}
-            className="hover:text-white transition cursor-pointer"
-            title="Open Coverage Details"
-          >
-            Screens: <strong className="text-slate-200">{activePlan?.screens?.length || 0}</strong>
-          </button>
-
-          <div className="w-px h-3.5 bg-slate-800" />
-
-          {/* Actions Tested & Coverage */}
-          <button
-            type="button"
-            onClick={() => {
-              setIsBottomPanelOpen(true)
-              setBottomPanelTab("actions")
-            }}
-            className="hover:text-white transition cursor-pointer"
-            title="Open Action Trace"
-          >
-            Actions: <strong className="text-slate-200">{activePlan?.steps?.length || 0}</strong>
-            {activePlan?.steps && activePlan.steps.length > 0 && (
-              <span className="text-indigo-300 ml-1">
-                ({Math.round(((activePlan.steps.filter((s) => s.status === "passed").length) / activePlan.steps.length) * 100)}%)
+            {currentJob?.testingPhase && (
+              <span className="text-slate-500 font-normal">
+                · <span className="text-indigo-300">{currentJob.testingPhase.toUpperCase()}</span>
               </span>
             )}
           </button>
 
-          <div className="w-px h-3.5 bg-slate-800" />
-
-          {/* Test Results: Pass / Fail */}
-          <button
-            type="button"
-            onClick={() => {
-              setIsBottomPanelOpen(true)
-              setBottomPanelTab("actions")
-            }}
-            className="flex items-center gap-2 text-[10px] cursor-pointer"
-            title="Open Test Step Results"
-          >
-            <span className="text-emerald-400 font-bold flex items-center gap-0.5">
-              <Check className="h-3 w-3" /> {activePlan?.steps?.filter((s) => s.status === "passed").length || 0}
-            </span>
-            <span className="text-rose-400 font-bold flex items-center gap-0.5">
-              <XCircle className="h-3 w-3" /> {activePlan?.steps?.filter((s) => s.status === "failed").length || 0}
-            </span>
-            {activePlan?.steps?.some((s) => s.status === "blocked") && (
-              <span className="text-amber-400 font-bold flex items-center gap-0.5">
-                <AlertTriangle className="h-3 w-3" /> {activePlan?.steps?.filter((s) => s.status === "blocked").length || 0}
-              </span>
-            )}
-          </button>
-
-          <div className="w-px h-3.5 bg-slate-800" />
-
-          {/* Forms */}
-          <span className="text-slate-400 hidden md:inline">
-            Forms: <strong className="text-slate-200">100% Synthetic</strong>
-          </span>
+          {/* 2. Consolidated Results Pill (Screens, Pass/Fail/Blocked — only shown when data exists) */}
+          {((activePlan?.screens?.length || 0) > 0 || (activePlan?.steps?.length || 0) > 0) && (
+            <>
+              <div className="w-px h-3.5 bg-slate-800" />
+              <button
+                type="button"
+                onClick={() => handleSelectWorkspaceTab("coverage")}
+                className="flex items-center gap-2.5 hover:text-white transition cursor-pointer text-[11px]"
+                title="Open Coverage & Evidence Report"
+              >
+                <span>
+                  <strong className="text-slate-200">{activePlan?.screens?.length || 0}</strong> Screens
+                </span>
+                <span className="text-slate-600">·</span>
+                <span className="flex items-center gap-2 text-[10px]">
+                  <span className="text-emerald-400 font-bold flex items-center gap-0.5">
+                    <Check className="h-3 w-3" /> {activePlan?.steps?.filter((s) => s.status === "passed").length || 0}
+                  </span>
+                  <span className="text-rose-400 font-bold flex items-center gap-0.5">
+                    <XCircle className="h-3 w-3" /> {activePlan?.steps?.filter((s) => s.status === "failed").length || 0}
+                  </span>
+                  {activePlan?.steps?.some((s) => s.status === "blocked") && (
+                    <span className="text-amber-400 font-bold flex items-center gap-0.5">
+                      <AlertTriangle className="h-3 w-3" /> {activePlan?.steps?.filter((s) => s.status === "blocked").length || 0}
+                    </span>
+                  )}
+                </span>
+              </button>
+            </>
+          )}
         </div>
 
-        {/* Right: Duo Agent & Console Toggles, Target */}
-        <div className="flex items-center gap-2 shrink-0 ml-2">
-          {/* Toggle GitLab Duo Agent Panel */}
+        {/* Right: Duo Agent & Console Drawer Toggles */}
+        <div className="flex items-center gap-1.5 shrink-0 ml-2">
           <button
             type="button"
             onClick={() => {
@@ -3165,7 +3194,6 @@ export default function AISimulatorPage() {
             <span className="hidden sm:inline">Duo Agent</span>
           </button>
 
-          {/* Toggle Terminal / Console Panel */}
           <button
             type="button"
             onClick={() => {
@@ -3186,12 +3214,6 @@ export default function AISimulatorPage() {
             <Terminal className="h-3 w-3" />
             <span className="hidden sm:inline">Console</span>
           </button>
-
-          <div className="w-px h-3.5 bg-slate-800" />
-
-          <span className="text-slate-500 hidden sm:inline truncate max-w-[200px]">
-            {targetUrl || "http://localhost:3001"}
-          </span>
         </div>
       </footer>
 

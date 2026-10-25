@@ -72,8 +72,11 @@ interface FeatureWorkflowViewProps {
   testingMode?: "full_app" | "feature_workflow"
   onSelectTestingMode?: (mode: "full_app" | "feature_workflow") => void
   fullPageView?: boolean
+  hideSubNav?: boolean
   isFullStage?: boolean
   onToggleFullStage?: () => void
+  onPreviewPlanChange?: (plan: FullAppTestPlan | null) => void
+  onAnalyzedSpecChange?: (spec: FeatureWorkflowSpec | null) => void
 
   // AI Configuration & Provider display
   aiProvider?: "nebius" | "omnirouter" | "local"
@@ -181,8 +184,11 @@ export default function FeatureWorkflowView({
   testingMode = "feature_workflow",
   onSelectTestingMode,
   fullPageView = true,
+  hideSubNav = false,
   isFullStage,
   onToggleFullStage,
+  onPreviewPlanChange,
+  onAnalyzedSpecChange,
   aiProvider = "nebius",
   onUpdateAiProvider,
   nebiusApiKey = "",
@@ -507,7 +513,7 @@ export default function FeatureWorkflowView({
       } else {
         await onStartWorkflowTest(text, undefined, "Full App Test")
       }
-      if (onSubTabChange) onSubTabChange("execution")
+      if (onSubTabChange) onSubTabChange("plan")
       return
     }
 
@@ -545,6 +551,8 @@ export default function FeatureWorkflowView({
       if (data.success && data.spec) {
         setAnalyzedSpec(data.spec)
         setPreviewPlan(data.plan)
+        onAnalyzedSpecChange?.(data.spec)
+        onPreviewPlanChange?.(data.plan || null)
         if (detectedRole) setActiveRole(detectedRole)
 
         const responseText = `I've analyzed the **${data.spec.workflowName}** workflow${
@@ -607,7 +615,7 @@ export default function FeatureWorkflowView({
     const role = roleOverride || activeRole || "Customer"
     const name = nameOverride || currentSpec?.workflowName || "Workflow test"
     await onStartWorkflowTest(`[User role: ${role}] [Workflow: ${name}] ${text}`, role, name)
-    if (onSubTabChange) onSubTabChange("execution")
+    if (onSubTabChange) onSubTabChange("plan")
   }
 
   const passedSteps = activePlan?.steps?.filter((s) => s.status === "passed").length || 0
@@ -616,72 +624,54 @@ export default function FeatureWorkflowView({
 
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-slate-950 text-slate-100 overflow-hidden">
-      {/* 1. TOP HEADER: MODE TOGGLE & STATUS BANNER */}
-      <div className="px-4 py-2.5 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 shrink-0">
-        <div className="flex items-center gap-3">
-          {/* Laya Status Pill */}
-          <div
-            onClick={() => onToggleLaya && onToggleLaya(!enableLaya)}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs cursor-pointer transition select-none ${
-              enableLaya && isLayaLive
-                ? "bg-emerald-950/60 border-emerald-500/40 text-emerald-300"
-                : enableLaya
-                ? "bg-amber-950/60 border-amber-500/40 text-amber-300"
-                : "bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200"
-            }`}
-            title={
-              enableLaya && isLayaLive
-                ? `Laya System-1 Reflex: Active (~30ms local decisions on ${layaBaseUrl})`
-                : enableLaya
-                ? `Laya System-1: Connecting to ${layaBaseUrl}...`
-                : "Click to enable Laya System-1 fast reflexes"
-            }
-          >
-            <Zap className={`h-3 w-3 ${enableLaya && isLayaLive ? "text-emerald-400 fill-current" : "text-slate-500"}`} />
-            <span className="font-semibold text-[10px]">
-              Laya {enableLaya && isLayaLive ? "30ms" : enableLaya ? "Offline" : "Disabled"}
-            </span>
+      {/* 1. UNIFIED STAGE NAVIGATION BAR (shown only when standalone) */}
+      {!hideSubNav && (
+        <div className="px-3 py-1.5 border-b border-slate-800 bg-slate-900/80 flex items-center justify-between gap-2 text-xs shrink-0 overflow-x-auto custom-scrollbar">
+          <div className="flex items-center gap-1">
+            {[
+              { id: "chat", label: "Chat", icon: MessageSquare, isLive: isRunning },
+              { id: "plan", label: "Plan & Screens", icon: ListChecks, count: activePlan?.steps?.length },
+              { id: "map", label: "Flow Map", icon: MapIcon, count: activePlan?.screens?.length },
+              {
+                id: "coverage",
+                label: "Report",
+                icon: ShieldCheck,
+                count: job?.edgeCasesTested?.length ? job.edgeCasesTested.length : coveragePct > 0 ? `${coveragePct}%` : undefined,
+              },
+            ].map((tab) => {
+              const Icon = tab.icon
+              const isActive = activeSubTab === tab.id
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => onSubTabChange && onSubTabChange(tab.id as any)}
+                  className={`px-2.5 py-1.5 rounded-lg flex items-center gap-1.5 font-semibold transition cursor-pointer whitespace-nowrap ${
+                    isActive
+                      ? "bg-indigo-600 text-white shadow-sm shadow-indigo-950"
+                      : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/60"
+                  }`}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  <span>{tab.label}</span>
+                  {tab.count !== undefined && (
+                    <span
+                      className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                        isActive ? "bg-indigo-800 text-white" : "bg-slate-800 text-slate-400 border border-slate-700"
+                      }`}
+                    >
+                      {tab.count}
+                    </span>
+                  )}
+                  {tab.isLive && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse ml-0.5" />
+                  )}
+                </button>
+              )
+            })}
           </div>
-
-          {/* Workflow Badge if identified */}
-          {currentSpec?.workflowName && (
-            <div className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-950/60 border border-indigo-500/40 text-xs">
-              <span className="text-[10px] text-indigo-400 font-semibold uppercase">Workflow:</span>
-              <span className="font-bold text-white truncate max-w-[180px]">{currentSpec.workflowName}</span>
-              {activeRole && (
-                <span className="text-[10px] bg-purple-900/60 border border-purple-500/40 px-1.5 py-0.2 rounded text-purple-200">
-                  Act as: {activeRole}
-                </span>
-              )}
-            </div>
-          )}
         </div>
-
-        {/* Action Buttons: Run / Stop */}
-        <div className="flex items-center gap-2">
-
-          {isRunning ? (
-            <button
-              type="button"
-              onClick={onCancelJob}
-              className="px-3.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-md shadow-rose-950"
-            >
-              <Ban className="h-3.5 w-3.5" />
-              <span>Stop Testing</span>
-            </button>
-          ) : (
-            <button
-              type="button"
-              disabled={isAnalyzing || !currentSpec}
-              onClick={() => handleRunTest()}
-              className="px-4 py-1.5 rounded-lg bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-md shadow-indigo-950 disabled:opacity-50"
-            >
-              <Play className="h-3.5 w-3.5 fill-current" />
-              <span>{job?.status === "completed" ? "Re-Run Test" : "Run Test"}</span>
-            </button>
-          )}
-        </div>
-      </div>
+      )}
 
       {/* 2. LIVE PROGRESS BAR WHEN RUNNING */}
       {isRunning && (
@@ -693,89 +683,14 @@ export default function FeatureWorkflowView({
         </div>
       )}
 
-      {/* 3. WORKSPACE SUB-TABS: CHAT, PLAN, MAP, SCREENS, EXECUTION, REPORT */}
-      <div className="px-4 border-b border-slate-800 bg-slate-900/60 flex items-center justify-between text-xs shrink-0 overflow-x-auto custom-scrollbar">
-        <div className="flex gap-1 py-1.5">
-          {[
-            { id: "chat", label: "Testing Bot Chat", icon: MessageSquare, isLive: isRunning },
-            { id: "plan", label: "Workflow Test Plan", icon: ListChecks, count: activePlan?.steps?.length },
-            { id: "map", label: "Focused Workflow Map", icon: MapIcon, count: activePlan?.screens?.length },
-            { id: "screens", label: "Relevant Screens", icon: Layers, count: activePlan?.screens?.length },
-            { id: "execution", label: "Live Execution & Evidence", icon: Activity, isLive: isRunning },
-            {
-              id: "coverage",
-              label: "Report & Edge Cases",
-              icon: ShieldCheck,
-              count: job?.edgeCasesTested?.length ? `${job.edgeCasesTested.length} edge cases` : `${coveragePct}%`,
-            },
-          ].map((tab) => {
-            const Icon = tab.icon
-            const isActive = activeSubTab === tab.id
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => onSubTabChange && onSubTabChange(tab.id as any)}
-                className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 font-semibold transition cursor-pointer whitespace-nowrap ${
-                  isActive
-                    ? "bg-indigo-600 text-white shadow-sm shadow-indigo-950 font-bold"
-                    : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/60"
-                }`}
-              >
-                <Icon className="h-3.5 w-3.5" />
-                <span>{tab.label}</span>
-                {tab.count !== undefined && (
-                  <span
-                    className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
-                      isActive ? "bg-indigo-800 text-white" : "bg-slate-800 text-slate-400 border border-slate-700"
-                    }`}
-                  >
-                    {tab.count}
-                  </span>
-                )}
-                {tab.isLive && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse ml-0.5" />
-                )}
-              </button>
-            )
-          })}
-        </div>
-
-        {currentSpec?.edgeCases && currentSpec.edgeCases.length > 0 && (
-          <span className="text-[11px] font-mono text-purple-300 hidden md:inline">
-            🧪 {currentSpec.edgeCases.length} Edge Cases Planned
-          </span>
-        )}
-      </div>
-
-      {/* 5. MAIN SUBTAB VIEWS */}
+      {/* 3. MAIN SUBTAB VIEWS */}
       <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-4">
         {/* SUBTAB 0: TESTING BOT CHAT CONVERSATION */}
-        {(activeSubTab === "chat" || !activeSubTab) && (
-          <div className="h-full flex flex-col max-w-4xl mx-auto space-y-3">
-            {/* 1. Chat Top Bar: Provider / Model badge + AI Config + Clear Chat */}
-            <div className="px-3.5 py-2 rounded-xl border border-slate-800 bg-slate-900/80 flex items-center justify-between text-xs shrink-0 gap-2 shadow-sm">
-              <div className="flex items-center gap-2 min-w-0">
-                <div
-                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-purple-950/20 border border-purple-800/40 text-left select-none"
-                  title="Vision & Automation Engine Active"
-                >
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
-                  <span className="font-semibold text-slate-200 text-[11px] truncate">
-                    {aiProvider === "omnirouter"
-                      ? "OmniRouter"
-                      : aiProvider === "local"
-                      ? "Local Ollama"
-                      : "Nebius Token Factory"}
-                  </span>
-                  <span className="text-[10px] text-purple-300 font-mono truncate max-w-[160px]">
-                    ({aiProvider === "omnirouter" ? omniRouterModel || "fast" : (selectedAiModel || "Nemotron-3-Nano").split("/").pop()})
-                  </span>
-                </div>
-                <span className="text-[10px] text-slate-500 hidden sm:inline">Vision &amp; Automation Active</span>
-              </div>
-
-              <div className="flex items-center gap-1.5 shrink-0">
+        {(
+          <div className="h-full flex flex-col max-w-4xl mx-auto space-y-2.5">
+            {/* Minimal Clear Chat action (only shown once conversation has messages beyond welcome) */}
+            {chatMessages.length > 1 && (
+              <div className="flex items-center justify-end text-xs shrink-0">
                 <button
                   type="button"
                   onClick={() => {
@@ -789,14 +704,14 @@ export default function FeatureWorkflowView({
                       },
                     ])
                   }}
-                  className="px-2.5 py-1 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 text-[11px] flex items-center gap-1 transition cursor-pointer"
+                  className="px-2 py-0.5 rounded-md text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 text-[11px] flex items-center gap-1 transition cursor-pointer"
                   title="Clear chat history"
                 >
                   <Trash2 className="w-3 h-3" />
-                  <span className="hidden sm:inline">Clear Chat</span>
+                  <span>Clear Chat</span>
                 </button>
               </div>
-            </div>
+            )}
 
             {/* Live running status banner */}
             {isRunning && (
@@ -809,10 +724,10 @@ export default function FeatureWorkflowView({
                 </div>
                 <button
                   type="button"
-                  onClick={() => onSubTabChange && onSubTabChange("execution")}
+                  onClick={() => onSubTabChange && onSubTabChange("plan")}
                   className="px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[10px] shrink-0 cursor-pointer"
                 >
-                  View Live Execution →
+                  View Active Plan →
                 </button>
               </div>
             )}
@@ -1187,31 +1102,48 @@ export default function FeatureWorkflowView({
               </div>
             )}
 
-            {/* Quick Actions Drawer */}
-            <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-800/80 text-xs shrink-0 space-y-1.5 shadow-sm">
+            {/* Starter Role & Workflow Chips (Hick's Law: only shown on initial empty state before conversation starts) */}
+            {chatMessages.length <= 1 && (
+              <div className="flex flex-wrap gap-1.5 pt-0.5 shrink-0">
+                {CONVERSATIONAL_PROMPT_SUGGESTIONS.map((sug, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => {
+                      setChatInput(sug.prompt)
+                      handleSendChatMessage(sug.prompt)
+                    }}
+                    disabled={isAnalyzing || isRunning}
+                    className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 hover:border-indigo-500/60 hover:bg-indigo-950/20 text-slate-300 hover:text-white text-[11px] font-medium transition cursor-pointer disabled:opacity-50"
+                  >
+                    {sug.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Unified Project Context, Routes & Quick Actions Drawer (Hick's Law: Progressive disclosure) */}
+            <div className="px-2.5 py-1.5 rounded-xl bg-slate-900/60 border border-slate-800/80 text-xs shrink-0 space-y-1.5">
               <div className="flex items-center justify-between gap-2 text-[10px]">
                 <button
                   type="button"
                   onClick={() => setIsQuickActionsOpen((prev) => !prev)}
-                  className="flex items-center gap-1.5 text-indigo-400 hover:text-indigo-300 font-semibold cursor-pointer group"
-                  title="Toggle Quick Commands, Target Project Routes & Test Data"
+                  className="flex items-center gap-1.5 text-slate-400 hover:text-white font-medium cursor-pointer group"
+                  title="Toggle Project Target, Discovered Routes, Test Data & Presets"
                 >
-                  <Wand2 className="h-3 w-3 text-indigo-400 group-hover:rotate-12 transition-transform" />
-                  <span>Quick Actions (7)</span>
+                  <Wand2 className="h-3 w-3 text-indigo-400" />
+                  <span>Project, Routes &amp; Quick Presets</span>
+                  {discoveredRoutes && discoveredRoutes.length > 0 && (
+                    <span className="px-1.5 py-0.2 rounded bg-slate-800 text-slate-300 font-mono text-[9px]">
+                      {discoveredRoutes.length} routes
+                    </span>
+                  )}
                   <ChevronDown className={`h-2.5 w-2.5 transition-transform ${isQuickActionsOpen ? "rotate-180" : ""}`} />
                 </button>
 
-                {/* Fast Action Chips when collapsed */}
-                <div className="flex items-center gap-1 min-w-0 overflow-hidden">
-                  <button
-                    type="button"
-                    onClick={() => onStartFullAppTest && onStartFullAppTest()}
-                    disabled={isAnalyzing || isRunning}
-                    className="px-2 py-0.5 rounded text-[9px] font-bold bg-indigo-600/30 border border-indigo-500 text-indigo-200 hover:bg-indigo-600 hover:text-white transition cursor-pointer truncate disabled:opacity-50"
-                  >
-                    🚀 Full App Test
-                  </button>
-                </div>
+                <span className="text-[10px] font-mono text-slate-500 truncate max-w-[180px]">
+                  {selectedProjectDir}
+                </span>
               </div>
 
               {/* Expanded Presets & Project Route Chips */}
@@ -1235,13 +1167,7 @@ export default function FeatureWorkflowView({
                           handleSendChatMessage(cleanPrompt)
                         }}
                         disabled={isAnalyzing || isRunning}
-                        className={`shrink-0 px-2.5 py-1 rounded-lg border text-[10px] transition cursor-pointer disabled:opacity-50 ${
-                          chip.startsWith("🎯") || chip.startsWith("👤") || chip.startsWith("🖼️")
-                            ? "bg-purple-950/50 border-purple-500/60 text-purple-200 font-bold hover:bg-purple-600 hover:text-white"
-                            : chip.includes("Full App")
-                            ? "bg-indigo-600/30 border-indigo-500 text-indigo-200 font-bold hover:bg-indigo-600 hover:text-white"
-                            : "bg-slate-950 border-slate-800 hover:border-indigo-500 hover:bg-indigo-950/30 text-slate-300 hover:text-white"
-                        }`}
+                        className="shrink-0 px-2.5 py-1 rounded-lg border bg-slate-950 border-slate-800 hover:border-indigo-500 hover:bg-indigo-950/30 text-slate-300 hover:text-white text-[10px] transition cursor-pointer disabled:opacity-50"
                       >
                         {chip}
                       </button>
@@ -1292,7 +1218,6 @@ export default function FeatureWorkflowView({
                               onChange={(e) => {
                                 const files = e.target.files
                                 if (files && files.length > 0 && onSelectProjectDir) {
-                                  // Update path reference from selected file
                                   const firstFile = files[0] as any
                                   const filePath = firstFile.path || firstFile.webkitRelativePath || firstFile.name
                                   if (filePath) {
@@ -1307,7 +1232,7 @@ export default function FeatureWorkflowView({
                       {onGenerateTestData && (
                         <button
                           type="button"
-                          onClick={onGenerateTestData}
+                          onClick={() => onGenerateTestData()}
                           disabled={isGeneratingTestData}
                           className="px-2 py-0.5 rounded bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/40 flex items-center gap-1 text-[10px] font-semibold transition cursor-pointer disabled:opacity-50 shrink-0"
                           title="Generate dummy files (PDFs, CSVs, images, notes) in target project"
@@ -1358,29 +1283,6 @@ export default function FeatureWorkflowView({
                   )}
                 </div>
               )}
-            </div>
-
-            {/* Prompt Suggestion Chips (Role starters, not fixed apps) */}
-            <div className="space-y-1.5 pt-1 shrink-0">
-              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">
-                Conversational Prompts &amp; Role Instructions:
-              </span>
-              <div className="flex flex-wrap gap-1.5">
-                {CONVERSATIONAL_PROMPT_SUGGESTIONS.map((sug, idx) => (
-                  <button
-                    key={idx}
-                    type="button"
-                    onClick={() => {
-                      setChatInput(sug.prompt)
-                      handleSendChatMessage(sug.prompt)
-                    }}
-                    disabled={isAnalyzing || isRunning}
-                    className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 hover:border-indigo-500/60 hover:bg-indigo-950/20 text-slate-300 hover:text-white text-[11px] font-medium transition cursor-pointer disabled:opacity-50"
-                  >
-                    {sug.label}
-                  </button>
-                ))}
-              </div>
             </div>
 
             {/* Attached Image Preview */}
@@ -1493,570 +1395,6 @@ export default function FeatureWorkflowView({
           </div>
         )}
 
-        {/* SUBTAB 1: WORKFLOW TEST PLAN (TEST-001, TEST-002, ...) */}
-        {activeSubTab === "plan" && (
-          <div className="space-y-4 max-w-5xl mx-auto">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <ListChecks className="h-4 w-4 text-indigo-400" />
-                  Workflow-Specific Pre-Flight Test Plan
-                </h3>
-                <p className="text-xs text-slate-400">
-                  Every step is planned before execution. Shows starting point, targeted actions, synthetic data, and expected results.
-                </p>
-              </div>
-
-              {activePlan && (
-                <span className="font-mono text-xs text-indigo-400 font-bold px-2 py-1 rounded bg-indigo-950/60 border border-indigo-800">
-                  {passedSteps} / {totalSteps} Steps Passed
-                </span>
-              )}
-            </div>
-
-            {/* Blocked Steps Resolution Alert Banner */}
-            {blockedSteps.length > 0 && (
-              <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-500/50 flex items-center justify-between gap-3 text-xs">
-                <div className="flex items-center gap-2">
-                  <ShieldAlert className="h-4 w-4 text-amber-400 shrink-0" />
-                  <div>
-                    <span className="font-bold text-amber-200 block">
-                      ⚠️ {blockedSteps.length} Step{blockedSteps.length > 1 ? "s" : ""} Blocked
-                    </span>
-                    <span className="text-[11px] text-slate-300">
-                      Testing Bot asked diagnostic questions in chat to resolve and resume these workflows.
-                    </span>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => onSubTabChange && onSubTabChange("chat")}
-                  className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs shrink-0 cursor-pointer shadow-md shadow-amber-950"
-                >
-                  Open Chat to Unblock →
-                </button>
-              </div>
-            )}
-
-            {/* Steps List */}
-            {activePlan?.steps && activePlan.steps.length > 0 ? (
-              <div className="space-y-2">
-                {activePlan.steps.map((step) => {
-                  const isPassed = step.status === "passed"
-                  const isFailed = step.status === "failed"
-                  const isBlocked = step.status === "blocked"
-                  const isRunningStep = step.status === "running"
-
-                  return (
-                    <div
-                      key={step.id}
-                      className={`p-3 rounded-xl border text-xs transition ${
-                        isPassed
-                          ? "bg-emerald-950/20 border-emerald-800/40 text-emerald-200"
-                          : isFailed
-                          ? "bg-rose-950/20 border-rose-800/40 text-rose-200"
-                          : isBlocked
-                          ? "bg-amber-950/30 border-amber-500/50 text-amber-200 ring-1 ring-amber-500/30"
-                          : isRunningStep
-                          ? "bg-indigo-950/40 border-indigo-500 shadow-md ring-1 ring-indigo-400 animate-pulse"
-                          : "bg-slate-900/60 border-slate-800 text-slate-300"
-                      }`}
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono font-bold text-indigo-400">{step.id}</span>
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-slate-800 text-slate-300">
-                            {step.screenName}
-                          </span>
-                          <span className="font-bold text-white">{step.targetName}</span>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          {step.syntheticValue && (
-                            <span className="text-[10px] text-purple-300 font-mono bg-purple-950/50 px-2 py-0.5 rounded border border-purple-800/40">
-                              Data: {step.syntheticValue}
-                            </span>
-                          )}
-                          <span
-                            className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${
-                              isPassed
-                                ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
-                                : isFailed
-                                ? "bg-rose-500/20 text-rose-400 border border-rose-500/30"
-                                : isBlocked
-                                ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
-                                : isRunningStep
-                                ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/30"
-                                : "bg-slate-800 text-slate-400"
-                            }`}
-                          >
-                            {step.status}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Expected vs Actual */}
-                      <div className="mt-2 pt-2 border-t border-slate-800/60 grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px]">
-                        <div>
-                          <span className="text-slate-500 font-semibold block">Expected:</span>
-                          <span className="text-slate-300">{step.expectedResult}</span>
-                        </div>
-                        {step.actualResult && (
-                          <div>
-                            <span className="text-slate-500 font-semibold block">Actual Result:</span>
-                            <span className={isPassed ? "text-emerald-300" : isFailed ? "text-rose-300" : "text-slate-300"}>
-                              {step.actualResult}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Screenshot Thumbnail */}
-                      {step.screenshotUrl && (
-                        <div className="mt-2 pt-1.5 flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setSelectedScreenshotModal(step.screenshotUrl!)}
-                            className="inline-flex items-center gap-1.5 text-[10px] text-indigo-400 hover:text-indigo-300 font-semibold cursor-pointer"
-                          >
-                            <ImageIcon className="h-3.5 w-3.5" />
-                            <span>View Step Evidence Screenshot</span>
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  )
-                })}
-              </div>
-            ) : (
-              <div className="p-12 rounded-xl bg-slate-900/30 border border-dashed border-slate-800 text-center space-y-2">
-                <ListChecks className="h-8 w-8 text-slate-600 mx-auto" />
-                <h4 className="text-sm font-bold text-slate-300">No Test Plan Generated Yet</h4>
-                <p className="text-xs text-slate-500 max-w-md mx-auto">
-                  Describe what you would like to test in the Testing Bot Chat to generate the pre-flight test plan.
-                </p>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* SUBTAB 2: FOCUSED WORKFLOW MAP */}
-        {activeSubTab === "map" && (
-          <div className="space-y-4 h-full flex flex-col">
-            <div className="flex items-center justify-between shrink-0">
-              <div>
-                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <MapIcon className="h-4 w-4 text-indigo-400" />
-                  Focused Figma-Style Workflow Map
-                </h3>
-                <p className="text-xs text-slate-400">
-                  Shows only the screens and action transitions specifically required for this workflow.
-                </p>
-              </div>
-              {onOpenMapPage && (
-                <button
-                  type="button"
-                  onClick={onOpenMapPage}
-                  className="px-3 py-1 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Maximize2 className="h-3.5 w-3.5" />
-                  <span>Full Screen Map</span>
-                </button>
-              )}
-            </div>
-
-            {flowGraph && flowGraph.nodes.length > 0 ? (
-              <div className="flex-1 min-h-[500px]">
-                <TestFlowGraph
-                  graph={flowGraph}
-                  screens={activePlan?.screens}
-                  steps={activePlan?.steps}
-                  transitions={activePlan?.transitions}
-                  plan={activePlan || undefined}
-                  onViewScreenshot={(url) => setSelectedScreenshotModal(url)}
-                  isFullStage={isFullStage !== undefined ? isFullStage : true}
-                  onToggleFullStage={onToggleFullStage}
-                />
-              </div>
-            ) : (
-              <div className="p-12 rounded-xl bg-slate-900/30 border border-dashed border-slate-800 text-center space-y-2 flex-1 flex flex-col items-center justify-center">
-                <MapIcon className="h-8 w-8 text-slate-600" />
-                <h4 className="text-sm font-bold text-slate-300">Workflow Map Not Yet Built</h4>
-                <p className="text-xs text-slate-500 max-w-sm">
-                  Run the workflow test to build the focused visual graph connecting only the screens involved in this feature.
-                </p>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* SUBTAB 3: RELEVANT SCREENS INVENTORY */}
-        {activeSubTab === "screens" && (
-          <div className="space-y-4 max-w-5xl mx-auto">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <Layers className="h-4 w-4 text-indigo-400" />
-                  Screens Involved in Workflow
-                </h3>
-                <p className="text-xs text-slate-400">
-                  Only screens traversed for this feature (not the entire application).
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                {screensSearchQuery && (
-                  <span className="font-mono text-[10px] text-indigo-300 font-semibold px-2 py-0.5 rounded bg-indigo-950/60 border border-indigo-800">
-                    {filteredScreens.length} of {activePlan?.screens?.length || 0}
-                  </span>
-                )}
-                <span className="font-mono text-xs text-slate-400">
-                  {activePlan?.screens?.length || 0} Screens
-                </span>
-              </div>
-            </div>
-
-            {/* Screens Search Bar */}
-            {activePlan?.screens && activePlan.screens.length > 0 && (
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault()
-                  setScreensSearchQuery(screensSearchInput.trim())
-                }}
-                className="relative flex items-center gap-2"
-              >
-                <div className="relative flex-1">
-                  <Search className="h-3.5 w-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                  <input
-                    type="text"
-                    value={screensSearchInput}
-                    onChange={(e) => setScreensSearchInput(e.target.value)}
-                    placeholder="Search tested screens by name or path..."
-                    className="w-full bg-slate-900 border border-slate-700 focus:border-indigo-500 rounded-xl pl-9 pr-8 py-2 text-xs text-white placeholder-slate-500 outline-none transition"
-                  />
-                  {(screensSearchInput || screensSearchQuery) && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setScreensSearchInput("")
-                        setScreensSearchQuery("")
-                      }}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white p-0.5 rounded cursor-pointer"
-                      title="Clear screen search"
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                  )}
-                </div>
-                <button
-                  type="submit"
-                  disabled={!screensSearchInput.trim() && !screensSearchQuery}
-                  className="px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white font-semibold text-xs transition cursor-pointer shrink-0 shadow-xs"
-                  title="Submit search (Enter)"
-                >
-                  Submit
-                </button>
-              </form>
-            )}
-
-            {filteredScreens.length > 0 ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {filteredScreens.map((sc) => (
-                  <div
-                    key={sc.id}
-                    className="p-3 rounded-xl bg-slate-900 border border-slate-800 space-y-2 text-xs"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-mono font-bold text-indigo-400">{sc.id}</span>
-                      {sc.isNewDiscovery && (
-                        <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                          NEW DISCOVERY
-                        </span>
-                      )}
-                    </div>
-                    <div className="font-bold text-white text-sm truncate">{sc.name}</div>
-                    <div className="text-[10px] text-slate-400 font-mono truncate">{sc.path}</div>
-
-                    {sc.screenshotUrl && (
-                      <div
-                        onClick={() => setSelectedScreenshotModal(sc.screenshotUrl!)}
-                        className="cursor-pointer border border-slate-800 rounded-lg overflow-hidden hover:border-indigo-500 transition"
-                      >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={sc.screenshotUrl}
-                          alt={sc.name}
-                          className="w-full h-32 object-cover object-top hover:opacity-90 transition"
-                        />
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            ) : screensSearchQuery ? (
-              <div className="p-8 rounded-xl bg-slate-900/30 border border-dashed border-slate-800 text-center space-y-2">
-                <Search className="h-6 w-6 text-slate-600 mx-auto" />
-                <h4 className="text-xs font-bold text-slate-300">No Screens Match &quot;{screensSearchQuery}&quot;</h4>
-                <button
-                  type="button"
-                  onClick={() => setScreensSearchQuery("")}
-                  className="text-xs text-indigo-400 hover:text-indigo-300 font-semibold underline cursor-pointer"
-                >
-                  Clear search query
-                </button>
-              </div>
-            ) : (
-              <div className="p-12 rounded-xl bg-slate-900/30 border border-dashed border-slate-800 text-center space-y-2">
-                <Layers className="h-8 w-8 text-slate-600 mx-auto" />
-                <h4 className="text-sm font-bold text-slate-300">No Screens Discovered Yet</h4>
-                <p className="text-xs text-slate-500">
-                  Execute the test to discover the screens on this workflow path.
-                </p>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* SUBTAB 4: LIVE EXECUTION & EVIDENCE TRACE */}
-        {activeSubTab === "execution" && (
-          <div className="space-y-4 max-w-5xl mx-auto">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <Activity className="h-4 w-4 text-indigo-400" />
-                  Live Execution Trace (Action → Observe → Verify → Record)
-                </h3>
-                <p className="text-xs text-slate-400">
-                  Real-time execution log of actions, observations, DOM changes, and screenshot captures.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => onSubTabChange && onSubTabChange("chat")}
-                className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs flex items-center gap-1.5 cursor-pointer shadow-md shrink-0"
-              >
-                <MessageSquare className="h-3.5 w-3.5" />
-                <span>Testing Bot Chat</span>
-              </button>
-            </div>
-
-            {/* Test Completed Banner */}
-            {job?.status === "completed" && (
-              <div className="p-3.5 rounded-xl bg-gradient-to-r from-emerald-950/60 to-slate-900 border border-emerald-500/40 text-xs flex items-center justify-between gap-3 shadow-lg">
-                <div className="flex items-center gap-2.5">
-                  <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
-                  <div>
-                    <span className="font-bold text-white block text-xs">Test Execution Completed</span>
-                    <span className="text-[11px] text-slate-300">
-                      {passedSteps} of {totalSteps} steps passed. Testing Bot has summarized results in Chat.
-                    </span>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => onSubTabChange && onSubTabChange("chat")}
-                  className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shrink-0 cursor-pointer shadow-md shadow-emerald-950"
-                >
-                  Return to Chat →
-                </button>
-              </div>
-            )}
-
-            {/* Current Step Status Banner */}
-            {isRunning && (
-              <div className="p-3 rounded-xl bg-indigo-950/40 border border-indigo-500/40 text-xs flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2 min-w-0">
-                  <Loader2 className="h-4 w-4 text-indigo-400 animate-spin shrink-0" />
-                  <span className="font-semibold text-white truncate">{job?.currentStep || "Executing..."}</span>
-                </div>
-                <span className="font-mono text-indigo-300 font-bold">{job?.progress || 0}%</span>
-              </div>
-            )}
-
-            {/* Terminal logs list */}
-            {job?.logs && job.logs.length > 0 ? (
-              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 font-mono text-[11px] space-y-1.5 max-h-[500px] overflow-y-auto custom-scrollbar">
-                {job.logs.map((log, idx) => (
-                  <div key={idx} className="flex items-start gap-2 leading-relaxed">
-                    <span className="text-slate-600 text-[10px] shrink-0">{log.timestamp.slice(11, 19)}</span>
-                    <span
-                      className={`text-[9px] font-bold uppercase px-1 rounded shrink-0 ${
-                        log.level === "success"
-                          ? "bg-emerald-950 text-emerald-400 border border-emerald-800"
-                          : log.level === "warn"
-                          ? "bg-amber-950 text-amber-400 border border-amber-800"
-                          : log.level === "error"
-                          ? "bg-rose-950 text-rose-400 border border-rose-800"
-                          : "bg-slate-900 text-slate-400"
-                      }`}
-                    >
-                      {log.level}
-                    </span>
-                    <span className="text-slate-200">{log.message}</span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="p-12 rounded-xl bg-slate-900/30 border border-dashed border-slate-800 text-center text-xs text-slate-500">
-                Terminal logs will stream here as the workflow test executes.
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* SUBTAB 5: REPORT & EDGE CASES */}
-        {activeSubTab === "coverage" && (
-          <div className="space-y-4 max-w-5xl mx-auto">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <ShieldCheck className="h-4 w-4 text-emerald-400" />
-                  Final Workflow Test Report & Edge Cases
-                </h3>
-                <p className="text-xs text-slate-400">
-                  Detailed verification results for the workflow, tested edge cases, bugs found, and overall workflow coverage.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => onSubTabChange && onSubTabChange("chat")}
-                className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs flex items-center gap-1.5 cursor-pointer shadow-md shrink-0"
-              >
-                <MessageSquare className="h-3.5 w-3.5" />
-                <span>Testing Bot Chat</span>
-              </button>
-            </div>
-
-            {/* Summary Metrics Cards */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-              <div className="p-3 rounded-xl bg-slate-900 border border-slate-800">
-                <span className="text-[10px] text-slate-400 block font-semibold">Workflow Coverage</span>
-                <span className="text-lg font-bold text-white font-mono">{coveragePct}%</span>
-                <span className="text-[10px] text-emerald-400 block mt-0.5">{passedSteps}/{totalSteps} Steps Passed</span>
-              </div>
-
-              <div className="p-3 rounded-xl bg-slate-900 border border-slate-800">
-                <span className="text-[10px] text-slate-400 block font-semibold">Edge Cases Verified</span>
-                <span className="text-lg font-bold text-purple-300 font-mono">
-                  {job?.edgeCasesTested?.filter((e) => e.status === "passed").length || currentSpec?.edgeCases?.length || 0}
-                </span>
-                <span className="text-[10px] text-slate-400 block mt-0.5">Focused boundary tests</span>
-              </div>
-
-              <div className="p-3 rounded-xl bg-slate-900 border border-slate-800">
-                <span className="text-[10px] text-slate-400 block font-semibold">Screens Involved</span>
-                <span className="text-lg font-bold text-indigo-300 font-mono">
-                  {activePlan?.screens?.length || currentSpec?.likelyScreens?.length || 0}
-                </span>
-                <span className="text-[10px] text-slate-400 block mt-0.5">Targeted feature path</span>
-              </div>
-
-              <div className="p-3 rounded-xl bg-slate-900 border border-slate-800">
-                <span className="text-[10px] text-slate-400 block font-semibold">Bugs / Issues Found</span>
-                <span className="text-lg font-bold text-emerald-400 font-mono">
-                  {job?.issues?.length || 0}
-                </span>
-                <span className="text-[10px] text-slate-400 block mt-0.5">Console / DOM issues</span>
-              </div>
-            </div>
-
-            {/* Edge Cases Breakdown */}
-            <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-2.5 text-xs">
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-white flex items-center gap-1.5">
-                  <span>🧪 Tested Edge Cases</span>
-                </span>
-                <span className="text-[10px] text-slate-400 font-mono">Focused on this feature only</span>
-              </div>
-
-              <div className="space-y-2">
-                {(job?.edgeCasesTested || currentSpec?.edgeCases || []).map((ec: FeatureWorkflowEdgeCase) => {
-                  const isPassed = ec.status === "passed" || job?.status === "completed"
-                  return (
-                    <div
-                      key={ec.id}
-                      className="p-2.5 rounded-lg bg-slate-950 border border-slate-800/80 flex items-start justify-between gap-3 text-xs"
-                    >
-                      <div className="space-y-0.5 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono font-bold text-purple-400 text-[11px]">{ec.id}</span>
-                          <span className="font-bold text-white">{ec.name}</span>
-                          <span className="text-[9px] font-mono uppercase px-1 rounded bg-slate-800 text-slate-400">
-                            {ec.type}
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-slate-400">{ec.description}</p>
-                        <p className="text-[10px] text-slate-500">
-                          Expected: <span className="text-slate-300">{ec.expectedBehavior}</span>
-                        </p>
-                      </div>
-
-                      <span
-                        className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase shrink-0 ${
-                          isPassed
-                            ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
-                            : "bg-slate-800 text-slate-400"
-                        }`}
-                      >
-                        {isPassed ? "PASSED" : ec.status || "PENDING"}
-                      </span>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-
-            {/* Final Report Summary */}
-            {job?.report && (
-              <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-2 text-xs">
-                <span className="font-bold text-white block">Executive Summary</span>
-                <p className="text-slate-300 leading-relaxed">{job.report.summary}</p>
-                {(job.report.recordingUrl || job.recordingUrl || (job.recordingSegments && job.recordingSegments.length > 0)) && (
-                  <div className="pt-2 border-t border-slate-800 space-y-2">
-                    <span className="font-semibold text-slate-200 text-[11px] flex items-center gap-1.5">
-                      <Video className="h-3.5 w-3.5 text-indigo-400" /> Session recording
-                    </span>
-                    {(job.report.recordingUrl || job.recordingUrl) && (
-                      <video
-                        controls
-                        preload="metadata"
-                        src={job.report.recordingUrl || job.recordingUrl}
-                        className="w-full max-h-[420px] rounded-lg border border-slate-700 bg-black"
-                        aria-label="Recorded browser test session"
-                      />
-                    )}
-                    {job.recordingSegments && job.recordingSegments.length > 1 && (
-                      <div className="flex flex-wrap gap-2">
-                        {job.recordingSegments.map((url, index) => (
-                          <a
-                            key={url}
-                            href={url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-[11px] text-indigo-300 underline underline-offset-2 hover:text-indigo-200"
-                          >
-                            Open recording segment {index + 1}
-                          </a>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-                {job.report.recommendations && job.report.recommendations.length > 0 && (
-                  <div className="pt-2 border-t border-slate-800 space-y-1">
-                    <span className="font-semibold text-slate-400 text-[11px] block">Recommendations:</span>
-                    <ul className="list-disc list-inside space-y-0.5 text-slate-300 text-[11px]">
-                      {job.report.recommendations.map((rec, rIdx) => (
-                        <li key={rIdx}>{rec}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
       </div>
 
       {/* 6. FULL-RESOLUTION SCREENSHOT PREVIEW MODAL */}

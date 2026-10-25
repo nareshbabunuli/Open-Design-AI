@@ -182,13 +182,16 @@ export function deriveScreenName(
  * Builds the Figma-style FlowGraph representation from the FullAppTestPlan
  */
 export function buildFigmaWorkflowMap(plan: FullAppTestPlan): FlowGraph {
-  const nodes = plan.screens.map((s) => ({
-    id: s.id,
-    title: `${s.id} ${s.name}`,
-    url: s.url,
-    screenshotUrl: s.screenshotUrl,
-    componentLocation: s.componentLocation || s.sourceFile,
-  }))
+  const nodes = plan.screens.map((s) => {
+    const stepShot = (plan.steps || []).find((st) => st.screenId === s.id && st.screenshotUrl)?.screenshotUrl
+    return {
+      id: s.id,
+      title: `${s.id} ${s.name}`,
+      url: s.url,
+      screenshotUrl: s.screenshotUrl || stepShot,
+      componentLocation: s.componentLocation || s.sourceFile,
+    }
+  })
 
   const edges = plan.transitions.map((t) => ({
     from: t.fromScreenId,
@@ -341,7 +344,15 @@ export function synthesizeFullAppPlanFromDomGraph(job: AutomationJob): FullAppTe
       name: node.title || path,
       url: node.url,
       path,
-      screenshotUrl: undefined, // Screenshots come from ledger or elsewhere
+      screenshotUrl:
+        job.screens?.find((s) => s.url === node.url && s.screenshotUrl)?.screenshotUrl ||
+        (job.actionLedger?.entries || []).find(
+          (e) => e.screenUrl === node.url && (e.evidence?.afterScreenshotUrl || e.evidence?.beforeScreenshotUrl)
+        )?.evidence?.afterScreenshotUrl ||
+        (job.actionLedger?.entries || []).find(
+          (e) => e.screenUrl === node.url && e.evidence?.beforeScreenshotUrl
+        )?.evidence?.beforeScreenshotUrl ||
+        (index === 0 ? job.currentScreenshotUrl : undefined),
       actionableElements: screenElements,
       forms: [],
       discoveredAt: node.observedAt,

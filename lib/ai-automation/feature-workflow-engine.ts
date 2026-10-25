@@ -29,6 +29,9 @@ import { calculateOverallUXScore } from "./ux-scoring-rubric"
 import {
   extractActionableInventory,
   createDummyFileBuffer,
+  resolveUploadFolder,
+  scanUploadFolder,
+  pickUploadFile,
   authenticateIfNeeded,
   completeJourneyReturnAndLogout,
 } from "./full-app-engine"
@@ -900,11 +903,30 @@ export async function executeFeatureWorkflowJob(
 
         // 2. UPLOAD ACTION
         else if (step.actionType === "upload") {
-          const dummy = createDummyFileBuffer("image")
           const fileInputs = await page.$$('input[type="file"]')
           if (fileInputs.length > 0) {
-            actionSuccess = true
-            step.actualResult = `Uploaded synthetic test image: ${dummy.fileName}`
+            const targetInput = fileInputs[0]
+            const acceptAttr = await targetInput.evaluate((el) => el.getAttribute("accept") || "").catch(() => "")
+            const uploadDir = resolveUploadFolder({
+              uploadFilesDir: job.uploadFilesDir,
+              projectDir: job.projectDir,
+              prompt: step.targetName,
+            })
+            const inv = uploadDir ? scanUploadFolder(uploadDir) : null
+            const picked = pickUploadFile(inv, {
+              fileTypeRequired: step.fileTypeRequired || "image",
+              acceptAttr,
+              targetName: step.targetName,
+            })
+            await (targetInput as any).uploadFile(picked.filePath)
+            await targetInput.evaluate((el) => {
+              el.dispatchEvent(new Event("input", { bubbles: true }))
+              el.dispatchEvent(new Event("change", { bubbles: true }))
+            }).catch(() => {})
+            actionSuccess = await targetInput.evaluate((el) => ((el as HTMLInputElement).files?.length || 0) > 0).catch(() => true)
+            step.actualResult = actionSuccess
+              ? `Uploaded test file: ${picked.fileName}`
+              : `Failed to attach file to ${step.targetName}`
           } else {
             step.actualResult = "No file input element found on screen"
           }

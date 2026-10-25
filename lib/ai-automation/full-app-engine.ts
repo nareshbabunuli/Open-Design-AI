@@ -175,7 +175,8 @@ type VisibleFormFillTask = {
   selector: string
   name: string
   value: string
-  kind: "type" | "select" | "check"
+  kind: "type" | "select" | "check" | "file"
+  accept?: string
   sensitive: boolean
 }
 
@@ -188,6 +189,7 @@ async function fillFormVisibly(
   payload?: Record<string, unknown> | null,
   paymentCreds?: TestPaymentCredentials | null,
   forceInvalidFormat = false,
+  uploadInventory?: UploadFolderInventory | null,
 ): Promise<{ attempted: number; failed: number }> {
   const markerPrefix = `qa-human-${job.id}-${Date.now()}`
   const tasks = await page.evaluate(
@@ -212,8 +214,22 @@ async function fillFormVisibly(
         const existingValue = typeof field.value === "string" ? field.value.trim() : ""
         const style = window.getComputedStyle(field)
         const rect = field.getBoundingClientRect()
-        if (field.disabled || field.readOnly || rect.width <= 0 || rect.height <= 0 || style.display === "none" || style.visibility === "hidden") return
-        if (["submit", "button", "hidden", "file", "reset"].includes(type)) return
+        if (field.disabled || field.readOnly) return
+        if (type === "file") {
+          if (!field.files || field.files.length === 0) {
+            tasks.push({
+              selector: mark(field, index),
+              name: label || name || "File Upload",
+              value: "",
+              kind: "file",
+              accept: field.accept || "",
+              sensitive: false,
+            })
+          }
+          return
+        }
+        if (rect.width <= 0 || rect.height <= 0 || style.display === "none" || style.visibility === "hidden") return
+        if (["submit", "button", "hidden", "reset"].includes(type)) return
 
         const key = String(field.name || field.id || "")
         if (invalidFormat && (type === "email" || /email/i.test(name + " " + placeholder + " " + label))) {
@@ -283,6 +299,29 @@ async function fillFormVisibly(
   let failed = 0
   for (const task of tasks) {
     const field = await page.$(task.selector).catch(() => null)
+    if (task.kind === "file") {
+      if (!field) {
+        failed++
+        continue
+      }
+      const picked = pickUploadFile(uploadInventory || null, {
+        acceptAttr: task.accept,
+        targetName: task.name,
+      })
+      try {
+        await (field as any).uploadFile(picked.filePath)
+        await field.evaluate((el) => {
+          el.dispatchEvent(new Event("input", { bubbles: true }))
+          el.dispatchEvent(new Event("change", { bubbles: true }))
+        }).catch(() => {})
+        const attached = await field.evaluate((el) => ((el as HTMLInputElement).files?.length || 0) > 0).catch(() => false)
+        if (!attached) failed++
+      } catch {
+        failed++
+      }
+      await publishLiveFrame(job, page)
+      continue
+    }
     const box = await field?.boundingBox().catch(() => null)
     if (!field || !box) {
       failed++
@@ -516,8 +555,8 @@ export async function executeStructuredTestPlan(
   const getComponentLocationForPlanPath = (p: string) => matchRouteForPath(fsPlanRoutes, p)?.file
 
   const startingHadLoginWall = await hasLoginWall(page)
-  if (startingHadLoginWall && job.authState !== "logged_in" && job.authState !== "skipped") {
-    appendLog(job, "warn", "[AUTH] Login or email wall detected before test execution - requesting credentials...")
+  if (startingHadLoginWall && job.authState !== "skipped") {
+    appendLog(job, "warn", "[AUTH] Login or email wall detected before test execution - authenticating...")
     await authenticateIfNeeded(job, page, credentials)
   }
 
@@ -697,9 +736,6 @@ export async function executeStructuredTestPlan(
       const targetScreen = testPlan.screens.find((s) => s.id === step.screenId)
       if (targetScreen) {
         const targetUrlStr = targetScreen.url || testPlan.targetUrl
-        // Full-URL drift check: compare origin + pathname + search so query-param
-        // states (e.g. /leases?tab=expired) trigger restoration. The hash is
-        // synthetic (#modal-* / #tab-*) and never appears in the live URL.
         const curRestoreKey = normalizeUrlForRestore(page.url())
         const targetRestoreKey = normalizeUrlForRestore(
           new URL(targetUrlStr, testPlan.targetUrl).href
@@ -714,6 +750,16 @@ export async function executeStructuredTestPlan(
           await waitForSpaPageReady(page, 1500).catch(() => {})
         }
 
+        // Re-authenticate if an earlier step or navigation returned the browser to a login wall
+        if (!targetScreen.isLoginWall && job.authState !== "skipped") {
+          const onLoginWall = await hasLoginWall(page).catch(() => false)
+          if (onLoginWall) {
+            appendLog(job, "info", `[AUTH] Session on login wall before testing "${step.targetName}" — re-authenticating...`)
+            await authenticateIfNeeded(job, page, credentials)
+            await waitForSpaPageReady(page, 1500).catch(() => {})
+          }
+        }
+
         // Discovery assigns synthetic #tab-name / #modal-* paths to SPA views.
         // The URL alone cannot restore those views: reactivate the matching tab,
         // or replay the recorded trigger click for modals — a plain goto()
@@ -722,28 +768,48 @@ export async function executeStructuredTestPlan(
         if (stateMarker && stateMarker.startsWith("modal-")) {
           const reopened = await page.evaluate(
             ({ selector, text }: { selector: string | null; text: string | null }) => {
-              const norm = (v: string) => (v || "").trim().replace(/\s+/g, " ").toLowerCase()
-              let el: HTMLElement | null = null
-              if (selector) {
-                try {
-                  el = document.querySelector(selector) as HTMLElement | null
-                } catch {}
-              }
-              if (!el && text) {
-                const want = norm(text)
-                const cands = Array.from(
-                  document.querySelectorAll('button, a, [role="button"], [tabindex], input[type="submit"]')
-                ) as HTMLElement[]
-                el =
-                  cands.find((c) => {
-                    const t = norm(c.innerText || c.textContent || c.getAttribute("aria-label") || "")
-                    return !!t && (t === want || t.includes(want) || want.includes(t))
-                  }) || null
-              }
-              if (!el || el.getClientRects().length === 0) return false
               // Already open (e.g. queue order kept it alive) — nothing to do.
-              if (document.querySelector('[role="dialog"], [aria-modal="true"]')) return true
-              el.click()
+              const openModal = Array.from(
+                document.querySelectorAll('[role="dialog"], [aria-modal="true"], dialog[open], .modal, [data-modal]')
+              ).find((m: any) => {
+                const s = window.getComputedStyle(m)
+                return s.display !== "none" && s.visibility !== "hidden" && s.opacity !== "0" && m.offsetWidth > 10 && m.offsetHeight > 10
+              })
+              if (openModal) return true
+
+              const norm = (v: string) => (v || "").trim().replace(/\s+/g, " ").toLowerCase()
+              const findTrigger = (): HTMLElement | null => {
+                let el: HTMLElement | null = null
+                if (selector) {
+                  try {
+                    el = document.querySelector(selector) as HTMLElement | null
+                  } catch {}
+                }
+                if ((!el || el.getClientRects().length === 0) && text) {
+                  const want = norm(text)
+                  const cands = Array.from(
+                    document.querySelectorAll('button, a, [role="button"], [tabindex], input[type="submit"]')
+                  ) as HTMLElement[]
+                  el =
+                    cands.find((c) => {
+                      if (c.getClientRects().length === 0) return false
+                      const t = norm(c.innerText || c.textContent || c.getAttribute("aria-label") || "")
+                      return !!t && (t === want || t.includes(want) || want.includes(t))
+                    }) || null
+                }
+                return el && el.getClientRects().length > 0 ? el : null
+              }
+
+              let trigger = findTrigger()
+              if (!trigger) {
+                const homeBtn = Array.from(
+                  document.querySelectorAll('header button, nav button, aside button, .nav-item, .tb-btn')
+                ).find((b: any) => /^home$/i.test(norm(b.innerText || b.textContent || ""))) as HTMLElement | undefined
+                if (homeBtn) homeBtn.click()
+                trigger = findTrigger()
+              }
+              if (!trigger) return false
+              trigger.click()
               return true
             },
             {
@@ -756,31 +822,97 @@ export async function executeStructuredTestPlan(
           } else {
             appendLog(job, "warn", `[COVERAGE] Could not reopen modal "${targetScreen.name}" via its recorded trigger.`)
           }
-        } else if (stateMarker) {
-          let tabLabel = stateMarker
-          try { tabLabel = decodeURIComponent(stateMarker) } catch {}
-          tabLabel = tabLabel.replace(/-/g, " ").trim().toLowerCase()
-          const activatedTab = await page.evaluate((name) => {
-            const candidates = Array.from(document.querySelectorAll(
-              '[role="tab"], [data-tab], nav button, aside button, .tab, .tab-btn, button'
-            )) as HTMLElement[]
-            const normalize = (value: string) => value.trim().replace(/\s+/g, " ").toLowerCase()
-            const tab = candidates.find((candidate) => {
-              const label = normalize(candidate.textContent || candidate.getAttribute("aria-label") || "")
-              return label === name || label.includes(name)
+        } else {
+          // Dismiss any stale open modal before interacting with a non-modal screen
+          const hasOpenModal = await page.evaluate(() => {
+            return Array.from(
+              document.querySelectorAll('[role="dialog"], [aria-modal="true"], dialog[open], .modal, [data-modal]')
+            ).some((m: any) => {
+              const s = window.getComputedStyle(m)
+              return s.display !== "none" && s.visibility !== "hidden" && s.opacity !== "0" && m.offsetWidth > 10 && m.offsetHeight > 10
             })
-            if (!tab) return false
-            const isAlreadyActive =
-              tab.getAttribute("aria-selected") === "true" ||
-              tab.getAttribute("data-state") === "active" ||
-              tab.classList.contains("active")
-            if (!isAlreadyActive) tab.click()
-            return true
-          }, tabLabel).catch(() => false)
-          if (!activatedTab) {
-            appendLog(job, "warn", `[COVERAGE] Could not restore SPA tab "${tabLabel}" for step "${step.targetName}".`)
-          } else {
+          }).catch(() => false)
+          if (hasOpenModal) {
+            await verifyModalCloseAndFocus(page).catch(() => null)
             await new Promise((r) => setTimeout(r, 250))
+          }
+
+          if (stateMarker) {
+            let tabLabel = stateMarker
+            try { tabLabel = decodeURIComponent(stateMarker) } catch {}
+            tabLabel = tabLabel.replace(/^action-\d+-/, "").replace(/-/g, " ").trim().toLowerCase()
+            const activatedTab = await page.evaluate((name) => {
+              const candidates = Array.from(document.querySelectorAll(
+                '[role="tab"], [data-tab], nav button, aside button, .tab, .tab-btn, button'
+              )) as HTMLElement[]
+              const normalize = (value: string) => value.trim().replace(/\s+/g, " ").toLowerCase()
+              const tab = candidates.find((candidate) => {
+                const label = normalize(candidate.textContent || candidate.getAttribute("aria-label") || "")
+                return label === name || label.includes(name)
+              })
+              if (!tab) return false
+              const isAlreadyActive =
+                tab.getAttribute("aria-selected") === "true" ||
+                tab.getAttribute("data-state") === "active" ||
+                tab.classList.contains("active")
+              if (!isAlreadyActive) tab.click()
+              return true
+            }, tabLabel).catch(() => false)
+            if (!activatedTab) {
+              appendLog(job, "warn", `[COVERAGE] Could not restore SPA tab "${tabLabel}" for step "${step.targetName}".`)
+            } else {
+              await new Promise((r) => setTimeout(r, 250))
+            }
+          } else {
+            // Root SPA screen without #marker: if an earlier step switched SPA views
+            // (e.g. All documents / My notes / Document detail) so the target control
+            // is no longer visible, click a visible "Home" / "Dashboard" nav button.
+            const targetVisible = await page.evaluate(
+              ({ sel, name }: { sel: string | null; name: string | null }) => {
+                const isVis = (el: Element | null) => {
+                  if (!el) return false
+                  const r = (el as HTMLElement).getBoundingClientRect()
+                  const s = window.getComputedStyle(el)
+                  return r.width > 2 && r.height > 2 && s.display !== "none" && s.visibility !== "hidden" && s.opacity !== "0"
+                }
+                if (sel) {
+                  try {
+                    const found = document.querySelector(sel)
+                    if (isVis(found)) return true
+                  } catch {}
+                }
+                if (name) {
+                  const want = name.trim().replace(/\s+/g, " ").toLowerCase()
+                  const all = Array.from(document.querySelectorAll('button, a, input, select, textarea, [role="button"], [role="tab"]'))
+                  if (all.some((el) => isVis(el) && (el.textContent || el.getAttribute("aria-label") || (el as any).placeholder || "").trim().replace(/\s+/g, " ").toLowerCase().includes(want))) {
+                    return true
+                  }
+                }
+                return false
+              },
+              { sel: step.targetSelector || null, name: step.targetName || null }
+            ).catch(() => true)
+
+            if (!targetVisible) {
+              const clickedHome = await page.evaluate(() => {
+                const norm = (v: string) => (v || "").trim().replace(/\s+/g, " ").toLowerCase()
+                const navBtns = Array.from(
+                  document.querySelectorAll('aside button, nav button, header button, .nav-item, .tb-btn, button')
+                ) as HTMLElement[]
+                const homeBtn = navBtns.find((b) => {
+                  const t = norm(b.innerText || b.textContent || b.getAttribute("aria-label") || "")
+                  return t === "home" || t === "dashboard" || t === "back to home"
+                })
+                if (homeBtn && homeBtn.getClientRects().length > 0) {
+                  homeBtn.click()
+                  return true
+                }
+                return false
+              }).catch(() => false)
+              if (clickedHome) {
+                await new Promise((r) => setTimeout(r, 300))
+              }
+            }
           }
         }
       }
@@ -1086,6 +1218,8 @@ export async function executeStructuredTestPlan(
             SYNTHETIC_TEST_DATA,
             step.fieldPayload || null,
             activePaymentCreds || null,
+            false,
+            activeUploadInventory,
           )
           if (fillResult.failed > 0) {
             appendLog(job, "warn", `[FORM] ${fillResult.failed}/${fillResult.attempted} field interaction(s) could not be completed with visible input.`)
@@ -1302,11 +1436,14 @@ export async function executeStructuredTestPlan(
         const fileType = step.fileTypeRequired || "image"
         await showActionBanner(page, `Upload ${fileType.toUpperCase()} -> ${step.targetName}`)
 
-        // 1. Inspect accept attribute of target upload control
-        const acceptAttr = await page.evaluate((sel) => {
-          const el = (sel ? document.querySelector(sel) : null) || document.querySelector('input[type="file"]')
-          return el ? el.getAttribute("accept") || "" : ""
-        }, step.targetSelector)
+        // 1. Resolve target file input or fallback to any file input on the page
+        const fileInput =
+          (step.targetSelector ? await page.$(step.targetSelector).catch(() => null) : null) ||
+          (await page.$('input[type="file"]').catch(() => null))
+
+        const acceptAttr = fileInput
+          ? await fileInput.evaluate((el) => el.getAttribute("accept") || "").catch(() => "")
+          : ""
 
         // 2. Pick matching file from user-mentioned upload folder or fallback to synthetic dummy
         const picked = pickUploadFile(activeUploadInventory, {
@@ -1315,24 +1452,44 @@ export async function executeStructuredTestPlan(
           targetName: step.targetName,
         })
 
-        try {
-          const fileInput =
-            (step.targetSelector ? await page.$(step.targetSelector) : null) ||
-            (await page.$('input[type="file"]'))
-
-          if (!fileInput) {
+        if (!fileInput) {
+          // Fallback: if targetSelector is a custom upload button/dropzone, intercept fileChooser on click
+          const triggerHandle = step.targetSelector ? await page.$(step.targetSelector).catch(() => null) : null
+          if (triggerHandle) {
+            try {
+              const [chooser] = await Promise.all([
+                page.waitForFileChooser({ timeout: 2500 }),
+                triggerHandle.click(),
+              ])
+              await chooser.accept([picked.filePath])
+              await settle(page, netRecorder, 3000)
+              actionVerdict = "passed"
+              observation = `Attached ${fileType.toUpperCase()} file ("${picked.fileName}") via file chooser on "${step.targetName}".`
+            } catch {
+              actionVerdict = "blocked"
+              observation = `No <input type="file"> found for upload "${step.targetName}".`
+            } finally {
+              await triggerHandle.dispose().catch(() => {})
+            }
+          } else {
             actionVerdict = "blocked"
             observation = `No <input type="file"> found for upload "${step.targetName}".`
-          } else {
+          }
+        } else {
+          try {
             await (fileInput as any).uploadFile(picked.filePath)
+            await fileInput.evaluate((el) => {
+              el.dispatchEvent(new Event("input", { bubbles: true }))
+              el.dispatchEvent(new Event("change", { bubbles: true }))
+            }).catch(() => {})
             await settle(page, netRecorder, 3000)
 
-            const uploadState = await page.evaluate(() => {
-              const input = document.querySelector('input[type="file"]') as HTMLInputElement | null
+            const uploadState = await fileInput.evaluate((el) => {
+              const input = el as HTMLInputElement
               const fileCount = input?.files?.length || 0
-              const hasPreview = Boolean(document.querySelector('img[src^="data:"], img[src^="blob:"], .file-preview, [data-preview]'))
+              const hasPreview = Boolean(document.querySelector('img[src^="data:"], img[src^="blob:"], .file-preview, [data-preview], #upload-preview'))
               return { fileCount, hasPreview }
-            })
+            }).catch(() => ({ fileCount: 0, hasPreview: false }))
 
             const calls = netRecorder.getCapturedCalls()
             const hasMultipartRequest = calls.some((c) => c.isMutating)
@@ -1359,10 +1516,8 @@ export async function executeStructuredTestPlan(
                 `📁 Attached test file from folder: "${picked.fileName}" (${picked.fileSizeKB} KB) into "${step.targetName}"`
               )
             }
-          }
-        } finally {
-          if (picked.cleanUp) {
-            picked.cleanUp()
+          } finally {
+            await fileInput.dispose().catch(() => {})
           }
         }
 
@@ -1501,10 +1656,41 @@ export async function executeStructuredTestPlan(
           }
         }
 
+        const isSubmitLike = /^(submit|save|add\b|upload\b|create\b|confirm|apply|send|continue)/i.test(step.targetName.trim())
         const expectedEffects = expectFor({
           name: step.targetName,
-          isSubmit: /submit|save|register|login/i.test(step.targetName),
+          isSubmit: isSubmitLike || /submit|save|register|login/i.test(step.targetName),
         })
+
+        // If clicking a submit button inside a form/modal that has an empty <input type="file">,
+        // attach a test file before submitting so the form submission succeeds with a real file.
+        if (isSubmitLike) {
+          const emptyFileSel = await page.evaluate(() => {
+            const scope = document.querySelector('[role="dialog"], [aria-modal="true"], dialog[open], .modal, [data-modal]') || document
+            const fInput = scope.querySelector('input[type="file"]') as HTMLInputElement | null
+            if (!fInput || (fInput.files && fInput.files.length > 0)) return null
+            if (fInput.id) return `#${CSS.escape(fInput.id)}`
+            return 'input[type="file"]'
+          }).catch(() => null)
+          if (emptyFileSel) {
+            const fHandle = (await page.$(emptyFileSel)) as any
+            if (fHandle && typeof fHandle.uploadFile === "function") {
+              const picked = pickUploadFile(activeUploadInventory, { targetName: step.targetName })
+              await fHandle.uploadFile(picked.filePath).catch(() => null)
+              await fHandle.evaluate((el: HTMLInputElement) => {
+                el.dispatchEvent(new Event("input", { bubbles: true }))
+                el.dispatchEvent(new Event("change", { bubbles: true }))
+              }).catch(() => null)
+              await new Promise((r) => setTimeout(r, 250))
+            }
+          }
+        }
+
+        const isUploadTrigger = /upload|choose\s*a?\s*file|add\s*a?\s*document|take\s*a?\s*photo|browse\s*files?|select\s*files?|attach|import\s*file/i.test(step.targetName)
+        let chooserPromise: Promise<any> | null = null
+        if (isUploadTrigger) {
+          chooserPromise = page.waitForFileChooser({ timeout: 1500 }).catch(() => null)
+        }
 
         const ladderResult = await runWithLadder(
           page,
@@ -1515,6 +1701,22 @@ export async function executeStructuredTestPlan(
           consoleRecorder,
           { maxSettleMs: 3000, dialogShownRef: dialogRef }
         )
+
+        if (chooserPromise) {
+          const chooser = await chooserPromise
+          if (chooser) {
+            const picked = pickUploadFile(activeUploadInventory, {
+              targetName: step.targetName,
+            })
+            try {
+              await chooser.accept([picked.filePath])
+              await settle(page, netRecorder, 2500)
+              ladderResult.verdict = "passed"
+              ladderResult.observedEffect = "value_changed"
+              ladderResult.reason = `Opened native file chooser and attached test file "${picked.fileName}".`
+            } catch {}
+          }
+        }
 
         actionVerdict = ladderResult.verdict
         observation = ladderResult.reason
@@ -1528,25 +1730,78 @@ export async function executeStructuredTestPlan(
         await publishLiveFrame(job, page)
 
         if (ladderResult.observedEffect === "modal_opened") {
-          appendLog(job, "info", `Modal dialog opened by "${step.targetName}". Verifying dismissal & focus restoration...`)
-          const modalOutcome = await verifyModalCloseAndFocus(page, step.targetSelector, step.targetName)
-          if (modalOutcome.closed) {
-            observation += ` Modal verified and closed via ${modalOutcome.method}.`
-            if (!modalOutcome.focusRestored) {
-              job.issues.push({
-                id: `issue-focus-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-                screenUrl: page.url(),
-                screenTitle: step.screenName,
-                type: "focus_not_restored",
-                severity: "low",
-                description: `Modal opened by "${step.targetName}" closed, but keyboard focus was reset to <body> instead of returning to trigger element (WCAG 2.4.3).`,
-                expected: "Keyboard focus restored to trigger button or active element.",
-                actual: "document.activeElement is <body>",
-                timestamp: new Date().toISOString(),
-              })
+          const modalInfo = await page.evaluate(() => {
+            const modal = Array.from(
+              document.querySelectorAll('[role="dialog"], [aria-modal="true"], dialog[open], .modal, [data-modal]')
+            ).find((m: any) => {
+              const s = window.getComputedStyle(m)
+              return s.display !== "none" && s.visibility !== "hidden" && s.opacity !== "0" && m.offsetWidth > 10 && m.offsetHeight > 10
+            })
+            if (!modal) return { hasUploadInput: false, hasFormControls: false, modalTitle: "" }
+            const titleEl = modal.querySelector("h1, h2, h3, [class*='title'], [class*='header']")
+            return {
+              hasUploadInput: Boolean(modal.querySelector('input[type="file"]')),
+              hasFormControls: Boolean(modal.querySelector('input[type="file"], form, input:not([type="hidden"]), select, textarea')),
+              modalTitle: (titleEl?.textContent || "").trim(),
             }
+          }).catch(() => ({ hasUploadInput: false, hasFormControls: false, modalTitle: "" }))
+
+          const modalSlug = encodeURIComponent((modalInfo.modalTitle || "dialog").toLowerCase().replace(/\s+/g, "-"))
+          const existingModalScreen = testPlan.screens.find(
+            (s) =>
+              s.path.includes(`#modal-${modalSlug}`) ||
+              (modalInfo.modalTitle && s.name.toLowerCase().includes(modalInfo.modalTitle.toLowerCase()) && s.path.includes("#modal-"))
+          )
+          const hasPendingModalSteps = existingModalScreen
+            ? testPlan.steps.slice(i + 1).some((s) => s.screenId === existingModalScreen.id && s.status === "pending")
+            : false
+
+          if (modalInfo.hasUploadInput && existingModalScreen && !hasPendingModalSteps) {
+            // This upload modal was already mapped and tested by an earlier trigger;
+            // complete the file upload + submit directly so this upload trigger also uploads a real file!
+            const modalFileInput = (await page.$(
+              '[role="dialog"] input[type="file"], [aria-modal="true"] input[type="file"], dialog[open] input[type="file"], .modal input[type="file"], input[type="file"]'
+            )) as any
+            if (modalFileInput && typeof modalFileInput.uploadFile === "function") {
+              const picked = pickUploadFile(activeUploadInventory, { targetName: step.targetName })
+              await modalFileInput.uploadFile(picked.filePath).catch(() => null)
+              await modalFileInput.evaluate((el: HTMLInputElement) => {
+                el.dispatchEvent(new Event("input", { bubbles: true }))
+                el.dispatchEvent(new Event("change", { bubbles: true }))
+              }).catch(() => null)
+              await new Promise((r) => setTimeout(r, 300))
+              await page.evaluate(() => {
+                const modal = document.querySelector('[role="dialog"], [aria-modal="true"], dialog[open], .modal, [data-modal]')
+                const submitBtn = modal?.querySelector('button[type="submit"], input[type="submit"]') as HTMLElement | null
+                if (submitBtn) submitBtn.click()
+              }).catch(() => null)
+              await settle(page, netRecorder, 2500)
+              observation = `Opened upload modal "${modalInfo.modalTitle || "Dialog"}", attached test file "${picked.fileName}" (${picked.category.toUpperCase()}), and submitted upload form.`
+              appendLog(job, "success", `📎 [UPLOAD MODAL] ${observation}`)
+            }
+          } else if (modalInfo.hasFormControls) {
+            appendLog(job, "info", `Modal opened by "${step.targetName}" contains interactive inputs/file upload controls; keeping open for in-modal testing.`)
           } else {
-            appendLog(job, "warn", `Modal opened by "${step.targetName}" could not be dismissed via close button or Escape key.`)
+            appendLog(job, "info", `Modal dialog opened by "${step.targetName}". Verifying dismissal & focus restoration...`)
+            const modalOutcome = await verifyModalCloseAndFocus(page, step.targetSelector, step.targetName)
+            if (modalOutcome.closed) {
+              observation += ` Modal verified and closed via ${modalOutcome.method}.`
+              if (!modalOutcome.focusRestored) {
+                job.issues.push({
+                  id: `issue-focus-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                  screenUrl: page.url(),
+                  screenTitle: step.screenName,
+                  type: "focus_not_restored",
+                  severity: "low",
+                  description: `Modal opened by "${step.targetName}" closed, but keyboard focus was reset to <body> instead of returning to trigger element (WCAG 2.4.3).`,
+                  expected: "Keyboard focus restored to trigger button or active element.",
+                  actual: "document.activeElement is <body>",
+                  timestamp: new Date().toISOString(),
+                })
+              }
+            } else {
+              appendLog(job, "warn", `Modal opened by "${step.targetName}" could not be dismissed via close button or Escape key.`)
+            }
           }
         }
 
@@ -1899,7 +2154,9 @@ export async function executeStructuredTestPlan(
 
       let currentScreenName = deriveScreenName(currentNorm, newInv.heading, newInv.modalTitle, pageHasLoginWall)
       const actionClean = step.targetName.replace(/^Click\s*"?|"?\s*$/gi, "").trim()
-      if (hasActiveModal || isSignificantViewChange || Boolean(step.screenshotUrl)) {
+      if (hasActiveModal && !newInv.modalTitle) {
+        currentScreenName = actionClean ? `${actionClean} (Modal)` : "Dialog (Modal)"
+      } else if (!hasActiveModal && isSignificantViewChange) {
         if (!newInv.heading || currentScreenName === "Home / Dashboard" || currentScreenName === previousScreen?.name) {
           currentScreenName = actionClean ? `${actionClean} (${step.actionType || "Action"})` : "Action Screen"
         }
@@ -1937,9 +2194,17 @@ export async function executeStructuredTestPlan(
         // Previously any step on a non-root screen always resolved back to its origin,
         // so clicks from S002+ never produced new map nodes.
         const routeChanged = normalizePath(preActionUrl, origin).split("#")[0] !== currentNorm.split("#")[0]
+        const modalPathSuffix = hasActiveModal
+          ? `#modal-${encodeURIComponent((newInv.modalTitle || "dialog").toLowerCase().replace(/\s+/g, "-"))}`
+          : ""
         currentScreen = testPlan.screens.find((screen) => {
           if (screen.id === step.screenId && screen.id !== "S001" && !routeChanged && !isSignificantViewChange) return true
-          if (hasActiveModal) return screen.name.toLowerCase() === currentScreenName.toLowerCase()
+          if (hasActiveModal) {
+            return (
+              screen.name.toLowerCase() === currentScreenName.toLowerCase() ||
+              (Boolean(modalPathSuffix) && screen.path.toLowerCase().endsWith(modalPathSuffix.toLowerCase()))
+            )
+          }
           return (
             screen.path.split("#")[0] === currentNorm &&
             screen.name.trim().toLowerCase() === currentScreenName.trim().toLowerCase() &&

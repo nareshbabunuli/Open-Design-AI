@@ -152,6 +152,8 @@ export async function extractActionableInventory(page: Page, layaBaseUrl?: strin
   heading?: string
 }> {
   const raw = await page.evaluate(() => {
+    const browserWindow = window as Window & { __name?: (fn: unknown) => unknown }
+    browserWindow.__name ??= (fn) => fn
     function generateOptimalSelector(el: Element): string {
       if (!el || !(el instanceof Element)) return ""
       const h = el as HTMLElement
@@ -249,8 +251,14 @@ export async function extractActionableInventory(page: Page, layaBaseUrl?: strin
     const forms: any[] = []
     let elementCounter = 1
 
-    // 1. Detect active modal dialog
-    const modalEl = document.querySelector('[role="dialog"], .modal, [data-modal], dialog[open]')
+    // 1. Detect active modal dialog (only when visible)
+    const modalCandidates = Array.from(
+      document.querySelectorAll('[role="dialog"], [aria-modal="true"], .modal, [data-modal], dialog[open]')
+    ) as HTMLElement[]
+    const modalEl = modalCandidates.find((el) => {
+      const s = window.getComputedStyle(el)
+      return s.display !== "none" && s.visibility !== "hidden" && s.opacity !== "0" && el.offsetWidth > 10 && el.offsetHeight > 10
+    })
     let modalTitle = ""
     if (modalEl) {
       const modalHeading = modalEl.querySelector("h1, h2, h3, [class*='title'], [class*='header']")
@@ -259,11 +267,18 @@ export async function extractActionableInventory(page: Page, layaBaseUrl?: strin
       }
     }
 
-    // 2. Page main heading
+    // Scope control discovery to the active modal when one is open so background
+    // controls behind the modal scrim are not duplicated into the modal screen.
+    const scopeRoot: ParentNode = modalEl || document
+
+    // 2. Page main heading (prioritize <main> / primary h1 over sidebar h2)
     let heading = ""
-    const headingEl = document.querySelector(
-      'h1, h2, [role="heading"], header h1, header h2, header [dir="auto"], [class*="title" i], [class*="heading" i]'
-    )
+    const headingEl =
+      document.querySelector('main h1, [role="main"] h1, #main h1, h1') ||
+      document.querySelector('main h2, [role="main"] h2, #main h2') ||
+      document.querySelector(
+        'h1, h2, [role="heading"], header h1, header h2, header [dir="auto"], [class*="title" i], [class*="heading" i]'
+      )
     if (headingEl) {
       heading = (headingEl.textContent || "").trim()
     }
@@ -275,7 +290,7 @@ export async function extractActionableInventory(page: Page, layaBaseUrl?: strin
     }
 
     // 3. Scan Forms
-    document.querySelectorAll("form, [data-form], .form").forEach((form: any, fIdx) => {
+    scopeRoot.querySelectorAll("form, [data-form], .form").forEach((form: any, fIdx) => {
       const formId = form.id || (form.dataset.formTestId ||= `form-${fIdx + 1}`)
       const formSelector = form.id
         ? `#${form.id}`
@@ -312,15 +327,18 @@ export async function extractActionableInventory(page: Page, layaBaseUrl?: strin
     })
 
     // 4. File Upload Controls
-    document.querySelectorAll('input[type="file"]').forEach((el: any) => {
+    scopeRoot.querySelectorAll('input[type="file"]').forEach((el: any, fIdx: number) => {
       const parentForm = el.closest("form, [data-form], .form") as HTMLElement | null
       const formId = parentForm ? (parentForm.id || (parentForm as any).dataset?.formTestId || undefined) : undefined
-      const name = el.name || el.id || el.getAttribute("aria-label") || "Upload File"
+      const labelEl = el.id ? document.querySelector(`label[for="${CSS.escape(el.id)}"]`) : el.closest("label")
+      const labelText = labelEl ? (labelEl.textContent || "").trim().slice(0, 50) : ""
+      const name = labelText || el.getAttribute("aria-label") || el.name || el.id || "Upload File"
+      const selector = generateOptimalSelector(el) || (fIdx === 0 ? 'input[type="file"]' : `input[type="file"]:nth-of-type(${fIdx + 1})`)
       elements.push({
         id: `elem-${elementCounter++}`,
         name,
         type: "file_upload",
-        selector: el.id ? `#${el.id}` : el.name ? `input[name="${el.name}"]` : 'input[type="file"]',
+        selector,
         inputType: "file",
         accept: el.accept || "image/*,.pdf,.doc,.docx",
         isRequired: el.required || false,
@@ -329,7 +347,8 @@ export async function extractActionableInventory(page: Page, layaBaseUrl?: strin
     })
 
     // 5. Input Fields (Text, Email, Password, Number, Search, Date, etc.)
-    document.querySelectorAll("input, textarea").forEach((el: any) => {
+    const optionalCheckboxCounts = new Map<string, number>()
+    scopeRoot.querySelectorAll("input, textarea").forEach((el: any) => {
       if (el.type === "file" || el.type === "hidden" || el.type === "submit" || el.type === "button") return
       const style = window.getComputedStyle(el)
       if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0" || el.offsetWidth <= 2 || el.offsetHeight <= 2) return
@@ -339,12 +358,20 @@ export async function extractActionableInventory(page: Page, layaBaseUrl?: strin
       if (type === "checkbox") elementType = "checkbox"
       else if (type === "radio") elementType = "radio"
 
-      const labelEl = el.id ? document.querySelector(`label[for="${el.id}"]`) : null
+      const labelEl = el.id ? document.querySelector(`label[for="${el.id}"]`) : el.closest("label")
       const labelText = labelEl ? (labelEl.textContent || "").trim() : ""
       const name = labelText || el.placeholder || el.name || el.id || `${type} input`
 
       const parentForm = el.closest("form, [data-form], .form") as HTMLElement | null
       const formId = parentForm ? (parentForm.id || (parentForm as any).dataset?.formTestId || undefined) : undefined
+
+      // Cap repetitive optional checkboxes in the same form/group to 2 representative toggles
+      if (elementType === "checkbox" && !el.required) {
+        const groupKey = formId || "page-checkboxes"
+        const seenCount = optionalCheckboxCounts.get(groupKey) || 0
+        if (seenCount >= 2) return
+        optionalCheckboxCounts.set(groupKey, seenCount + 1)
+      }
 
       elements.push({
         id: `elem-${elementCounter++}`,
@@ -360,7 +387,7 @@ export async function extractActionableInventory(page: Page, layaBaseUrl?: strin
     })
 
     // 6. Dropdowns / Selects
-    document.querySelectorAll("select, [role='combobox'], [role='listbox']").forEach((el: any) => {
+    scopeRoot.querySelectorAll("select, [role='combobox'], [role='listbox']").forEach((el: any) => {
       const style = window.getComputedStyle(el)
       if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0" || el.offsetWidth <= 2 || el.offsetHeight <= 2) return
 
@@ -388,7 +415,7 @@ export async function extractActionableInventory(page: Page, layaBaseUrl?: strin
       })
     })
     // 7. Tabs, Radios & Toggles
-    document.querySelectorAll("[role='tab'], [role='switch'], .toggle, [data-tab]").forEach((el: any) => {
+    scopeRoot.querySelectorAll("[role='tab'], [role='switch'], .toggle, [data-tab]").forEach((el: any) => {
       const style = window.getComputedStyle(el)
       if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0" || el.offsetWidth <= 2 || el.offsetHeight <= 2) return
 
@@ -414,18 +441,22 @@ export async function extractActionableInventory(page: Page, layaBaseUrl?: strin
         const id = targetEl.id || ""
         const href = targetEl.getAttribute?.("href") || ""
         const actionAttr = targetEl.getAttribute?.("data-action") || ""
+        const onclickAttr = targetEl.getAttribute?.("onclick") || ""
         const testId = targetEl.getAttribute?.("data-testid") || ""
-        const svgLucide = targetEl.querySelector?.("svg")?.getAttribute?.("data-lucide") || ""
-        const svgClass = targetEl.querySelector?.("svg")?.getAttribute?.("class") || ""
-        const combined = [raw, cls, id, href, actionAttr, testId, svgLucide, svgClass].join(" ")
-        return /(logout|sign[-_ ]?out|log[-_ ]?off|delete[-_ ]?account)/i.test(combined)
+        const svgEl = targetEl.querySelector?.("svg")
+        const svgLucide = svgEl?.getAttribute?.("data-lucide") || svgEl?.getAttribute?.("data-icon") || ""
+        const svgClass = svgEl?.getAttribute?.("class") || ""
+        const svgHtml = svgEl?.innerHTML || ""
+        const hasLogoutSvgPath = svgHtml.includes("M9 21H5") && (svgHtml.includes("16 17l5-5-5-5") || svgHtml.includes("M21 12H9"))
+        const combined = [raw, cls, id, href, actionAttr, onclickAttr, testId, svgLucide, svgClass].join(" ")
+        return hasLogoutSvgPath || /(logout|sign[-_ ]?out|log[-_ ]?off|delete[-_ ]?account)/i.test(combined)
       } catch {
         return false
       }
     }
 
     // 8. Buttons & Clickable Triggers
-    document.querySelectorAll("button, [role='button'], input[type='button'], input[type='submit']").forEach((el: any) => {
+    scopeRoot.querySelectorAll("button, [role='button'], input[type='button'], input[type='submit']").forEach((el: any) => {
       const style = window.getComputedStyle(el)
       if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0" || el.offsetWidth <= 2 || el.offsetHeight <= 2) return
 
@@ -448,10 +479,10 @@ export async function extractActionableInventory(page: Page, layaBaseUrl?: strin
       })
     })
 
-    // 9. Navigation Bars & Bottom Navigation (Home, Workout, Drills, Messages, Profile)
+    // 9. Navigation Bars & Bottom Navigation (skip when modal is open)
     const navSelector =
       'nav, [role="navigation"], [role="tablist"], footer nav, [class*="bottomNav" i], [class*="bottom-nav" i], [class*="tabBar" i], [class*="tab-bar" i], [class*="bottom-bar" i]'
-    document.querySelectorAll(navSelector).forEach((navContainer: any) => {
+    if (!modalEl) document.querySelectorAll(navSelector).forEach((navContainer: any) => {
       const items = navContainer.querySelectorAll('a, button, [role="tab"], [role="button"], li, div')
       items.forEach((item: any) => {
         if (item === navContainer) return
@@ -479,10 +510,10 @@ export async function extractActionableInventory(page: Page, layaBaseUrl?: strin
       })
     })
 
-    // 10. Top Navigation & Header Actions (Notifications bell, Settings gear, Profile avatar, Back)
+    // 10. Top Navigation & Header Actions (skip when modal is open)
     const headerSelector =
       'header, [role="banner"], [role="toolbar"], [class*="header" i], [class*="topbar" i], [class*="top-bar" i]'
-    document.querySelectorAll(headerSelector).forEach((headerContainer: any) => {
+    if (!modalEl) document.querySelectorAll(headerSelector).forEach((headerContainer: any) => {
       const items = headerContainer.querySelectorAll('button, a, [role="button"], [class*="icon" i], [class*="btn" i], [class*="action" i]')
       items.forEach((item: any) => {
         if (item === headerContainer) return
@@ -512,7 +543,7 @@ export async function extractActionableInventory(page: Page, layaBaseUrl?: strin
     // 11. Interactive Cards, Tiles & Feature Action Blocks (e.g. DRILLS card)
     const cardSelector =
       '[class*="card" i], [class*="tile" i], [class*="feature" i], [class*="banner" i], [class*="box" i][class*="click" i], [data-action]'
-    document.querySelectorAll(cardSelector).forEach((card: any) => {
+    scopeRoot.querySelectorAll(cardSelector).forEach((card: any) => {
       const tag = (card.tagName || '').toLowerCase()
       if (["button", "a", "input", "select", "textarea", "option"].includes(tag)) return
       const style = window.getComputedStyle(card)
@@ -553,7 +584,7 @@ export async function extractActionableInventory(page: Page, layaBaseUrl?: strin
     // 12. Custom clickable / accessibility controls & pointer elements
     const customInteractiveSelector =
       '[onclick], [role="button"], [role="link"], [role="menuitem"], [role="tab"], [role="switch"], [aria-controls], [tabindex]:not([tabindex="-1"])'
-    document.querySelectorAll(customInteractiveSelector).forEach((el: any) => {
+    scopeRoot.querySelectorAll(customInteractiveSelector).forEach((el: any) => {
       const tag = (el.tagName || '').toLowerCase()
       if (["button", "a", "input", "select", "textarea", "option"].includes(tag)) return
 
@@ -601,7 +632,7 @@ export async function extractActionableInventory(page: Page, layaBaseUrl?: strin
     })
 
     // 13. Links & Navigation (including intra-app triggers like Forgot password / Create account)
-    document.querySelectorAll("a").forEach((el: any) => {
+    scopeRoot.querySelectorAll("a").forEach((el: any) => {
       const style = window.getComputedStyle(el)
       if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0" || el.offsetWidth <= 2 || el.offsetHeight <= 2) return
 

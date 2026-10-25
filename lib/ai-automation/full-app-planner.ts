@@ -202,32 +202,30 @@ export function queueUnplannedLedgerActions(
 
   // Keep dismiss/close controls last when a modal is discovered, so the queue
   // gets a chance to exercise the other controls before the view disappears.
+  const actionPriorityForEntry = (entry: { type: string; name: string }): number => {
+    const label = (entry.name || "").trim()
+    if (/^(close|dismiss|cancel|back|done|finish|✕|×|x)(\b|$)/i.test(label)) return 4
+    if (entry.type === "file_upload") return 0
+    if (entry.type === "input" || entry.type === "select" || entry.type === "checkbox" || entry.type === "radio" || entry.type === "toggle") return 1
+    if (/^(submit|save|add\b|upload\b|create\b|confirm|apply|send|continue|that.?s the one)/i.test(label)) return 3
+    return 2
+  }
+
   const candidates = ledger.entries
     .filter((entry) => {
       if (entry.status !== "untested") return false
       if (onlyScreenId && entry.screenId !== onlyScreenId) return false
-      // If already authenticated, only skip primary login credential inputs/submits,
-      // but PRESERVE auxiliary actions (forgot password, create account, register, SSO)!
       if (job.authState === "logged_in") {
         const sc = testPlan.screens.find((s) => s.id === entry.screenId)
         if (sc?.isLoginWall) {
-          const isPrimaryAuthInputOrSubmit =
-            (entry.type === "input" && /(email|user|pass|login)/i.test(entry.name)) ||
-            ((entry.type === "button" || entry.type === "clickable") && /^(sign\s*in|log\s*in|submit)$/i.test(entry.name.trim()))
-          if (isPrimaryAuthInputOrSubmit) {
-            entry.status = "skipped"
-            entry.error = "Covered by authentication step (login form credentials already submitted)."
-            return false
-          }
+          entry.status = "skipped"
+          entry.error = "Covered by authentication step (login form credentials already submitted)."
+          return false
         }
       }
       return true
     })
-    .sort((a, b) => {
-      const aDismiss = /^(close|dismiss|cancel|back|done|finish)(\b|$)/i.test(a.name.trim())
-      const bDismiss = /^(close|dismiss|cancel|back|done|finish)(\b|$)/i.test(b.name.trim())
-      return Number(aDismiss) - Number(bDismiss)
-    })
+    .sort((a, b) => actionPriorityForEntry(a) - actionPriorityForEntry(b))
 
   for (const entry of candidates) {
     if (represented.has(entry.actionKey)) continue
@@ -333,11 +331,15 @@ export function prioritizePendingStepsForScreen(
 
   const sameScreenIds = new Set(sameScreen.map((step) => step.id))
   const otherSteps = remaining.filter((step) => !sameScreenIds.has(step.id))
-  sameScreen.sort((a, b) => {
-    const aDismiss = /^(close|dismiss|cancel|back|done|finish)(\b|$)/i.test(a.targetName.trim())
-    const bDismiss = /^(close|dismiss|cancel|back|done|finish)(\b|$)/i.test(b.targetName.trim())
-    return Number(aDismiss) - Number(bDismiss)
-  })
+  const stepPriority = (step: TestPlanStep): number => {
+    const label = (step.targetName || "").trim()
+    if (/^(close|dismiss|cancel|back|done|finish|✕|×|x)(\b|$)/i.test(label)) return 4
+    if (step.actionType === "upload") return 0
+    if (step.actionType === "fill" || step.actionType === "select" || step.actionType === "toggle") return 1
+    if (step.actionType === "form_scenario" || /^(submit|save|add\b|upload\b|create\b|confirm|apply|send|continue|that.?s the one)/i.test(label)) return 3
+    return 2
+  }
+  sameScreen.sort((a, b) => stepPriority(a) - stepPriority(b))
 
   testPlan.steps.splice(start, remaining.length, ...sameScreen, ...otherSteps)
   testPlan.steps.forEach((step, index) => { step.stepIndex = index + 1 })
@@ -456,8 +458,9 @@ export function generateStructuredTestPlan(
     }
 
     // 1. Plan Form Scenarios (grouped by screen.forms)
-    if (screen.forms && screen.forms.length > 0) {
+    if (screen.forms && screen.forms.length > 0 && !(screen.isLoginWall && options?.isAuthenticated)) {
       for (const form of screen.forms) {
+        if (handledFormIds.has(form.id)) continue
         handledFormIds.add(form.id)
         const formElements = screen.actionableElements.filter(
           (el) => el.formId === form.id || (form.fields && form.fields.includes(el.name))
@@ -647,11 +650,11 @@ export function generateStructuredTestPlan(
     const standaloneButtons = screen.actionableElements.filter(
       (el) =>
         el.type === "button" &&
+        !(screen.isLoginWall && options?.isAuthenticated) &&
         (!el.formId || !handledFormIds.has(el.formId) || /forgot|create|register|signup|reset/i.test(el.name)) &&
         !/(logout|sign\s*out|log\s*off|delete\s*account)/i.test(el.name) &&
         !/(logout|sign\s*out|log\s*off)/i.test(el.selector || "") &&
-        !/(logout|sign\s*out|log\s*off)/i.test(el.actionKey || "") &&
-        !(screen.isLoginWall && options?.isAuthenticated && /^(sign\s*in|log\s*in|submit)$/i.test(el.name.trim()))
+        !/(logout|sign\s*out|log\s*off)/i.test(el.actionKey || "")
     )
     for (const btn of standaloneButtons) {
       steps.push({
@@ -682,11 +685,11 @@ export function generateStructuredTestPlan(
     const standaloneClickables = screen.actionableElements.filter(
       (el) =>
         (el.type === "clickable" || el.type === "tab" || el.type === "link" || el.type === "menu") &&
+        !(screen.isLoginWall && options?.isAuthenticated) &&
         (!el.formId || !handledFormIds.has(el.formId) || el.type === "link" || el.type === "clickable" || /forgot|create|register|signup|reset/i.test(el.name)) &&
         !/(logout|sign\s*out|log\s*off|delete\s*account)/i.test(el.name) &&
         !/(logout|sign\s*out|log\s*off)/i.test(el.selector || "") &&
-        !/(logout|sign\s*out|log\s*off)/i.test(el.actionKey || "") &&
-        !(screen.isLoginWall && options?.isAuthenticated && /^(sign\s*in|log\s*in|submit)$/i.test(el.name.trim()))
+        !/(logout|sign\s*out|log\s*off)/i.test(el.actionKey || "")
     )
     for (const item of standaloneClickables) {
       const typeLabel =
