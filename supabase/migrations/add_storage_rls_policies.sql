@@ -14,6 +14,9 @@ DROP POLICY IF EXISTS "Public Access" ON storage.objects;
 DROP POLICY IF EXISTS "Authenticated owners upload designs" ON storage.objects;
 DROP POLICY IF EXISTS "Owners update designs" ON storage.objects;
 DROP POLICY IF EXISTS "Owners delete designs" ON storage.objects;
+DROP POLICY IF EXISTS "Authenticated owners upload designs" ON storage.objects;
+DROP POLICY IF EXISTS "Owners update designs" ON storage.objects;
+DROP POLICY IF EXISTS "Owners delete designs" ON storage.objects;
 
 CREATE POLICY "Allow public read access on designs"
 ON storage.objects FOR SELECT
