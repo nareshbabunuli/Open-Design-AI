@@ -118,6 +118,8 @@ export async function GET(request: NextRequest) {
     return response
   } catch (error) {
     console.error("GitLab Duo readiness check failed", error)
-    return errorResponse(502, "Could not check GitLab Duo readiness. Verify the connection and try again.")
+    const response = errorResponse(502, "Could not check GitLab Duo readiness. Verify the connection and try again.")
+    if (refreshedCookieValue) response.cookies.set(tokenCookieName("gitlab"), refreshedCookieValue, oauthCookieOptions(60 * 60 * 24 * 30))
+    return response
   }
 }

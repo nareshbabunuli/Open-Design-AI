@@ -1,0 +1,40 @@
+name: Duo review regression checks
+
+on:
+  pull_request:
+    paths:
+      - "app/api/integrations/**"
+      - "app/ai-simulator/page.tsx"
+      - "components/design-review/duo-agent-fix-review-panel.tsx"
+      - "lib/integrations/**"
+      - "tests/duo-review.test.mjs"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/duo-review.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  duo-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.2
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: "true"
+      - name: Type-check application
+        run: pnpm exec tsc --noEmit --pretty false
+      - name: Test Duo review and approval routes
+        run: pnpm run test:duo
