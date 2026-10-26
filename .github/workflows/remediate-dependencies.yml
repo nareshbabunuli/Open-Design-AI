@@ -36,6 +36,17 @@ jobs:
         run: pnpm install --no-frozen-lockfile
       - name: Verify TypeScript
         run: pnpm run typecheck
+      - name: Commit generated lockfile
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pnpm-lock.yaml
+          if git diff --cached --quiet; then
+            echo "Lockfile is already up to date."
+          else
+            git commit -m "[dependency-bot] regenerate lockfile with security fixes"
+            git push origin HEAD:security/production-hardening-2026-10
+          fi
       - name: Verify production build
         env:
           # Inert placeholders so Next.js can complete the production build in CI
@@ -48,14 +59,3 @@ jobs:
       - name: Report remaining production advisories
         continue-on-error: true
         run: pnpm audit --prod
-      - name: Commit generated lockfile
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add pnpm-lock.yaml
-          if git diff --cached --quiet; then
-            echo "Lockfile is already up to date."
-          else
-            git commit -m "[dependency-bot] regenerate lockfile with security fixes"
-            git push origin HEAD:security/production-hardening-2026-10
-          fi
