@@ -60,8 +60,11 @@ async function setupStorage() {
       console.log("\n  Applying Storage Row Level Security (RLS) policies to PostgreSQL...")
       try {
         const { default: pg } = await import("pg")
+        // Prevent sslmode=require in the URL from overriding explicit TLS verification.
+        const secureConnectionString = new URL(postgresUrl)
+        secureConnectionString.searchParams.delete("sslmode")
         const client = new pg.Client({
-          connectionString: postgresUrl,
+          connectionString: secureConnectionString.toString(),
           ssl: { rejectUnauthorized: true },
         })
 
