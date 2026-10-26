@@ -13,6 +13,8 @@ Scope: static review of selected repository configuration and Supabase storage p
 - Remove process-wide TLS verification disabling and require PostgreSQL certificate verification in setup scripts.
 - Keep Chromium web security enabled and prevent the localhost-target bypass from being enabled via an environment variable in production.
 - Add a `typecheck` package script and GitHub Actions workflow for production dependency auditing and TypeScript checks.
+- Make Supabase client factories build-safe: during the Next.js production-build phase (or when CI intentionally omits secrets) inert placeholders are used so `pnpm build` can complete. Runtime still requires real `NEXT_PUBLIC_SUPABASE_*` and `SUPABASE_SERVICE_ROLE_KEY` values.
+- CI `remediate-dependencies` workflow now supplies placeholder Supabase env vars for the production-build step.
 
 ## Important deployment notes
 
@@ -22,6 +24,7 @@ Scope: static review of selected repository configuration and Supabase storage p
 4. Apply `supabase/migrations/20261026000000_harden_designs_storage_policies.sql` to the production Supabase database using the approved migration process. Repository changes do not alter a live database automatically.
 5. PostgreSQL connections now verify certificates. If your provider uses a private CA, configure that CA rather than disabling verification.
 6. Run the new CI checks and resolve any dependency or TypeScript failures before merging.
+7. Confirm the framing policy (`X-Frame-Options: SAMEORIGIN`) does not break any intentional external embeds or public sharing flows. Review HSTS for all affected subdomains.
 
 ## Dependency audit findings (CI)
 
@@ -41,8 +44,10 @@ Also verify OAuth callback state validation and token encryption, browser automa
 
 ## Validation status
 
-The first GitHub Actions run found **103 production dependency advisories: 4 critical, 39 high, 48 moderate, and 12 low**. Notable findings include the installed Next.js version being below patched releases identified by the audit, plus vulnerable transitive packages. The dependency lockfile has not yet been regenerated with patched versions, so this remains a release blocker.
+- TypeScript check: fixed (`picked.fileType`) and expected to pass.
+- Production build: previously failed because `@supabase/ssr` requires URL + key at client-creation time. Mitigated by build-phase placeholders in the client factories and by supplying dummy env vars in the CI build step.
+- Dependency audit: still needs a clean post-lockfile-regeneration run.
+- Storage migration: **not** applied to the live Supabase project.
+- No live penetration test, production database query, or complete application test suite was run.
 
-The first TypeScript check also surfaced a pre-existing `picked.category` type error in `lib/ai-automation/full-app-engine.ts`; this branch fixes it to use `picked.fileType`. The workflow must be rerun to confirm whether additional errors remain.
-
-No live penetration test, production database query, or complete application test suite was run. Do not merge or deploy until dependency advisories are remediated, CI passes, and the storage migration has been reviewed and applied.
+Do not merge or deploy until dependency advisories are remediated, CI (including the production build) passes, and the storage migration has been reviewed and applied.
