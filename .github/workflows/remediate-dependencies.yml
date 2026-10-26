@@ -1,0 +1,54 @@
+name: Remediate critical dependencies
+
+on:
+  push:
+    branches:
+      - security/production-hardening-2026-10
+    paths:
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/remediate-dependencies.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dependency-remediation-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  update-lockfile:
+    if: "!contains(github.event.head_commit.message, '[dependency-bot]')"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: security/production-hardening-2026-10
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Regenerate dependency lockfile
+        run: pnpm install --no-frozen-lockfile
+      - name: Verify TypeScript
+        run: pnpm run typecheck
+      - name: Verify production build
+        run: pnpm run build
+      - name: Report remaining production advisories
+        continue-on-error: true
+        run: pnpm audit --prod
+      - name: Commit generated lockfile
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pnpm-lock.yaml
+          if git diff --cached --quiet; then
+            echo "Lockfile is already up to date."
+          else
+            git commit -m "[dependency-bot] regenerate lockfile with security fixes"
+            git push origin HEAD:security/production-hardening-2026-10
+          fi
