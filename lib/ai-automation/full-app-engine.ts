@@ -1776,7 +1776,7 @@ export async function executeStructuredTestPlan(
                 if (submitBtn) submitBtn.click()
               }).catch(() => null)
               await settle(page, netRecorder, 2500)
-              observation = `Opened upload modal "${modalInfo.modalTitle || "Dialog"}", attached test file "${picked.fileName}" (${picked.fileType.toUpperCase()}), and submitted upload form.`
+              observation = `Opened upload modal "${modalInfo.modalTitle || "Dialog"}", attached test file "${picked.fileName}" (${(picked.fileName.split(".").pop() || "file").toUpperCase()}), and submitted upload form.`
               appendLog(job, "success", `📎 [UPLOAD MODAL] ${observation}`)
             }
           } else if (modalInfo.hasFormControls) {
