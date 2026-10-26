@@ -36,14 +36,28 @@ jobs:
           PUPPETEER_SKIP_DOWNLOAD: "true"
       - name: Check types
         run: pnpm exec tsc --noEmit --pretty false
-      - name: Test API authorization, group startup and stop controls
-        run: node --test tests/responsive-routes.test.mjs
-      - name: Test matching and actual OpenCV comparison
-        run: pnpm dlx tsx@4.23.15 --test tests/responsive-comparison.test.ts
+      - name: Test combined automation, API and OpenCV regressions
+        run: >-
+          pnpm dlx tsx@4.23.15 --test
+          tests/duo-review.test.mjs
+          tests/action-ledger-reconciliation.test.ts
+          tests/architecture-safety-patterns.test.ts
+          tests/test-plan-safety.test.ts
+          tests/job-boundary-safety.test.ts
+          tests/visual-context-integration.test.ts
+          tests/opencv-element-detector.test.ts
+          tests/responsive-comparison.test.ts
+          tests/responsive-routes.test.mjs
       - name: Install fixture browser
         run: pnpm exec puppeteer browsers install chrome
-      - name: Test real browser captures at three viewport sizes
-        run: pnpm dlx tsx@4.23.15 --test tests/responsive-capture.browser.test.ts
+      - name: Test real browser capture, panel, uploads and navigation
+        run: >-
+          pnpm dlx tsx@4.23.15 --test
+          tests/responsive-capture.browser.test.ts
+          tests/responsive-panel.browser.test.mjs
+          tests/upload-controls.test.ts
+          tests/dom-discovery.test.mjs
+          tests/dom-discovery.integration.test.ts
       - name: Upload browser evidence
         if: always()
         uses: actions/upload-artifact@v4

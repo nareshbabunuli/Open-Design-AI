@@ -1,3 +1,5 @@
+import { uploadControl } from "./upload-interaction"
+import { setSelection, ControlBlocked } from "./control-interactions"
 import { responsiveScreenStatus } from "./responsive-runs"
 import { captureResponsiveSnapshot } from "./responsive-capture"
 import fs from "fs"
@@ -230,7 +232,7 @@ async function fillFormVisibly(
           }
           return
         }
-        if (rect.width <= 0 || rect.height <= 0 || style.display === "none" || style.visibility === "hidden") return
+        if ((rect.width <= 0 || rect.height <= 0 || style.display === "none" || style.visibility === "hidden") && !(["checkbox", "radio"].includes(type) && Array.from(field.labels || []).some((label: any) => { const r = label.getBoundingClientRect(); return r.width > 2 && r.height > 2 }))) return
         if (["submit", "button", "hidden", "reset"].includes(type)) return
 
         const key = String(field.name || field.id || "")
@@ -306,22 +308,19 @@ async function fillFormVisibly(
         failed++
         continue
       }
-      const picked = pickUploadFile(uploadInventory || null, {
-        acceptAttr: task.accept,
-        targetName: task.name,
-      })
       try {
-        await (field as any).uploadFile(picked.filePath)
-        await field.evaluate((el) => {
-          el.dispatchEvent(new Event("input", { bubbles: true }))
-          el.dispatchEvent(new Event("change", { bubbles: true }))
-        }).catch(() => {})
-        const attached = await field.evaluate((el) => ((el as HTMLInputElement).files?.length || 0) > 0).catch(() => false)
-        if (!attached) failed++
-      } catch {
+        const result = await uploadControl(page, job, { selector: task.selector, name: task.name })
+        if (!result.ok) failed++
+      } catch (error) {
+        if (error instanceof ControlBlocked) throw error
         failed++
       }
       await publishLiveFrame(job, page)
+      continue
+    }
+    if (task.kind === "check") {
+      const result = await setSelection(page, { selector: task.selector, name: task.name }, true)
+      if (!result.ok) failed++
       continue
     }
     const box = await field?.boundingBox().catch(() => null)
@@ -345,8 +344,6 @@ async function fillFormVisibly(
     let ok = false
     if (task.kind === "type") {
       ok = await humanType(page, field, task.value, { label: task.name, maskInBanner: task.sensitive })
-    } else if (task.kind === "check") {
-      ok = Boolean(await humanClick(page, field))
     } else {
       const optionIndex = await field.evaluate((node, value) => Array.from((node as HTMLSelectElement).options).findIndex((option) => option.value === value), task.value).catch(() => -1)
       if (optionIndex >= 0 && await humanClick(page, field)) {
@@ -1435,93 +1432,10 @@ export async function executeStructuredTestPlan(
           }
         }
       } else if (step.actionType === "upload") {
-        const fileType = step.fileTypeRequired || "image"
-        await showActionBanner(page, `Upload ${fileType.toUpperCase()} -> ${step.targetName}`)
-
-        // 1. Resolve target file input or fallback to any file input on the page
-        const fileInput =
-          (step.targetSelector ? await page.$(step.targetSelector).catch(() => null) : null) ||
-          (await page.$('input[type="file"]').catch(() => null))
-
-        const acceptAttr = fileInput
-          ? await fileInput.evaluate((el) => el.getAttribute("accept") || "").catch(() => "")
-          : ""
-
-        // 2. Pick matching file from user-mentioned upload folder or fallback to synthetic dummy
-        const picked = pickUploadFile(activeUploadInventory, {
-          fileTypeRequired: fileType,
-          acceptAttr,
-          targetName: step.targetName,
-        })
-
-        if (!fileInput) {
-          // Fallback: if targetSelector is a custom upload button/dropzone, intercept fileChooser on click
-          const triggerHandle = step.targetSelector ? await page.$(step.targetSelector).catch(() => null) : null
-          if (triggerHandle) {
-            try {
-              const [chooser] = await Promise.all([
-                page.waitForFileChooser({ timeout: 2500 }),
-                triggerHandle.click(),
-              ])
-              await chooser.accept([picked.filePath])
-              await settle(page, netRecorder, 3000)
-              actionVerdict = "passed"
-              observation = `Attached ${fileType.toUpperCase()} file ("${picked.fileName}") via file chooser on "${step.targetName}".`
-            } catch {
-              actionVerdict = "blocked"
-              observation = `No <input type="file"> found for upload "${step.targetName}".`
-            } finally {
-              await triggerHandle.dispose().catch(() => {})
-            }
-          } else {
-            actionVerdict = "blocked"
-            observation = `No <input type="file"> found for upload "${step.targetName}".`
-          }
-        } else {
-          try {
-            await (fileInput as any).uploadFile(picked.filePath)
-            await fileInput.evaluate((el) => {
-              el.dispatchEvent(new Event("input", { bubbles: true }))
-              el.dispatchEvent(new Event("change", { bubbles: true }))
-            }).catch(() => {})
-            await settle(page, netRecorder, 3000)
-
-            const uploadState = await fileInput.evaluate((el) => {
-              const input = el as HTMLInputElement
-              const fileCount = input?.files?.length || 0
-              const hasPreview = Boolean(document.querySelector('img[src^="data:"], img[src^="blob:"], .file-preview, [data-preview], #upload-preview'))
-              return { fileCount, hasPreview }
-            }).catch(() => ({ fileCount: 0, hasPreview: false }))
-
-            const calls = netRecorder.getCapturedCalls()
-            const hasMultipartRequest = calls.some((c) => c.isMutating)
-
-            const sourceNote = picked.isFromFolder
-              ? `from folder "${path.basename(picked.filePath)}" (${picked.fileSizeKB} KB)`
-              : `("${picked.fileName}")`
-
-            if (uploadState.fileCount > 0 && (uploadState.hasPreview || hasMultipartRequest)) {
-              actionVerdict = "passed"
-              observation = `Attached ${fileType.toUpperCase()} file ${sourceNote}. Wire/DOM confirmation verified.`
-            } else if (uploadState.fileCount > 0) {
-              actionVerdict = "passed"
-              observation = `File attached to input element: ${sourceNote}.`
-            } else {
-              actionVerdict = "failed"
-              observation = `Failed to attach file to upload control "${step.targetName}".`
-            }
-
-            if (picked.isFromFolder) {
-              appendLog(
-                job,
-                "info",
-                `📁 Attached test file from folder: "${picked.fileName}" (${picked.fileSizeKB} KB) into "${step.targetName}"`
-              )
-            }
-          } finally {
-            await fileInput.dispose().catch(() => {})
-          }
-        }
+        const result = await uploadControl(page, job, { selector: step.targetSelector, name: step.targetName, fileTypeRequired: step.fileTypeRequired })
+        actionVerdict = result.ok ? "passed" : "failed"
+        observation = result.observation
+        ;(step as any).uploadEvidence = result
 
         step.evidence = {
           expectedEffects: ["value_changed", "network_only", "content_changed"],
@@ -1588,45 +1502,9 @@ export async function executeStructuredTestPlan(
           consoleErrors: consoleRecorder.getErrors(),
         }
       } else if (step.actionType === "toggle") {
-        const target = (step.targetSelector ? await page.$(step.targetSelector).catch(() => null) : null) ||
-          (await page.$('input[type="checkbox"], [role="switch"]'))
-        if (!target || !(await target.boundingBox())) {
-          actionVerdict = "failed"
-          observation = `Could not locate visible toggle "${step.targetName}".`
-        } else {
-          const selector = step.targetSelector || await target.evaluate((el) => {
-            const node = el as HTMLElement
-            if (!node.id) node.id = `qa-live-toggle-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
-            return `#${CSS.escape(node.id)}`
-          }).catch(() => "")
-          const before = await target.evaluate((node) => {
-            const el = node as HTMLInputElement
-            return typeof el.checked === "boolean" ? el.checked : el.getAttribute("aria-checked") === "true"
-          }).catch(() => false)
-          await publishLiveAction(job, page, {
-            type: "click",
-            description: `Toggling ${step.targetName}`,
-            target: step.targetName,
-            selector,
-          })
-          const box = await target.boundingBox()
-          if (box) {
-            await humanMouseMove(page, box.x + box.width / 2, box.y + box.height / 2)
-            await publishLiveFrame(job, page)
-          }
-          const clicked = Boolean(await humanClick(page, target))
-          await settle(page, netRecorder, 500)
-          const after = await target.evaluate((node) => {
-            const el = node as HTMLInputElement
-            return typeof el.checked === "boolean" ? el.checked : el.getAttribute("aria-checked") === "true"
-          }).catch(() => before)
-          const toggled = clicked && after !== before
-          actionVerdict = toggled ? "passed" : "failed"
-          observation = toggled ? `Toggled "${step.targetName}" with a real mouse click.` : `Could not confirm a state change for "${step.targetName}".`
-          if (job.currentAction) job.currentAction.status = toggled ? "passed" : "failed"
-          await publishLiveFrame(job, page)
-        }
-
+        const result = await setSelection(page, { selector: step.targetSelector, name: step.targetName }, step.syntheticValue !== "false")
+        actionVerdict = result.ok ? "passed" : "failed"
+        observation = result.observation
         step.evidence = {
           expectedEffects: ["value_changed", "content_changed"],
           observedEffect: actionVerdict === "passed" ? "value_changed" : "no_effect",
@@ -1664,36 +1542,6 @@ export async function executeStructuredTestPlan(
           isSubmit: isSubmitLike || /submit|save|register|login/i.test(step.targetName),
         })
 
-        // If clicking a submit button inside a form/modal that has an empty <input type="file">,
-        // attach a test file before submitting so the form submission succeeds with a real file.
-        if (isSubmitLike) {
-          const emptyFileSel = await page.evaluate(() => {
-            const scope = document.querySelector('[role="dialog"], [aria-modal="true"], dialog[open], .modal, [data-modal]') || document
-            const fInput = scope.querySelector('input[type="file"]') as HTMLInputElement | null
-            if (!fInput || (fInput.files && fInput.files.length > 0)) return null
-            if (fInput.id) return `#${CSS.escape(fInput.id)}`
-            return 'input[type="file"]'
-          }).catch(() => null)
-          if (emptyFileSel) {
-            const fHandle = (await page.$(emptyFileSel)) as any
-            if (fHandle && typeof fHandle.uploadFile === "function") {
-              const picked = pickUploadFile(activeUploadInventory, { targetName: step.targetName })
-              await fHandle.uploadFile(picked.filePath).catch(() => null)
-              await fHandle.evaluate((el: HTMLInputElement) => {
-                el.dispatchEvent(new Event("input", { bubbles: true }))
-                el.dispatchEvent(new Event("change", { bubbles: true }))
-              }).catch(() => null)
-              await new Promise((r) => setTimeout(r, 250))
-            }
-          }
-        }
-
-        const isUploadTrigger = /upload|choose\s*a?\s*file|add\s*a?\s*document|take\s*a?\s*photo|browse\s*files?|select\s*files?|attach|import\s*file/i.test(step.targetName)
-        let chooserPromise: Promise<any> | null = null
-        if (isUploadTrigger) {
-          chooserPromise = page.waitForFileChooser({ timeout: 1500 }).catch(() => null)
-        }
-
         const ladderResult = await runWithLadder(
           page,
           step.targetSelector,
@@ -1703,22 +1551,6 @@ export async function executeStructuredTestPlan(
           consoleRecorder,
           { maxSettleMs: 3000, dialogShownRef: dialogRef }
         )
-
-        if (chooserPromise) {
-          const chooser = await chooserPromise
-          if (chooser) {
-            const picked = pickUploadFile(activeUploadInventory, {
-              targetName: step.targetName,
-            })
-            try {
-              await chooser.accept([picked.filePath])
-              await settle(page, netRecorder, 2500)
-              ladderResult.verdict = "passed"
-              ladderResult.observedEffect = "value_changed"
-              ladderResult.reason = `Opened native file chooser and attached test file "${picked.fileName}".`
-            } catch {}
-          }
-        }
 
         actionVerdict = ladderResult.verdict
         observation = ladderResult.reason
@@ -1758,30 +1590,7 @@ export async function executeStructuredTestPlan(
             ? testPlan.steps.slice(i + 1).some((s) => s.screenId === existingModalScreen.id && s.status === "pending")
             : false
 
-          if (modalInfo.hasUploadInput && existingModalScreen && !hasPendingModalSteps) {
-            // This upload modal was already mapped and tested by an earlier trigger;
-            // complete the file upload + submit directly so this upload trigger also uploads a real file!
-            const modalFileInput = (await page.$(
-              '[role="dialog"] input[type="file"], [aria-modal="true"] input[type="file"], dialog[open] input[type="file"], .modal input[type="file"], input[type="file"]'
-            )) as any
-            if (modalFileInput && typeof modalFileInput.uploadFile === "function") {
-              const picked = pickUploadFile(activeUploadInventory, { targetName: step.targetName })
-              await modalFileInput.uploadFile(picked.filePath).catch(() => null)
-              await modalFileInput.evaluate((el: HTMLInputElement) => {
-                el.dispatchEvent(new Event("input", { bubbles: true }))
-                el.dispatchEvent(new Event("change", { bubbles: true }))
-              }).catch(() => null)
-              await new Promise((r) => setTimeout(r, 300))
-              await page.evaluate(() => {
-                const modal = document.querySelector('[role="dialog"], [aria-modal="true"], dialog[open], .modal, [data-modal]')
-                const submitBtn = modal?.querySelector('button[type="submit"], input[type="submit"]') as HTMLElement | null
-                if (submitBtn) submitBtn.click()
-              }).catch(() => null)
-              await settle(page, netRecorder, 2500)
-              observation = `Opened upload modal "${modalInfo.modalTitle || "Dialog"}", attached test file "${picked.fileName}" (${(picked.fileName.split(".").pop() || "file").toUpperCase()}), and submitted upload form.`
-              appendLog(job, "success", `📎 [UPLOAD MODAL] ${observation}`)
-            }
-          } else if (modalInfo.hasFormControls) {
+          if (modalInfo.hasFormControls) {
             appendLog(job, "info", `Modal opened by "${step.targetName}" contains interactive inputs/file upload controls; keeping open for in-modal testing.`)
           } else {
             appendLog(job, "info", `Modal dialog opened by "${step.targetName}". Verifying dismissal & focus restoration...`)
@@ -2374,11 +2183,11 @@ export async function executeStructuredTestPlan(
 
       saveJob(job)
     } catch (stepErr: any) {
-      step.status = "failed"
-      step.verdict = "failed"
-      failedCount++
+      step.status = stepErr instanceof ControlBlocked ? "blocked" : "failed"
+      step.verdict = step.status
+      if (step.status === "blocked") blockedCount++; else failedCount++
       step.error = secretRedactor.redact(stepErr?.message || "Execution exception")
-      updateActionLedgerForStep(job, step, "failed", step.error, step.error)
+      updateActionLedgerForStep(job, step, step.status === "blocked" ? "blocked" : "failed", step.error, step.error)
       appendLog(job, "warn", `Step ${i + 1} exception: ${secretRedactor.redact(stepErr?.message || "Execution exception")}`)
     } finally {
       netRecorder.cleanup()

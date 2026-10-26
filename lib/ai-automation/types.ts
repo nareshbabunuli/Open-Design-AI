@@ -645,7 +645,22 @@ export type PendingSessionNavigation = {
   requestedAt: string
 }
 
+export type PendingUpload = {
+  fileTypeRequired?: "image" | "pdf" | "document" | "video" | "csv" | "other"
+  context?: string
+  id: string
+  targetName: string
+  accept: string
+  multiple: boolean
+  status: "waiting" | "ready" | "skip"
+  filePaths?: string[]
+  error?: string
+  createdAt: string
+}
+
 export type AutomationJob = {
+  pendingUpload?: PendingUpload
+
   responsiveGroup?: ResponsiveGroup
   responsiveSnapshots?: ResponsiveSnapshot[]
   responsiveCaptureErrors?: string[]

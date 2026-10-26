@@ -11,6 +11,7 @@
     "setup-storage": "node scripts/setup-storage.js",
     "apply-rls": "node scripts/apply-rls-policies.js",
     "test:dom-discovery": "npx --yes tsx --test tests/dom-discovery.test.mjs tests/dom-discovery.integration.test.ts tests/action-ledger-reconciliation.test.ts tests/architecture-safety-patterns.test.ts tests/test-plan-safety.test.ts",
+    "test:duo": "node --test tests/duo-review.test.mjs",
     "test:e2e": "playwright test",
     "typecheck": "tsc --noEmit"
   },

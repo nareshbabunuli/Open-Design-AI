@@ -10,6 +10,9 @@ import {
   type RepositoryConnection,
 } from "@/lib/integrations/repository-connections"
 
+import { extractTraceProposals } from "@/lib/integrations/duo-proposals"
+import { sealDuoReview } from "@/lib/integrations/duo-review-context"
+
 export const dynamic = "force-dynamic"
 
 type GitLabConnection = RepositoryConnection
@@ -67,10 +70,25 @@ export async function POST(request: NextRequest) {
   const baseUrl = providerBaseUrl("gitlab")
   let activeConnection = connection
   let refreshedCookieValue: string | null = null
+  const withCookie = (response: NextResponse) => {
+    if (refreshedCookieValue) response.cookies.set(tokenCookieName("gitlab"), refreshedCookieValue, oauthCookieOptions(60 * 60 * 24 * 30))
+    return response
+  }
+  const refreshedError = (status: number, message: string) => withCookie(errorResponse(status, message))
   try {
     const refreshed = await refreshRepositoryConnection("gitlab", connection)
     activeConnection = refreshed.connection
     if (refreshed.refreshed) refreshedCookieValue = encryptConnection(activeConnection)
+    const branchResponse = await gitlabRequest(
+      `${baseUrl}/api/v4/projects/${encodeURIComponent(projectId)}/repository/branches/${encodeURIComponent(baseBranch)}`,
+      activeConnection.accessToken
+    )
+    if (!branchResponse.ok) return refreshedError(409, "Could not resolve the review branch. Refresh repositories and try again.")
+    const branch = await branchResponse.json()
+    const baseCommit = branch.commit?.id
+    if (typeof baseCommit !== "string" || !/^[a-f0-9]{40,64}$/.test(baseCommit)) {
+      return refreshedError(502, "GitLab did not return a valid review commit.")
+    }
     // Resolve the user's actual available privilege IDs and deliberately exclude
     // GitLab-write and git-push privileges. The agent may prepare changes in its
     // isolated workspace, but it cannot commit or push them to the project.
@@ -82,7 +100,7 @@ export async function POST(request: NextRequest) {
       const detail = privilegesResponse.status === 403
         ? "Your GitLab account cannot access the Duo Agent Platform API. Check your Ultimate/Duo access and project settings."
         : `GitLab could not list Duo agent privileges (HTTP ${privilegesResponse.status}).`
-      return errorResponse(502, detail)
+      return refreshedError(502, detail)
     }
     const privilegePayload = await privilegesResponse.json()
     const allowedNames = new Set(["read_write_files", "read_only_gitlab", "run_commands"])
@@ -99,7 +117,7 @@ export async function POST(request: NextRequest) {
     const requiredPrivileges = ["read_only_gitlab", "read_write_files", "run_commands"]
     const missingPrivileges = requiredPrivileges.filter(name => !privilegeNames.has(name))
     if (missingPrivileges.length > 0) {
-      return errorResponse(
+      return refreshedError(
         502,
         `GitLab did not provide the required safe Duo capabilities: ${missingPrivileges.join(", ")}. Check Duo Agent Platform access and project configuration.`
       )
@@ -108,15 +126,16 @@ export async function POST(request: NextRequest) {
     const fullGoal = [
       "You are reviewing a web application's end-to-end UI testing findings for Open Design AI.",
       goal,
+      `Review source from branch ${baseBranch} at exact commit ${baseCommit}. Read source at that commit through read-only GitLab APIs. Only use workspace files if HEAD matches this commit; otherwise report the mismatch instead of proposing replacements.`,
       appUrl ? `Application under test: ${appUrl}` : "",
       "Work only in the isolated agent workspace. Do not commit, push, create a branch, open a merge request, or write to the GitLab project through GitLab APIs.",
       "Inspect relevant source files and tests. Prepare candidate fixes in priority order, explain the evidence and rationale, and run relevant local tests when possible.",
-      "Do not create or modify files in the GitLab repository itself. Prepare candidate fixes and return your final result as one valid JSON object, with no markdown fences, shaped like: {\"proposals\":[{\"id\":\"fix-1\",\"issue\":\"short issue title\",\"summary\":\"why this change helps\",\"files\":[{\"path\":\"relative/path.ts\",\"content\":\"complete replacement file content\"}]}]}. Each proposal must contain complete file contents for every changed file. Do not include unchanged files. Keep proposals small and separate by issue. Do not claim a fix has been applied to the user's repository. The user must review and explicitly approve each proposal before any repository mutation.",
+      "Do not create or modify files in the GitLab repository itself. Prepare candidate fixes and return your final result as one valid JSON object, with no markdown fences, shaped like: {\"proposals\":[{\"id\":\"fix-1\",\"issue\":\"short issue title\",\"summary\":\"why this change helps\",\"files\":[{\"path\":\"relative/path.ts\",\"content\":\"complete replacement file content\"}]}]}. Return at most 20 proposals, with unique proposal IDs and unique paths within each proposal. Each proposal must contain complete file contents for every changed file. Do not include unchanged files. Keep proposals small and separate by issue. Do not claim a fix has been applied to the user's repository. The user must review and explicitly approve each proposal before any repository mutation.",
     ].filter(Boolean).join("\n\n")
 
     const additionalContext = [{
       Category: "open_design_ai_ui_test_findings",
-      Content: JSON.stringify({ appUrl, findings }),
+      Content: JSON.stringify({ appUrl, findings, baseBranch, baseCommit }),
     }]
     const createResponse = await gitlabRequest(
       `${baseUrl}/api/v4/ai/duo_workflows/workflows`,
@@ -126,6 +145,7 @@ export async function POST(request: NextRequest) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           project_id: projectId,
+          source_branch: baseBranch,
           goal: fullGoal,
           additional_context: additionalContext,
           workflow_definition: "developer/v1",
@@ -144,9 +164,14 @@ export async function POST(request: NextRequest) {
       const message = createResponse.status === 403
         ? `GitLab rejected the Duo workflow. ${apiMessage || "Check Duo Agent Platform access, identity verification, project settings, and service-account requirements."}`
         : `Could not start the GitLab Duo workflow (HTTP ${createResponse.status}). ${apiMessage}`
-      return errorResponse(502, message.trim())
+      return refreshedError(502, message.trim())
     }
 
+    if (!/^\d+$/.test(String(data.id))) return refreshedError(502, "GitLab did not return a valid workflow ID.")
+    const reviewToken = sealDuoReview({
+      userId: user.id, workflowId: String(data.id), projectId, baseBranch, baseCommit,
+      expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+    }, process.env.REPOSITORY_CONNECTION_SECRET || "")
     const response = NextResponse.json({
       success: true,
       workflow: {
@@ -157,6 +182,8 @@ export async function POST(request: NextRequest) {
         webUrl: data.web_url || null,
         projectId,
         baseBranch,
+        baseCommit,
+        reviewToken,
         provider: "gitlab",
       },
       safety: {
@@ -169,7 +196,7 @@ export async function POST(request: NextRequest) {
     return response
   } catch (error) {
     console.error("Failed to start GitLab Duo workflow", error)
-    return errorResponse(502, "The GitLab Duo request failed unexpectedly. Check your connection and try again.")
+    return refreshedError(502, "The GitLab Duo request failed unexpectedly. Check your connection and try again.")
   }
 }
 
@@ -188,6 +215,11 @@ export async function GET(request: NextRequest) {
   const baseUrl = providerBaseUrl("gitlab")
   let activeConnection = connection
   let refreshedCookieValue: string | null = null
+  const withCookie = (response: NextResponse) => {
+    if (refreshedCookieValue) response.cookies.set(tokenCookieName("gitlab"), refreshedCookieValue, oauthCookieOptions(60 * 60 * 24 * 30))
+    return response
+  }
+  const refreshedError = (status: number, message: string) => withCookie(errorResponse(status, message))
   try {
     const refreshed = await refreshRepositoryConnection("gitlab", connection)
     activeConnection = refreshed.connection
@@ -197,10 +229,12 @@ export async function GET(request: NextRequest) {
       gitlabRequest(`${baseUrl}/api/v4/ai/duo_workflows/workflows/${workflowId}/trace.jsonl`, activeConnection.accessToken),
     ])
     if (!flowResponse.ok) {
-      return errorResponse(flowResponse.status === 404 ? 404 : 502, `Could not retrieve the Duo workflow status (HTTP ${flowResponse.status}).`)
+      return refreshedError(flowResponse.status === 404 ? 404 : 502, `Could not retrieve the Duo workflow status (HTTP ${flowResponse.status}).`)
     }
     const flow = await flowResponse.json()
-    const traceText = traceResponse.ok ? await traceResponse.text() : ""
+    if (!traceResponse.ok) return refreshedError(502, `Could not retrieve Duo proposals (HTTP ${traceResponse.status}). Retry the review refresh.`)
+    const traceText = await traceResponse.text()
+    const proposals = flow.status === "finished" ? extractTraceProposals(traceText) : []
     const messages = traceText.split("\n").filter(Boolean).slice(-80).flatMap(line => {
       try {
         const entry = JSON.parse(line)
@@ -223,11 +257,15 @@ export async function GET(request: NextRequest) {
         webUrl: flow.web_url || null,
       },
       messages,
+      proposals: proposals || [],
+      proposalError: proposals === null
+        ? "Duo finished without valid structured proposals. Open the GitLab session to inspect its output."
+        : null,
     })
     if (refreshedCookieValue) response.cookies.set(tokenCookieName("gitlab"), refreshedCookieValue, oauthCookieOptions(60 * 60 * 24 * 30))
     return response
   } catch (error) {
     console.error("Failed to retrieve GitLab Duo workflow", error)
-    return errorResponse(502, "Could not retrieve the Duo session. Retry in a moment.")
+    return refreshedError(502, "Could not retrieve the Duo session. Retry in a moment.")
   }
 }

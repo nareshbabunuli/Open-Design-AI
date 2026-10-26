@@ -1,3 +1,5 @@
+import { uploadControl } from "./upload-interaction"
+import { setSelection, ControlBlocked } from "./control-interactions"
 import { captureResponsiveSnapshot } from "./responsive-capture"
 import { localResponsiveResult, awaitResponsivePlanApproval } from "./responsive-runs"
 import puppeteer, { type Browser, type Page } from "puppeteer"
@@ -537,10 +539,17 @@ export function buildWorkflowTestPlan(
         : "Synthetic Test Data"
     } else if (/upload|photo|image|file/i.test(act)) {
       actionType = "upload"
-    } else if (/verify|assert|check/i.test(act) || isLast) {
+    } else if (/\b(uncheck|check|select|choose)\b/i.test(act) && /checkbox|radio|option|toggle|switch/i.test(act)) {
+      actionType = "toggle"
+      syntheticVal = /\buncheck\b/i.test(act) ? "false" : "true"
+    } else if (/verify|assert/i.test(act)) {
       actionType = "verify"
     }
 
+    const matchingControls = targetScreen.actionableElements.filter(element =>
+      element.name && act.toLowerCase().includes(element.name.toLowerCase()) &&
+      (actionType !== 'toggle' || ['checkbox', 'radio', 'toggle'].includes(element.type)))
+    const matchedControl = matchingControls.length === 1 ? matchingControls[0] : undefined
     steps.push({
       id: `TEST-${String(stepIdx++).padStart(3, "0")}`,
       screenId: targetScreen.id,
@@ -549,7 +558,8 @@ export function buildWorkflowTestPlan(
       componentLocation: targetScreen.componentLocation || targetScreen.sourceFile,
       stepIndex: i + 1,
       actionType,
-      targetName: act,
+      targetName: matchedControl?.name || act,
+      targetSelector: matchedControl?.selector,
       syntheticValue: syntheticVal,
       expectedResult: isLast ? spec.expectedOutcome : `Screen advances and accepts: ${act}`,
       status: "pending",
@@ -910,33 +920,15 @@ export async function executeFeatureWorkflowJob(
 
         // 2. UPLOAD ACTION
         else if (step.actionType === "upload") {
-          const fileInputs = await page.$$('input[type="file"]')
-          if (fileInputs.length > 0) {
-            const targetInput = fileInputs[0]
-            const acceptAttr = await targetInput.evaluate((el) => el.getAttribute("accept") || "").catch(() => "")
-            const uploadDir = resolveUploadFolder({
-              uploadFilesDir: job.uploadFilesDir,
-              projectDir: job.projectDir,
-              prompt: step.targetName,
-            })
-            const inv = uploadDir ? scanUploadFolder(uploadDir) : null
-            const picked = pickUploadFile(inv, {
-              fileTypeRequired: step.fileTypeRequired || "image",
-              acceptAttr,
-              targetName: step.targetName,
-            })
-            await (targetInput as any).uploadFile(picked.filePath)
-            await targetInput.evaluate((el) => {
-              el.dispatchEvent(new Event("input", { bubbles: true }))
-              el.dispatchEvent(new Event("change", { bubbles: true }))
-            }).catch(() => {})
-            actionSuccess = await targetInput.evaluate((el) => ((el as HTMLInputElement).files?.length || 0) > 0).catch(() => true)
-            step.actualResult = actionSuccess
-              ? `Uploaded test file: ${picked.fileName}`
-              : `Failed to attach file to ${step.targetName}`
-          } else {
-            step.actualResult = "No file input element found on screen"
-          }
+          const result = await uploadControl(page, job, { selector: step.targetSelector, name: step.targetName, fileTypeRequired: step.fileTypeRequired })
+          actionSuccess = result.ok
+          step.actualResult = result.observation
+          ;(step as any).uploadEvidence = result
+        }
+        else if (step.actionType === "toggle") {
+          const result = await setSelection(page, { selector: step.targetSelector, name: step.targetName }, step.syntheticValue !== "false")
+          actionSuccess = result.ok
+          step.actualResult = result.observation
         }
 
         // 3. CLICK ACTION
@@ -1036,10 +1028,19 @@ export async function executeFeatureWorkflowJob(
           step.actualResult = actionSuccess ? `Clicked action element for: "${step.targetName}"` : "Action element not found"
         }
 
-        // 4. VERIFY ACTION
+        // Explicit DOM assertions; unsupported natural-language claims remain blocked.
+        else if (step.actionType === 'verify') {
+          const quoted = step.expectedResult.match(/["“]([^"”]+)["”]/)?.[1]
+          if (!step.targetSelector && !quoted) throw new ControlBlocked(`Verification needs a selector or quoted expected text: ${step.expectedResult}`)
+          actionSuccess = await page.evaluate(({ selector, text }) => {
+            const visible = (el: Element) => { const r = el.getBoundingClientRect(); const s = getComputedStyle(el); return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' }
+            if (selector) { const matches = document.querySelectorAll(selector); return matches.length === 1 && visible(matches[0]) && (!text || (matches[0].textContent || '').includes(text)) }
+            return Array.from(document.querySelectorAll('body *')).some(el => visible(el) && !el.children.length && (el.textContent || '').includes(text!))
+          }, { selector: step.targetSelector, text: quoted })
+          step.actualResult = actionSuccess ? 'Verified expected visible element/text' : 'Expected visible element/text not found'
+        }
         else {
-          actionSuccess = true
-          step.actualResult = `Verified expected outcome: ${step.expectedResult}`
+          throw new ControlBlocked(`No executable assertion for ${step.actionType}: ${step.expectedResult}`)
         }
 
         // Render visual cursor overlay before snapshot
@@ -1159,7 +1160,7 @@ export async function executeFeatureWorkflowJob(
           `✓ [${step.id}] Status: ${step.status.toUpperCase()} | Result: ${step.actualResult}`
         )
       } catch (stepErr: any) {
-        step.status = "failed"
+        step.status = stepErr instanceof ControlBlocked ? "blocked" : "failed"
         step.error = stepErr?.message || "Step execution failed"
         step.actualResult = `Error: ${step.error}`
         appendLog(job, "error", `✗ [${step.id}] Step failed: ${step.error}`)

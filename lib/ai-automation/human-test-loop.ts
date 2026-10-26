@@ -1,3 +1,5 @@
+import { uploadControl } from "./upload-interaction"
+import { setSelection, ControlBlocked } from "./control-interactions"
 /**
  * Closed-loop human-like autonomous testing controller.
  *
@@ -486,33 +488,17 @@ async function executeCandidate(page: Page, candidate: CandidateTest, job: Autom
   }
 
   if (targetInfo.type === "file") {
+    await target.dispose().catch(() => {})
     try {
-      const acceptAttr = await target.evaluate((el) => el.getAttribute("accept") || "").catch(() => "")
-      const uploadDir = resolveUploadFolder({
-        uploadFilesDir: job.uploadFilesDir,
-        projectDir: job.projectDir,
-        prompt: candidate.title,
-      })
-      const inv = uploadDir ? scanUploadFolder(uploadDir) : null
-      const picked = pickUploadFile(inv, {
-        acceptAttr,
-        targetName: candidate.target?.label || candidate.title,
-      })
-      await (target as any).uploadFile(picked.filePath)
-      await target.evaluate((el) => {
-        el.dispatchEvent(new Event("input", { bubbles: true }))
-        el.dispatchEvent(new Event("change", { bubbles: true }))
-      }).catch(() => {})
-      await new Promise((resolve) => setTimeout(resolve, 400))
-      const attached = await target.evaluate((el) => ((el as HTMLInputElement).files?.length || 0) > 0).catch(() => false)
-      await target.dispose().catch(() => {})
-      return attached
-        ? { ok: true, observation: `Attached test file "${picked.fileName}" to ${candidate.title}.` }
-        : { ok: false, observation: `Failed to attach file to ${candidate.title}.` }
-    } catch (error: any) {
-      await target.dispose().catch(() => {})
-      return { ok: false, observation: "File upload interaction failed: " + (error?.message || String(error)) }
-    }
+      const result = await uploadControl(page, job, { selector: candidate.target?.selector, name: candidate.target?.label || candidate.title })
+      return { ok: result.ok, observation: result.observation }
+    } catch (error) { return { ok: false, blocked: error instanceof ControlBlocked, observation: (error as Error).message } }
+  }
+  if (["checkbox", "radio", "toggle"].includes(candidate.pattern)) {
+    await target.dispose().catch(() => {})
+    try {
+      return await setSelection(page, { selector: candidate.target?.selector, name: candidate.target?.label || candidate.title }, true)
+    } catch (error) { return { ok: false, blocked: error instanceof ControlBlocked, observation: (error as Error).message } }
   }
 
   if (candidate.pattern === "search" || candidate.pattern === "valid_input") {

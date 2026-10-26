@@ -1,0 +1,36 @@
+name: OpenCV detector regression checks
+
+on:
+  pull_request:
+    paths:
+      - "lib/ai-automation/opencv-element-detector.ts"
+      - "lib/ai-automation/opencv-layout-optimizer.ts"
+      - "tests/opencv-element-detector.test.ts"
+      - ".github/workflows/opencv-detector.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  detector:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.2
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: "true"
+      - name: Check types
+        run: pnpm exec tsc --noEmit --pretty false
+      - name: Test actual OpenCV detection and layout
+        run: pnpm dlx tsx@4.23.15 --test tests/opencv-element-detector.test.ts

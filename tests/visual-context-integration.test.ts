@@ -4,6 +4,7 @@
 
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
+import sharp from "sharp"
 import type { AutomationJob } from "@/lib/ai-automation/types"
 import { preprocessScreenshotForLaya } from "@/lib/ai-automation/vision-preprocessor"
 
@@ -18,14 +19,15 @@ function expect(actual: any) {
   }
 }
 
+function createTestScreenshot() {
+  return sharp({ create: { width: 1280, height: 1024, channels: 3, background: "#ffffff" } }).png().toBuffer()
+}
+
 describe("Visual Context Integration", () => {
   describe("Vision Preprocessor", () => {
     it("should extract visual features from screenshot", async () => {
-      // Create a minimal test screenshot (1x1 red pixel PNG)
-      const testScreenshot = Buffer.from(
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==",
-        "base64"
-      )
+      // Match the image dimensions to the DOM coordinate space.
+      const testScreenshot = await createTestScreenshot()
 
       const domElements = [
         {
@@ -56,11 +58,24 @@ describe("Visual Context Integration", () => {
       expect(result.features.visualHierarchy[0].prominence).toBeLessThanOrEqual(1)
     })
 
+    it("keeps scores between zero and one for off-screen bounds", async () => {
+      const screenshot = await createTestScreenshot()
+      const result = await preprocessScreenshotForLaya(screenshot, [
+        { selector: "#above", bounds: { x: -10000, y: -10000, width: 100, height: 40 } },
+        { selector: "#below", bounds: { x: 10000, y: 10000, width: 100, height: 40 } },
+      ])
+      assert.equal(result.features.elementBoundingBoxes.length, 2)
+      for (const box of result.features.elementBoundingBoxes) {
+        assert.ok(Number.isFinite(box.saliency) && box.saliency >= 0 && box.saliency <= 1)
+        assert.ok(Number.isFinite(box.visualWeight) && box.visualWeight >= 0 && box.visualWeight <= 1)
+      }
+      for (const element of result.features.visualHierarchy) {
+        assert.ok(Number.isFinite(element.prominence) && element.prominence >= 0 && element.prominence <= 1)
+      }
+    })
+
     it("should handle empty element list gracefully", async () => {
-      const testScreenshot = Buffer.from(
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==",
-        "base64"
-      )
+      const testScreenshot = await createTestScreenshot()
 
       const result = await preprocessScreenshotForLaya(testScreenshot, [])
 
@@ -71,10 +86,7 @@ describe("Visual Context Integration", () => {
     })
 
     it("should calculate position scores correctly", async () => {
-      const testScreenshot = Buffer.from(
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==",
-        "base64"
-      )
+      const testScreenshot = await createTestScreenshot()
 
       // Top-left element should have higher prominence than bottom-right
       const domElements = [
@@ -107,10 +119,7 @@ describe("Visual Context Integration", () => {
     })
 
     it("should cluster elements by spatial region", async () => {
-      const testScreenshot = Buffer.from(
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==",
-        "base64"
-      )
+      const testScreenshot = await createTestScreenshot()
 
       const domElements = [
         { selector: "#top-1", bounds: { x: 100, y: 50, width: 50, height: 30 }, label: "Top 1" },

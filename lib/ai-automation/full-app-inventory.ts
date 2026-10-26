@@ -340,7 +340,7 @@ export async function extractActionableInventory(page: Page, layaBaseUrl?: strin
         type: "file_upload",
         selector,
         inputType: "file",
-        accept: el.accept || "image/*,.pdf,.doc,.docx",
+        accept: el.accept || "",
         isRequired: el.required || false,
         formId,
       })
@@ -351,7 +351,8 @@ export async function extractActionableInventory(page: Page, layaBaseUrl?: strin
     scopeRoot.querySelectorAll("input, textarea").forEach((el: any) => {
       if (el.type === "file" || el.type === "hidden" || el.type === "submit" || el.type === "button") return
       const style = window.getComputedStyle(el)
-      if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0" || el.offsetWidth <= 2 || el.offsetHeight <= 2) return
+      const visibleLabel = Array.from(el.labels || []).some((label: any) => { const r = label.getBoundingClientRect(); return r.width > 2 && r.height > 2 })
+      if ((style.display === "none" || style.visibility === "hidden" || style.opacity === "0" || el.offsetWidth <= 2 || el.offsetHeight <= 2) && !(["checkbox", "radio"].includes(el.type) && visibleLabel)) return
 
       const type = el.type || (el.tagName.toLowerCase() === "textarea" ? "textarea" : "text")
       let elementType: any = "input"
@@ -364,14 +365,6 @@ export async function extractActionableInventory(page: Page, layaBaseUrl?: strin
 
       const parentForm = el.closest("form, [data-form], .form") as HTMLElement | null
       const formId = parentForm ? (parentForm.id || (parentForm as any).dataset?.formTestId || undefined) : undefined
-
-      // Cap repetitive optional checkboxes in the same form/group to 2 representative toggles
-      if (elementType === "checkbox" && !el.required) {
-        const groupKey = formId || "page-checkboxes"
-        const seenCount = optionalCheckboxCounts.get(groupKey) || 0
-        if (seenCount >= 2) return
-        optionalCheckboxCounts.set(groupKey, seenCount + 1)
-      }
 
       elements.push({
         id: `elem-${elementCounter++}`,
@@ -415,7 +408,7 @@ export async function extractActionableInventory(page: Page, layaBaseUrl?: strin
       })
     })
     // 7. Tabs, Radios & Toggles
-    scopeRoot.querySelectorAll("[role='tab'], [role='switch'], .toggle, [data-tab]").forEach((el: any) => {
+    scopeRoot.querySelectorAll("[role='tab'], [role='switch'], [role='checkbox'], [role='radio'], .toggle, [data-tab]").forEach((el: any) => {
       const style = window.getComputedStyle(el)
       if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0" || el.offsetWidth <= 2 || el.offsetHeight <= 2) return
 
@@ -428,7 +421,7 @@ export async function extractActionableInventory(page: Page, layaBaseUrl?: strin
       elements.push({
         id: `elem-${elementCounter++}`,
         name: txt,
-        type: el.getAttribute("role") === "tab" ? "tab" : "toggle",
+        type: el.getAttribute("role") === "tab" ? "tab" : el.getAttribute("role") === "radio" ? "radio" : el.getAttribute("role") === "checkbox" ? "checkbox" : "toggle",
         selector: generateOptimalSelector(el),
         formId,
       })

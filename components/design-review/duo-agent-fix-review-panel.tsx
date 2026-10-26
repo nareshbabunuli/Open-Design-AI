@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { AlertCircle, CheckCircle2, ChevronDown, ChevronUp, ExternalLink, GitBranch, Loader2, Play, RefreshCw, ShieldCheck, Sparkles } from "lucide-react"
 import type { AutomationJob, FullAppTestPlan } from "@/lib/ai-automation/types"
 
@@ -11,41 +11,19 @@ type GitLabRepository = {
   url: string
 }
 type DuoMessage = { role: string; content: string; status?: string }
-type DuoWorkflow = { id: string; status: string; title: string; summary: string; webUrl: string | null; projectId?: string; baseBranch?: string }
+type DuoWorkflow = { id: string; status: string; title: string; summary: string; webUrl: string | null; projectId?: string; baseBranch?: string; baseCommit?: string; reviewToken?: string }
 type DuoProposal = { id: string; issue: string; summary: string; files: Array<{ path: string; content: string }> }
 type DuoReadiness = { ready: boolean; accountName?: string | null; checks: Array<{ id: string; label: string; ok: boolean; detail: string }>; error?: string; note?: string }
 
-function extractProposals(messages: DuoMessage[]): DuoProposal[] {
-  for (let index = messages.length - 1; index >= 0; index--) {
-    const message = messages[index]
-    if (message.role === "user") continue
-    const content = message.content.trim()
-    const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]
-    const objectMatch = content.match(/\{[\s\S]*"proposals"\s*:\s*\[[\s\S]*\]\s*\}/)
-    for (const candidate of [fenced, objectMatch?.[0], content].filter((value): value is string => Boolean(value))) {
-      try {
-        const parsed = JSON.parse(candidate)
-        if (!Array.isArray(parsed.proposals)) continue
-        return parsed.proposals.flatMap((item: any, proposalIndex: number) => {
-          if (!item || !Array.isArray(item.files)) return []
-          const files = item.files.filter((file: any) => file && typeof file.path === "string" && typeof file.content === "string")
-          if (!files.length) return []
-          return [{
-            id: typeof item.id === "string" ? item.id : `fix-${proposalIndex + 1}`,
-            issue: typeof item.issue === "string" ? item.issue : `Proposed fix ${proposalIndex + 1}`,
-            summary: typeof item.summary === "string" ? item.summary : "Review the proposed code changes below.",
-            files,
-          }]
-        })
-      } catch { /* Try the next possible JSON span. */ }
-    }
-  }
-  return []
-}
-
 const activeStatuses = new Set(["created", "running", "paused", "input_required", "plan_approval_required", "tool_call_approval_required"])
 
-export function DuoAgentFixReviewPanel({ job, plan }: { job: AutomationJob | null; plan: FullAppTestPlan | null }) {
+type DuoPanelProps = { job: AutomationJob | null; plan: FullAppTestPlan | null }
+
+export function DuoAgentFixReviewPanel(props: DuoPanelProps) {
+  return <DuoAgentFixReviewPanelContent key={props.job?.id || "no-job"} {...props} />
+}
+
+function DuoAgentFixReviewPanelContent({ job, plan }: DuoPanelProps) {
   const [repositories, setRepositories] = useState<GitLabRepository[]>([])
   const [selectedProject, setSelectedProject] = useState("")
   const [loadingRepositories, setLoadingRepositories] = useState(false)
@@ -63,7 +41,14 @@ export function DuoAgentFixReviewPanel({ job, plan }: { job: AutomationJob | nul
   const [isOpen, setIsOpen] = useState(false)
   const isExpanded = isOpen || Boolean(workflow)
 
-  const proposals = useMemo(() => extractProposals(messages), [messages])
+  const [proposals, setProposals] = useState<DuoProposal[]>([])
+  const sessionVersion = useRef(0)
+  const refreshVersion = useRef<number | null>(null)
+  useEffect(() => () => { sessionVersion.current += 1 }, [])
+  const waitingForUser = Boolean(workflow && ["paused", "input_required", "plan_approval_required", "tool_call_approval_required"].includes(workflow.status))
+  const workflowRepository = repositories.find(repository => repository.id === workflow?.projectId)
+  const workflowUrl = workflow?.webUrl || (workflow && workflowRepository
+    ? `${workflowRepository.url}/-/automate/agent-sessions/${workflow.id}` : null)
 
   const findings = useMemo(() => (plan?.steps || [])
     .filter(step => ["failed", "blocked", "suspected_non_functional"].includes(step.status))
@@ -104,18 +89,24 @@ export function DuoAgentFixReviewPanel({ job, plan }: { job: AutomationJob | nul
   }, [plan?.screens?.length, job?.status, loadRepositories])
 
   const refreshWorkflow = useCallback(async (workflowId: string) => {
+    const version = sessionVersion.current
+    if (refreshVersion.current === version) return
+    refreshVersion.current = version
     setRefreshing(true)
     try {
       const response = await fetch(`/api/integrations/gitlab/duo-flows?workflowId=${encodeURIComponent(workflowId)}`, { cache: "no-store" })
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || "Could not refresh the Duo session.")
+      if (version !== sessionVersion.current) return
       if (data.workflow) setWorkflow(current => current ? { ...current, ...data.workflow } : data.workflow)
       if (Array.isArray(data.messages)) setMessages(data.messages)
-      setWorkflowError("")
+      setProposals(Array.isArray(data.proposals) ? data.proposals : [])
+      setWorkflowError(data.proposalError || "")
     } catch (error) {
-      setWorkflowError(error instanceof Error ? error.message : "Could not refresh the Duo session.")
+      if (version === sessionVersion.current) setWorkflowError(error instanceof Error ? error.message : "Could not refresh the Duo session.")
     } finally {
-      setRefreshing(false)
+      if (refreshVersion.current === version) refreshVersion.current = null
+      if (version === sessionVersion.current) setRefreshing(false)
     }
   }, [])
 
@@ -144,15 +135,17 @@ export function DuoAgentFixReviewPanel({ job, plan }: { job: AutomationJob | nul
 
   const startReview = async () => {
     if (!selectedProject || !job || !plan) return
+    const version = ++sessionVersion.current
     setStarting(true)
+    setWorkflow(null)
+    setProposals([])
+    setApprovedProposalIds([])
+    setRefreshing(false)
     setWorkflowError("")
     setMessages([{ role: "assistant", content: "Starting GitLab Duo review. The agent is restricted from writing to GitLab or pushing commits." }])
     try {
       const selectedRepository = repositories.find(repository => repository.id === selectedProject)
       if (!selectedRepository?.defaultBranch) throw new Error("The selected GitLab repository has no default branch information.")
-      const issueSummary = findings.length
-        ? findings.map((item, index) => `${index + 1}. [${item.status}] ${item.screen}: ${item.action} "${item.target}". Expected: ${item.expected}. Actual: ${item.actual || item.error || "No detailed actual result recorded"}.`).join("\n")
-        : "No failed or blocked actions were recorded. Review the app map and propose high-confidence UX or accessibility improvements supported by the available evidence."
       const response = await fetch("/api/integrations/gitlab/duo-flows", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -160,27 +153,30 @@ export function DuoAgentFixReviewPanel({ job, plan }: { job: AutomationJob | nul
           projectId: selectedProject,
           baseBranch: selectedRepository.defaultBranch,
           appUrl: job.targetUrl,
-          goal: `${goal}\n\nTest findings:\n${issueSummary}`,
+          goal,
           findings,
         }),
       })
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || "Could not start GitLab Duo.")
+      if (version !== sessionVersion.current) return
       setWorkflow({ ...data.workflow, projectId: selectedProject, baseBranch: selectedRepository.defaultBranch })
       setApprovedProposalIds([])
       setMessages([{ role: "assistant", content: `Duo session created. Status: ${data.workflow.status}. The agent can prepare candidate changes in its isolated workspace, but cannot write to GitLab or push.` }])
       if (data.workflow?.id) void refreshWorkflow(data.workflow.id)
     } catch (error) {
-      setWorkflow(null)
-      setWorkflowError(error instanceof Error ? error.message : "Could not start GitLab Duo.")
+      if (version === sessionVersion.current) {
+        setWorkflow(null)
+        setWorkflowError(error instanceof Error ? error.message : "Could not start GitLab Duo.")
+      }
     } finally {
-      setStarting(false)
+      if (version === sessionVersion.current) setStarting(false)
     }
   }
 
 
   const approveProposals = async (selected: DuoProposal[]) => {
-    if (!workflow?.projectId || !workflow.baseBranch || !workflow.id || selected.length === 0) return
+    if (!workflow?.projectId || !workflow.baseBranch || !workflow.id || !workflow.reviewToken || workflow.status !== "finished" || selected.length === 0) return
     const ids = selected.map(proposal => proposal.id)
     setApplyingProposalIds(ids)
     setWorkflowError("")
@@ -197,6 +193,7 @@ export function DuoAgentFixReviewPanel({ job, plan }: { job: AutomationJob | nul
           projectId: workflow.projectId,
           baseBranch: workflow.baseBranch,
           workflowId: workflow.id,
+          reviewToken: workflow.reviewToken,
           proposals: selected,
         }),
       })
@@ -352,22 +349,29 @@ export function DuoAgentFixReviewPanel({ job, plan }: { job: AutomationJob | nul
       {workflowError && <div role="alert" className="mt-3 flex items-start gap-2 rounded-xl border border-rose-700/40 bg-rose-950/30 p-3 text-xs text-rose-200"><AlertCircle className="h-4 w-4 shrink-0" />{workflowError}</div>}
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <button type="button" onClick={() => void startReview()} disabled={starting || loadingRepositories || !selectedProject || !goal.trim()} className="inline-flex items-center gap-2 rounded-xl bg-indigo-500 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-400 disabled:opacity-50">
+        <button type="button" onClick={() => void startReview()} disabled={starting || applyingProposalIds.length > 0 || loadingRepositories || !selectedProject || !goal.trim()} className="inline-flex items-center gap-2 rounded-xl bg-indigo-500 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-400 disabled:opacity-50">
           {starting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
           {starting ? "Starting Duo review…" : "Prepare fixes with Duo"}
         </button>
-        {workflow?.webUrl && <a href={workflow.webUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-900">Open GitLab session <ExternalLink className="h-3 w-3" /></a>}
+        {workflowUrl && <a href={workflowUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-900">Open GitLab session <ExternalLink className="h-3 w-3" /></a>}
         {workflow && <span className="inline-flex items-center gap-1.5 text-[11px] text-slate-400"><CheckCircle2 className="h-3.5 w-3.5 text-indigo-300" /> {workflow.status}</span>}
       </div>
 
-      {workflow && proposals.length > 0 && (
+      {waitingForUser && (
+        <div role="status" className="mt-3 rounded-xl border border-amber-700/40 bg-amber-950/30 p-3 text-xs text-amber-200">
+          Duo is waiting for input or approval. Continue in the GitLab session, then return here; progress refreshes automatically.
+          {workflowUrl && <a href={workflowUrl} target="_blank" rel="noopener noreferrer" className="ml-2 inline-flex items-center gap-1 font-bold underline">Continue in GitLab <ExternalLink className="h-3 w-3" /></a>}
+        </div>
+      )}
+
+      {workflow?.status === "finished" && workflow.reviewToken && proposals.length > 0 && (
         <div className="mt-4 space-y-3 rounded-xl border border-emerald-700/40 bg-emerald-950/10 p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <h4 className="text-xs font-bold text-emerald-200">Proposed fixes ready for review</h4>
-              <p className="mt-1 text-[10px] text-slate-400">Review the complete proposed file content. Each approval creates a commit on the dedicated fix branch; nothing is committed until you click approve.</p>
+              <p className="mt-1 text-[10px] text-slate-400">Review the complete proposed file content. Overlapping replacements require a new combined review. Each approval creates a commit on the dedicated fix branch; nothing is committed until you click approve.</p>
             </div>
-            <button type="button" onClick={() => void approveProposals(proposals.filter(proposal => !approvedProposalIds.includes(proposal.id)))} disabled={applyingProposalIds.length > 0 || proposals.every(proposal => approvedProposalIds.includes(proposal.id))} className="rounded-xl bg-emerald-600 px-3 py-2 text-[11px] font-bold text-white hover:bg-emerald-500 disabled:opacity-50">
+            <button type="button" onClick={() => void approveProposals(proposals.filter(proposal => !approvedProposalIds.includes(proposal.id)))} disabled={starting || applyingProposalIds.length > 0 || proposals.every(proposal => approvedProposalIds.includes(proposal.id))} className="rounded-xl bg-emerald-600 px-3 py-2 text-[11px] font-bold text-white hover:bg-emerald-500 disabled:opacity-50">
               {applyingProposalIds.length > 0 ? "Applying…" : "Approve all remaining"}
             </button>
           </div>
@@ -382,7 +386,7 @@ export function DuoAgentFixReviewPanel({ job, plan }: { job: AutomationJob | nul
                     <p className="mt-1 text-xs leading-relaxed text-slate-400">{proposal.summary}</p>
                     <p className="mt-2 text-[10px] text-slate-500">{proposal.files.length} file(s): {proposal.files.map(file => file.path).join(", ")}</p>
                   </div>
-                  <button type="button" onClick={() => void approveProposals([proposal])} disabled={approved || applyingProposalIds.length > 0} className={`shrink-0 rounded-lg px-3 py-2 text-[11px] font-bold disabled:opacity-50 ${approved ? "bg-emerald-950 text-emerald-300" : "bg-slate-800 text-white hover:bg-slate-700"}`}>
+                  <button type="button" onClick={() => void approveProposals([proposal])} disabled={starting || approved || applyingProposalIds.length > 0} className={`shrink-0 rounded-lg px-3 py-2 text-[11px] font-bold disabled:opacity-50 ${approved ? "bg-emerald-950 text-emerald-300" : "bg-slate-800 text-white hover:bg-slate-700"}`}>
                     {busy ? "Applying…" : approved ? "Approved & committed" : "Approve this fix"}
                   </button>
                 </div>
