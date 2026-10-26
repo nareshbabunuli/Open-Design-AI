@@ -37,6 +37,13 @@ jobs:
       - name: Verify TypeScript
         run: pnpm run typecheck
       - name: Verify production build
+        env:
+          # Inert placeholders so Next.js can complete the production build in CI
+          # without real Supabase credentials. Runtime still requires real values.
+          NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key-for-ci-build
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: placeholder-anon-key-for-ci-build
+          SUPABASE_SERVICE_ROLE_KEY: placeholder-service-role-key-for-ci-build
         run: pnpm run build
       - name: Report remaining production advisories
         continue-on-error: true
