@@ -8,13 +8,13 @@ const nextConfig = {
     'sharp',
     '@techstark/opencv-js',
   ],
-  typescript: {
-    ignoreBuildErrors: true,
-  },
   images: {
     unoptimized: true,
   },
   async rewrites() {
+    // Local simulator proxies are development-only. Never expose loopback services
+    // through production or preview deployments.
+    if (process.env.NODE_ENV !== 'development') return []
     return [
       {
         source: '/proxy/:port',
