@@ -11,6 +11,7 @@ Scope: static review of selected repository configuration and Supabase storage p
 - Add a timestamped migration to reapply the storage policy hardening to databases where earlier migrations have already run.
 - Update the legacy storage migration and the setup script fallback to use the same least-privilege policies.
 - Remove process-wide TLS verification disabling and require PostgreSQL certificate verification in setup scripts.
+- Keep Chromium web security enabled and prevent the localhost-target bypass from being enabled via an environment variable in production.
 - Add a `typecheck` package script and GitHub Actions workflow for production dependency auditing and TypeScript checks.
 
 ## Important deployment notes
