@@ -31,4 +31,8 @@ Also verify OAuth callback state validation and token encryption, browser automa
 
 ## Validation status
 
-No live penetration test, production database query, dependency audit, or complete application test suite was run by this change. CI is added to make dependency and TypeScript checks repeatable.
+The first GitHub Actions run found **103 production dependency advisories: 4 critical, 39 high, 48 moderate, and 12 low**. Notable findings include the installed Next.js version being below patched releases identified by the audit, plus vulnerable transitive packages. The dependency lockfile has not yet been regenerated with patched versions, so this remains a release blocker.
+
+The first TypeScript check also surfaced a pre-existing `picked.category` type error in `lib/ai-automation/full-app-engine.ts`; this branch fixes it to use `picked.fileType`. The workflow must be rerun to confirm whether additional errors remain.
+
+No live penetration test, production database query, or complete application test suite was run. Do not merge or deploy until dependency advisories are remediated, CI passes, and the storage migration has been reviewed and applied.
