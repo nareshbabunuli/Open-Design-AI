@@ -23,9 +23,6 @@ export async function captureResponsiveSnapshot(job: AutomationJob, page: Page, 
   try {
     const address = page.url()
     if (!/^https?:/.test(address) || new URL(address).origin !== new URL(job.targetUrl).origin) return
-    const key = responsiveStateKey(secretRedactor.redact(address), secretRedactor.redact(state))
-    const existing = (job.responsiveSnapshots || []).findIndex(snapshot => snapshot.key === key)
-    if (existing < 0 && (job.responsiveSnapshots?.length || 0) >= 60) throw new Error("Responsive evidence limit reached (60 states per journey); coverage is incomplete.")
     const measurement = await page.evaluate(() => {
       const controls: ResponsiveControl[] = []
       const findings: Array<Omit<ResponsiveFinding, "viewport">> = []
@@ -78,8 +75,15 @@ export async function captureResponsiveSnapshot(job: AutomationJob, page: Page, 
           findings.push({ kind: "small_target", status: "review", controlKey: key, message: `${label}: target measures ${Math.round(rect.width)}×${Math.round(rect.height)}px; review touch usability and spacing.` })
         }
       }
-      return { width: innerWidth, height: innerHeight, controls, findings }
+      const heading = document.querySelector('main h1,h1,[role="heading"][aria-level="1"]')?.textContent?.replace(/\s+/g, " ").trim().slice(0, 120) || ""
+      const dialog = document.querySelector('[role="dialog"][aria-modal="true"],dialog[open]')
+      const dialogTitle = dialog?.getAttribute("aria-label") || dialog?.querySelector('h1,h2,[role="heading"]')?.textContent?.replace(/\s+/g, " ").trim().slice(0, 120) || ""
+      return { width: innerWidth, height: innerHeight, controls, findings, heading, dialogTitle }
     })
+    const stateContext = [state, measurement.heading, measurement.dialogTitle].filter(Boolean).join(" · ")
+    const key = responsiveStateKey(secretRedactor.redact(address), secretRedactor.redact(stateContext))
+    const existing = (job.responsiveSnapshots || []).findIndex(snapshot => snapshot.key === key)
+    if (existing < 0 && (job.responsiveSnapshots?.length || 0) >= 60) throw new Error("Responsive evidence limit reached (60 states per journey); coverage is incomplete.")
     const viewport = { name: expected.name, width: measurement.width, height: measurement.height }
     const findings: ResponsiveFinding[] = measurement.findings.map(finding => ({ ...finding, controlKey: finding.controlKey ? secretRedactor.redact(finding.controlKey) : undefined, viewport: viewport.name, message: secretRedactor.redact(finding.message) }))
     if (viewport.width !== expected.width || viewport.height !== expected.height) {
@@ -91,7 +95,7 @@ export async function captureResponsiveSnapshot(job: AutomationJob, page: Page, 
     try { image = Buffer.from(await page.screenshot({ type: "png", fullPage: false })) } finally { await unmask() }
     const visual = await preprocessWithOpenCV(image, controls.filter(control => control.visible).map(control => ({ selector: control.key, label: control.label, bounds: { x: control.box[0], y: control.box[1], width: control.box[2], height: control.box[3] } })))
     const snapshot: ResponsiveSnapshot = {
-      key, url: secretRedactor.redact(address), state: secretRedactor.redact(state), viewport,
+      key, url: secretRedactor.redact(address), state: secretRedactor.redact(stateContext), viewport,
       capturedAt: new Date().toISOString(), controls, findings,
       screenshot: `data:image/png;base64,${image.toString("base64")}`,
       annotatedScreenshot: visual.annotatedImageBuffer ? `data:image/png;base64,${visual.annotatedImageBuffer.toString("base64")}` : undefined,

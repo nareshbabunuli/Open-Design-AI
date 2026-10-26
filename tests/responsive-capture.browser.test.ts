@@ -69,3 +69,22 @@ test("real browser evidence detects overflow, clipped controls and covered actio
     assert.ok(current.issues.some(issue => issue.type === "responsive_overflow" && issue.viewport === "Mobile"))
   } finally { await browser.close() }
 })
+
+
+test("wizard stages sharing one URL and action remain distinct comparison states", { timeout: 60000 }, async () => {
+  const browser = await puppeteer.launch({ headless: true, args: ["--no-sandbox", "--disable-setuid-sandbox"] })
+  try {
+    const page = await browser.newPage()
+    await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 1 })
+    await page.setRequestInterception(true)
+    page.on("request", request => void request.respond({ status: 200, contentType: "text/html", body: fixture("/") }))
+    await page.goto("https://responsive.test/", { waitUntil: "networkidle0" })
+    const current = job(2)
+    await captureResponsiveSnapshot(current, page, "After click: Next")
+    await page.evaluate(() => { document.querySelector("h1")!.textContent = "Payment" })
+    await captureResponsiveSnapshot(current, page, "After click: Next")
+    assert.equal(current.responsiveSnapshots?.length, 2)
+    assert.notEqual(current.responsiveSnapshots![0].key, current.responsiveSnapshots![1].key)
+    assert.ok(current.responsiveSnapshots![1].state.includes("Payment"))
+  } finally { await browser.close() }
+})

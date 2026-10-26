@@ -12,7 +12,7 @@ Each job has its own map, plan, approval, authentication prompts, evidence and r
 
 ## Compare
 
-Discovery and action checkpoints capture the page currently reached by each journey. The Compare tab matches states by route (including non-secret query/hash state) and discovery/action label, not discovery order or arbitrary screen IDs. Choose a state to see mobile, desktop and tablet screenshots side by side, with control-bound annotations, measurements, findings and OpenCV crop masks. Refresh after the journeys advance.
+Discovery and action checkpoints capture the page currently reached by each journey. The Compare tab matches states by route (including non-secret query/hash state) and discovery/action label plus heading/dialog context, not discovery order or arbitrary screen IDs. Choose a state to see mobile, desktop and tablet screenshots side by side, with control-bound annotations, measurements, findings and OpenCV crop masks. Refresh after the journeys advance.
 
 Confirmed observations include horizontal page overflow, controls covered at their center point and images rendered with a distorted intrinsic aspect ratio. Clipping, small targets and actions not visible in an equivalent state are review items: responsive menus and intentional hiding must not be called defects automatically.
 
