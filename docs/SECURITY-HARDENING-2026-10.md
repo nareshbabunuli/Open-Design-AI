@@ -13,8 +13,11 @@ Scope: static review of selected repository configuration and Supabase storage p
 - Remove process-wide TLS verification disabling and require PostgreSQL certificate verification in setup scripts.
 - Keep Chromium web security enabled and prevent the localhost-target bypass from being enabled via an environment variable in production.
 - Add a `typecheck` package script and GitHub Actions workflow for production dependency auditing and TypeScript checks.
+- Add baseline HTTP security headers (content-type sniffing protection, referrer policy, same-origin framing policy, restricted browser permissions, and production HSTS).
+- Enable Dependabot security-update pull requests for production and development dependencies.
 - Make Supabase client factories build-safe: during the Next.js production-build phase (or when CI intentionally omits secrets) inert placeholders are used so `pnpm build` can complete. Runtime still requires real `NEXT_PUBLIC_SUPABASE_*` and `SUPABASE_SERVICE_ROLE_KEY` values.
-- CI `remediate-dependencies` workflow now supplies placeholder Supabase env vars for the production-build step.
+- CI `remediate-dependencies` workflow supplies placeholder Supabase environment variables for the production-build step.
+- Fix the build-breaking reference to the nonexistent `picked.fileType` property.
 
 ## Important deployment notes
 
@@ -23,31 +26,31 @@ Scope: static review of selected repository configuration and Supabase storage p
 3. Owner-only object mutations may affect team workflows where one project member needs to edit another member's upload. If collaboration is required, implement explicit project-membership policies rather than restoring broad access.
 4. Apply `supabase/migrations/20261026000000_harden_designs_storage_policies.sql` to the production Supabase database using the approved migration process. Repository changes do not alter a live database automatically.
 5. PostgreSQL connections now verify certificates. If your provider uses a private CA, configure that CA rather than disabling verification.
-6. Run the new CI checks and resolve any dependency or TypeScript failures before merging.
-7. Confirm the framing policy (`X-Frame-Options: SAMEORIGIN`) does not break any intentional external embeds or public sharing flows. Review HSTS for all affected subdomains.
+6. Confirm the framing policy (`X-Frame-Options: SAMEORIGIN`) does not break intentional external embeds or public sharing flows. Review HSTS for all affected subdomains.
+7. Run the new CI checks and resolve any dependency or TypeScript failures before merging.
 
-## Dependency audit findings (CI)
+## Dependency audit findings
 
-The initial production dependency audit failed with 103 advisories: 4 critical, 39 high, 48 moderate, and 12 low. Do not treat this branch as production-ready until the dependency tree is remediated and the audit reruns cleanly.
+The last recorded production dependency audit reported 103 advisories: 4 critical, 39 high, 48 moderate, and 12 low. This remains a release blocker until the dependency tree is remediated or remaining advisories are explicitly assessed and appropriately mitigated.
 
-The four critical advisories reported by the current lockfile include:
-- `next` versions in the reported ranges; the audit output identifies patched versions at or above 16.4.1 for the two unauthenticated RCE advisories and at or above 16.3.6 for a separate `next/og` RCE advisory. Upgrade to a compatible patched Next.js release and regenerate `pnpm-lock.yaml` using pnpm, then rerun the build.
+The critical findings included:
+- `next` versions in the reported ranges; the audit identified patched versions at or above 16.4.1 for two unauthenticated RCE advisories and at or above 16.3.6 for a separate `next/og` RCE advisory. Confirm the installed version and lockfile resolution in CI.
 - `proxy-addr` versions 1.1.0 through below 2.0.8; update the introducing dependency or override to a compatible patched version, then test proxy behavior.
 
-Do not edit lockfile integrity hashes manually. Use pnpm to regenerate the lockfile and review the resulting dependency diff.
+Do not hand-edit lockfile integrity hashes. Regenerate `pnpm-lock.yaml` with the pinned pnpm version and review the resulting dependency diff. A prior CI/Vercel run failed frozen install because `package.json` overrides and `pnpm-lock.yaml` were out of sync; the lockfile check must be rerun.
 
 ## Remaining audit work
 
 This static change set does not prove that every API route or server action performs authorization. Before production use, review all `app/api/**/route.ts` handlers and server actions for authentication, project-level authorization, input validation, rate limits, safe outbound URL restrictions, and secret handling. Test cross-account access using separate user accounts.
 
-Also verify OAuth callback state validation and token encryption, browser automation target URL allowlists and network egress restrictions, download/report sharing permissions, secret scanning, Supabase table RLS policies beyond Storage, and production security headers.
+Also verify OAuth callback state validation and token encryption, browser automation target URL allowlists and network egress restrictions, download/report sharing permissions, secret scanning, Supabase table RLS policies beyond Storage, and production security headers. Review dynamic filesystem tracing warnings and restrict filesystem access to a controlled workspace before relying on cloud execution.
 
 ## Validation status
 
-- TypeScript check: fixed (`picked.fileType`) and expected to pass.
-- Production build: previously failed because `@supabase/ssr` requires URL + key at client-creation time. Mitigated by build-phase placeholders in the client factories and by supplying dummy env vars in the CI build step.
-- Dependency audit: still needs a clean post-lockfile-regeneration run.
+- TypeScript check: a previous run passed after correcting the `picked.fileType` reference; rerun against the updated branch.
+- Production build: previously failed because `@supabase/ssr` requires URL + key at client-creation time. Build-phase placeholders and CI placeholder env vars were added; rerun to confirm.
+- Dependency audit: previous run failed with 103 advisories. A clean post-lockfile-regeneration run is required.
 - Storage migration: **not** applied to the live Supabase project.
 - No live penetration test, production database query, or complete application test suite was run.
 
-Do not merge or deploy until dependency advisories are remediated, CI (including the production build) passes, and the storage migration has been reviewed and applied.
+Do not merge or deploy until the lockfile is synchronized, required CI checks pass, remaining dependency advisories are remediated or assessed, and the storage migration and sharing model have been reviewed.
