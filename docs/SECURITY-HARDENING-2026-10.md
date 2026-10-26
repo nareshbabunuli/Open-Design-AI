@@ -23,6 +23,16 @@ Scope: static review of selected repository configuration and Supabase storage p
 5. PostgreSQL connections now verify certificates. If your provider uses a private CA, configure that CA rather than disabling verification.
 6. Run the new CI checks and resolve any dependency or TypeScript failures before merging.
 
+## Dependency audit findings (CI)
+
+The initial production dependency audit failed with 103 advisories: 4 critical, 39 high, 48 moderate, and 12 low. Do not treat this branch as production-ready until the dependency tree is remediated and the audit reruns cleanly.
+
+The four critical advisories reported by the current lockfile include:
+- `next` versions in the reported ranges; the audit output identifies patched versions at or above 16.4.1 for the two unauthenticated RCE advisories and at or above 16.3.6 for a separate `next/og` RCE advisory. Upgrade to a compatible patched Next.js release and regenerate `pnpm-lock.yaml` using pnpm, then rerun the build.
+- `proxy-addr` versions 1.1.0 through below 2.0.8; update the introducing dependency or override to a compatible patched version, then test proxy behavior.
+
+Do not edit lockfile integrity hashes manually. Use pnpm to regenerate the lockfile and review the resulting dependency diff.
+
 ## Remaining audit work
 
 This static change set does not prove that every API route or server action performs authorization. Before production use, review all `app/api/**/route.ts` handlers and server actions for authentication, project-level authorization, input validation, rate limits, safe outbound URL restrictions, and secret handling. Test cross-account access using separate user accounts.
