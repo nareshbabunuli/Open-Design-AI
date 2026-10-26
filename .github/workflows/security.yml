@@ -46,3 +46,6 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm run typecheck
+
+      - name: Network security regression tests
+        run: npx --yes tsx --test tests/security-egress.test.ts

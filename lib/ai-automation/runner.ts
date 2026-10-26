@@ -1,3 +1,4 @@
+import { providerOrigin, isLocalGateway } from "../security/provider-policy"
 import fs from "fs"
 import path from "path"
 import puppeteer, { type Browser, type Page } from "puppeteer"
@@ -855,10 +856,11 @@ async function executeSingleAction(job: AutomationJob, page: Page, act: AgentAct
 
 export async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
   job.status = "running"
-  const openRouterKey = params.aiApiKey || process.env.OPENROUTER_API_KEY || process.env.UNOROUTER_API_KEY
+  const aiOrigin = providerOrigin(params.aiBaseUrl || "https://api.unorouter.com/v1")
+  const openRouterKey = params.aiApiKey || (aiOrigin === "https://openrouter.ai" ? process.env.OPENROUTER_API_KEY : aiOrigin === "https://api.unorouter.com" ? process.env.UNOROUTER_API_KEY : undefined)
   const aiBase = (params.aiBaseUrl || "").trim()
-  const isLocalAi = Boolean(aiBase && (aiBase.includes("localhost") || aiBase.includes("127.0.0.1")))
-  const isUnoRouter = aiBase.includes("unorouter.com")
+  const isLocalAi = Boolean(aiBase && isLocalGateway(aiBase))
+  const isUnoRouter = aiOrigin === "https://api.unorouter.com"
   const hasAiConfigured = isLocalAi || Boolean(openRouterKey)
   appendLog(job, "info", `Starting headless automation crawl on: ${job.targetUrl}`)
   if (!hasAiConfigured && aiBase && !isLocalAi) {

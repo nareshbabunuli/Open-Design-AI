@@ -1,3 +1,4 @@
+import { assertProviderKey, isLocalGateway, providerOrigin } from "../security/provider-policy"
 import type { AIThinkingModel, ChecklistTestItem, AgentAction } from "./types"
 
 export interface AIScreenAnalysisResult {
@@ -27,7 +28,7 @@ const NEBIUS_DEFAULT_MODEL = "nvidia/Nemotron-3-Nano-Omni"
 const UNOROUTER_DEFAULT_MODEL = "deepseek-v4-flash:free"
 
 function isLocalBase(url: string): boolean {
-  return url.includes("localhost") || url.includes("127.0.0.1")
+  return isLocalGateway(url)
 }
 
 export function resolveBaseUrl(baseUrl?: string): string {
@@ -37,16 +38,19 @@ export function resolveBaseUrl(baseUrl?: string): string {
 
 /** Resolve a provider key without sending a Nebius key to OmniRouter or vice versa. */
 export function resolveAiApiKey(baseUrl?: string, providedKey?: string): string | undefined {
-  if (providedKey?.trim()) return providedKey.trim()
+  if (providedKey?.trim()) {
+    assertProviderKey(resolveBaseUrl(baseUrl), providedKey)
+    return providedKey.trim()
+  }
   const base = resolveBaseUrl(baseUrl)
   if (isLocalBase(base)) return undefined
-  if (base.includes("tokenfactory.nebius.com")) {
+  if (providerOrigin(base) === "https://api.tokenfactory.nebius.com") {
     return process.env.NEBIUS_TOKEN_FACTORY_KEY || process.env.NEBIUS_API_KEY || process.env.AI_API_KEY
   }
-  if (base.includes("unorouter.com")) {
-    return process.env.UNOROUTER_API_KEY || process.env.AI_API_KEY
+  if (providerOrigin(base) === "https://api.unorouter.com") {
+    return process.env.UNOROUTER_API_KEY
   }
-  return process.env.AI_API_KEY
+  return undefined
 }
 
 export function resolveModel(base: string, model?: string): string {
@@ -57,7 +61,7 @@ export function resolveModel(base: string, model?: string): string {
     }
     return m
   }
-  return base.includes("tokenfactory.nebius.com")
+  return providerOrigin(base) === "https://api.tokenfactory.nebius.com"
     ? NEBIUS_DEFAULT_MODEL
     : isLocalBase(base)
     ? "fast"
@@ -71,6 +75,7 @@ export function resolveModel(base: string, model?: string): string {
  * Local gateways (localhost) genuinely don't need a key.
  */
 function buildHeaders(base: string, apiKey?: string): Record<string, string> | null {
+  assertProviderKey(base, apiKey)
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   }
@@ -123,6 +128,7 @@ async function postChatCompletion(
   for (;;) {
     const res = await fetch(`${base}/chat/completions`, {
       method: "POST",
+      redirect: "error",
       headers,
       body: JSON.stringify(body),
     })

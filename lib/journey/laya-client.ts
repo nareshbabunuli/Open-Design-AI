@@ -1,3 +1,4 @@
+import { configuredLayaBase } from "../security/provider-policy"
 /**
  * Thin client for Laya (https://github.com/NandhaKishorM/laya)
  * Fast local typed decisions (~30ms). Falls back gracefully when Laya is offline.
@@ -25,7 +26,7 @@ async function predict(
   timeoutMs = DEFAULT_TIMEOUT_MS
 ): Promise<Record<string, any> | null> {
   if (!baseUrl || !baseUrl.trim()) return null
-  const cleanBase = baseUrl.replace(/\/$/, "").replace(/\/(predict|v1\/systemone|v1)$/, "")
+  const cleanBase = configuredLayaBase(baseUrl)
   const endpoints = [`${cleanBase}/v1/systemone`, `${cleanBase}/predict`]
 
   for (const url of endpoints) {
@@ -39,6 +40,7 @@ async function predict(
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
           signal: controller.signal,
+          redirect: "error",
         })
         clearTimeout(timer)
 
@@ -69,7 +71,7 @@ async function predict(
 
 export async function isLayaAvailable(baseUrl = DEFAULT_LAYA_URL): Promise<boolean> {
   if (!baseUrl || !baseUrl.trim()) return false
-  const cleanBase = baseUrl.replace(/\/$/, "")
+  const cleanBase = configuredLayaBase(baseUrl)
   const healthEndpoints = [`${cleanBase}/health`, `${cleanBase}/`]
   for (const url of healthEndpoints) {
     try {
@@ -77,6 +79,7 @@ export async function isLayaAvailable(baseUrl = DEFAULT_LAYA_URL): Promise<boole
       const timer = setTimeout(() => controller.abort(), 1500)
       const res = await fetch(url, {
         signal: controller.signal,
+          redirect: "error",
       }).catch(() => null)
       clearTimeout(timer)
       if (res?.ok) return true

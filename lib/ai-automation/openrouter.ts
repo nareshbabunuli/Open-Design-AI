@@ -1,3 +1,4 @@
+import { assertProviderKey, isLocalGateway, providerOrigin } from "../security/provider-policy"
 import type { AIThinkingModel, ChecklistTestItem, AgentAction } from "./types"
 
 export interface AIScreenAnalysisResult {
@@ -27,7 +28,7 @@ const OPENROUTER_DEFAULT_MODEL = "google/gemini-2.0-flash-001"
 const UNOROUTER_DEFAULT_MODEL = "deepseek-v4-flash:free"
 
 function isLocalBase(url: string): boolean {
-  return url.includes("localhost") || url.includes("127.0.0.1")
+  return isLocalGateway(url)
 }
 
 export function resolveBaseUrl(baseUrl?: string): string {
@@ -56,6 +57,7 @@ export function resolveModel(base: string, model?: string): string {
  * Local gateways (localhost) genuinely don't need a key.
  */
 function buildHeaders(base: string, apiKey?: string): Record<string, string> | null {
+  assertProviderKey(base, apiKey)
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   }
@@ -112,6 +114,7 @@ async function postChatCompletion(
   for (;;) {
     const res = await fetch(`${base}/chat/completions`, {
       method: "POST",
+      redirect: "error",
       headers,
       body: JSON.stringify(body),
     })

@@ -1,3 +1,4 @@
+import { createBrowserEgressProxy } from "../security/browser-egress"
 import fs from "fs"
 import path from "path"
 import puppeteer, { type Browser, type Page } from "puppeteer"
@@ -85,10 +86,19 @@ export function getSystemChromePath(): string | undefined {
  * Robust Puppeteer launcher that falls back to system Chrome/Edge if Puppeteer cache is empty.
  */
 export async function safePuppeteerLaunch(customOptions: PuppeteerLaunchOptions = {}): Promise<Browser> {
+  const egress = process.env.NODE_ENV === "development" ? undefined : await createBrowserEgressProxy()
   const systemChrome = getSystemChromePath()
   const baseArgs = launchArgs()
   const mergedArgs = Array.from(new Set([...baseArgs, ...(customOptions.args || [])]))
 
+  if (egress) {
+    // Prevent caller options from bypassing the proxy. Disable direct UDP/WebRTC.
+    for (let i = mergedArgs.length - 1; i >= 0; i--) {
+      if (/^--(proxy|no-proxy|host-resolver|force-webrtc)/.test(mergedArgs[i])) mergedArgs.splice(i, 1)
+    }
+    mergedArgs.push(`--proxy-server=${egress.url}`, '--proxy-bypass-list=<-loopback>',
+      '--disable-quic', '--host-resolver-rules=MAP * ~NOTFOUND', '--force-webrtc-ip-handling-policy=disable_non_proxied_udp')
+  }
   const launchOpts: PuppeteerLaunchOptions = {
     headless: true,
     ...customOptions,
@@ -101,8 +111,12 @@ export async function safePuppeteerLaunch(customOptions: PuppeteerLaunchOptions 
     launchOpts.channel = "chrome"
   }
 
+  const finish = (browser: Browser) => {
+    browser.once("disconnected", () => egress?.close())
+    return browser
+  }
   try {
-    return await puppeteer.launch(launchOpts)
+    return finish(await puppeteer.launch(launchOpts))
   } catch (primaryErr) {
     // If launch failed with specified executable or channel, try fallback without them
     if (launchOpts.channel || launchOpts.executablePath) {
@@ -110,9 +124,10 @@ export async function safePuppeteerLaunch(customOptions: PuppeteerLaunchOptions 
         const fallbackOpts = { ...launchOpts }
         delete fallbackOpts.channel
         delete fallbackOpts.executablePath
-        return await puppeteer.launch(fallbackOpts)
+        return finish(await puppeteer.launch(fallbackOpts))
       } catch {}
     }
+    egress?.close()
     throw primaryErr
   }
 }
