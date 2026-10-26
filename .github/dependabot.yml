@@ -1,0 +1,21 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+    open-pull-requests-limit: 10
+    groups:
+      production-security-updates:
+        dependency-type: production
+        update-types:
+          - security
+      development-security-updates:
+        dependency-type: development
+        update-types:
+          - security
+    labels:
+      - dependencies
+      - security
