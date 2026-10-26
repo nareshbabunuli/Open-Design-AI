@@ -50,6 +50,11 @@ export async function detectVisualElements(
   const maxCandidates = options.maxCandidates ?? DEFAULT_MAX_CANDIDATES
   const scale = options.scale ?? DEFAULT_SCALE
 
+  if (!Number.isFinite(scale) || scale <= 0 || scale > 1 ||
+      !Number.isFinite(minArea) || minArea < 0 || !Number.isInteger(maxCandidates) || maxCandidates < 0) {
+    return []
+  }
+
   let cv: any
   try {
     cv = await loadOpenCvForLayout()
@@ -58,55 +63,43 @@ export async function detectVisualElements(
     return []
   }
 
-  if (!cv?.Mat || !cv.imread || !cv.Canny) {
+  if (!cv?.Mat || !cv.Canny) {
     console.warn("[OpenCV-Detector] Required OpenCV APIs missing")
     return []
   }
 
-  // Decode image from buffer
-  // @techstark/opencv-js accepts Uint8Array for imdecode in many builds;
-  // fall back to a data-URL path if needed.
+  // Decode in Node with Sharp; OpenCV.js does not provide imdecode in this build.
   let src: any = null
   let gray: any = null
   let blurred: any = null
   let edges: any = null
   let contours: any = null
   let hierarchy: any = null
+  let kernel: any = null
 
   try {
-    // Prefer imdecode when available
-    if (typeof cv.imdecode === "function") {
-      const data = new Uint8Array(screenshot)
-      const matFromArray = cv.matFromArray
-        ? cv.matFromArray(1, data.length, cv.CV_8UC1, data)
-        : null
-      if (matFromArray) {
-        src = cv.imdecode(matFromArray, cv.IMREAD_COLOR)
-        matFromArray.delete()
-      }
-    }
-
-    // Fallback: write to a temporary data URL via canvas-less path is hard in pure Node.
-    // Most @techstark/opencv-js builds support imdecode; if not, return empty.
-    if (!src || src.empty?.()) {
-      console.warn("[OpenCV-Detector] Could not decode screenshot")
-      return []
-    }
-
-    const origW = src.cols
-    const origH = src.rows
-
-    // Optional downscale for speed
-    let working = src
-    if (scale < 1.0) {
-      const newW = Math.max(320, Math.round(origW * scale))
-      const newH = Math.max(240, Math.round(origH * scale))
-      working = new cv.Mat()
-      cv.resize(src, working, new cv.Size(newW, newH), 0, 0, cv.INTER_AREA)
-    }
+    const sharp = (await import("sharp")).default
+    const decoded = await sharp(screenshot)
+      .flatten({ background: "#ffffff" }).greyscale().raw()
+      .toBuffer({ resolveWithObject: true })
+    const origW = decoded.info.width
+    const origH = decoded.info.height
+    if (!origW || !origH || decoded.info.channels !== 1) return []
+    src = new cv.Mat(origH, origW, cv.CV_8UC1)
+    src.data.set(decoded.data)
 
     gray = new cv.Mat()
-    cv.cvtColor(working, gray, cv.COLOR_RGBA2GRAY || cv.COLOR_BGR2GRAY)
+    if (scale < 1) {
+      const newW = Math.min(origW, Math.max(320, Math.round(origW * scale)))
+      const newH = Math.min(origH, Math.max(240, Math.round(origH * scale)))
+      cv.resize(src, gray, new cv.Size(newW, newH), 0, 0, cv.INTER_AREA)
+    } else {
+      src.copyTo(gray)
+    }
+    // Minimum working dimensions can change the requested scale independently
+    // on each axis. Map detections using the actual processed dimensions.
+    const scaleX = origW / gray.cols
+    const scaleY = origH / gray.rows
 
     blurred = new cv.Mat()
     cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0)
@@ -115,60 +108,53 @@ export async function detectVisualElements(
     cv.Canny(blurred, edges, 50, 150)
 
     // Dilate to connect broken edges of buttons/inputs
-    const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3))
+    kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3))
     cv.dilate(edges, edges, kernel)
-    kernel.delete()
 
     contours = new cv.MatVector()
     hierarchy = new cv.Mat()
     cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
 
     const candidates: VisualCandidate[] = []
-    const invScale = 1 / scale
 
     for (let i = 0; i < contours.size(); i++) {
       const cnt = contours.get(i)
-      const rect = cv.boundingRect(cnt)
-      const area = rect.width * rect.height
+      try {
+        const rect = cv.boundingRect(cnt)
+        const x = Math.max(0, Math.round(rect.x * scaleX))
+        const y = Math.max(0, Math.round(rect.y * scaleY))
+        const w = Math.min(origW - x, Math.round(rect.width * scaleX))
+        const h = Math.min(origH - y, Math.round(rect.height * scaleY))
+        const origArea = w * h
+        if (origArea < minArea || w <= 0 || h <= 0) continue
+        const aspect = w / h
+        if (aspect > 12 || aspect < 0.12) continue
 
-      // Filter by area (in original resolution terms)
-      const origArea = area * invScale * invScale
-      if (origArea < minArea) continue
+        // Simple heuristic classification
+        let kind: VisualCandidate["kind"] = "unknown"
+        if (aspect > 2.5 && h < 60) kind = "input"
+        else if (aspect > 1.2 && aspect < 5 && h >= 28 && h <= 70) kind = "button"
+        else if (w > 120 && h > 80) kind = "card"
 
-      // Filter extreme aspect ratios (likely noise or full-width bars)
-      const aspect = rect.width / Math.max(1, rect.height)
-      if (aspect > 12 || aspect < 0.12) continue
+        // Prominence: prefer larger, more central, higher-up elements lightly
+        const sizeScore = Math.min(1, origArea / 40000)
+        const centerX = (x + w / 2) / origW
+        const centerY = (y + h / 2) / origH
+        const centrality = 1 - Math.abs(centerX - 0.5) * 0.6 - Math.abs(centerY - 0.4) * 0.4
+        const prominence = Number((sizeScore * 0.65 + Math.max(0, centrality) * 0.35).toFixed(3))
 
-      // Map back to original coordinates
-      const x = Math.round(rect.x * invScale)
-      const y = Math.round(rect.y * invScale)
-      const w = Math.round(rect.width * invScale)
-      const h = Math.round(rect.height * invScale)
-
-      // Simple heuristic classification
-      let kind: VisualCandidate["kind"] = "unknown"
-      if (aspect > 2.5 && h < 60) kind = "input"
-      else if (aspect > 1.2 && aspect < 5 && h >= 28 && h <= 70) kind = "button"
-      else if (w > 120 && h > 80) kind = "card"
-
-      // Prominence: prefer larger, more central, higher-up elements lightly
-      const sizeScore = Math.min(1, origArea / 40000)
-      const centerX = (x + w / 2) / origW
-      const centerY = (y + h / 2) / origH
-      const centrality = 1 - Math.abs(centerX - 0.5) * 0.6 - Math.abs(centerY - 0.4) * 0.4
-      const prominence = Number((sizeScore * 0.65 + Math.max(0, centrality) * 0.35).toFixed(3))
-
-      candidates.push({
-        id: candidates.length,
-        x,
-        y,
-        width: w,
-        height: h,
-        area: Math.round(origArea),
-        aspectRatio: Number(aspect.toFixed(2)),
-        kind,
-        prominence,
-      })
+        candidates.push({
+          id: candidates.length,
+          x,
+          y,
+          width: w,
+          height: h,
+          area: Math.round(origArea),
+          aspectRatio: Number(aspect.toFixed(2)),
+          kind,
+          prominence,
+        })
+      } finally { cnt.delete() }
     }
 
     // Sort by prominence descending and limit
@@ -178,15 +164,8 @@ export async function detectVisualElements(
     console.warn("[OpenCV-Detector] Processing error:", (err as Error)?.message || err)
     return []
   } finally {
-    try {
-      src?.delete?.()
-      gray?.delete?.()
-      blurred?.delete?.()
-      edges?.delete?.()
-      contours?.delete?.()
-      hierarchy?.delete?.()
-    } catch {
-      // ignore cleanup errors
+    for (const resource of [hierarchy, contours, kernel, edges, blurred, gray, src]) {
+      try { resource?.delete?.() } catch { /* Release every allocated Mat independently. */ }
     }
   }
 }
