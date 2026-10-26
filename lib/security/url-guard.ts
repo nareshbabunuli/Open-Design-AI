@@ -103,7 +103,7 @@ export function assertSafeTargetUrlWithDevBypass(
   raw: string,
   allowedHosts?: string[]
 ): string {
-  if (process.env.NODE_ENV === "development" || process.env.ALLOW_LOCALHOST_TARGETS === "true") {
+  if (process.env.NODE_ENV === "development") {
     try {
       const u = new URL(raw.trim())
       if (

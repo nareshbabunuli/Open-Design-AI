@@ -2,7 +2,7 @@
  * Closed-loop human-like autonomous testing controller.
  *
  * Pattern engine discovers bounded candidate tests.
- * Laya chooses the next candidate.
+ * OpenCV scores visual prominence; Laya chooses the next candidate using DOM + vision.
  * Puppeteer executes only safe candidates.
  * The Action Ledger records every decision and untested candidate.
  *
@@ -972,41 +972,56 @@ export async function runHumanLikeDecisionLoop(
       if (routeQueue.length > 0) continue
       break
     }
-    const criteria = chooseCriteria(decisionCandidates)
     let selected: CandidateTest | null = null
     let selectionSource: "laya" | "fallback" = "fallback"
     
     // Capture screenshot before Laya decision
     const beforeScreenshotUrl = await options?.captureScreenshot?.("human-loop-before-" + step).catch(() => "") || ""
     
-    // Capture screenshot buffer for visual preprocessing
+    // Capture screenshot + OpenCV vision for Laya
     let screenshotBuffer: Buffer | undefined
     let visualFeatures: any = undefined
     try {
       const screenshot = await page.screenshot({ type: "png" }).catch(() => undefined)
       screenshotBuffer = screenshot ? Buffer.from(screenshot) : undefined
       if (screenshotBuffer) {
-        // Import vision preprocessor dynamically to avoid dependency issues
-        const { preprocessScreenshotForLaya } = await import("./vision-preprocessor").catch(() => ({ preprocessScreenshotForLaya: null }))
-        if (preprocessScreenshotForLaya) {
-          visualFeatures = await preprocessScreenshotForLaya(
-            screenshotBuffer,
-            state.elements
-              .filter(el => el.selector) // Filter out elements without selectors
-              .map(el => ({
-                selector: el.selector!,
-                bounds: el.bounds,
-                label: el.label,
-                type: el.type,
-              }))
+        const { runHumanLoopVision } = await import("./human-loop-vision").catch(() => ({ runHumanLoopVision: null as any }))
+        const domForVision = state.elements
+          .filter((el: any) => el.selector)
+          .map((el: any) => ({
+            selector: el.selector!,
+            bounds: el.bounds,
+            label: el.label,
+            type: el.type,
+          }))
+        if (runHumanLoopVision) {
+          visualFeatures = await runHumanLoopVision(screenshotBuffer, domForVision)
+        }
+        if (visualFeatures?.features) {
+          const engine = visualFeatures.engine || "unknown"
+          appendLog(
+            job,
+            "info",
+            `[VisionPreprocessor] engine=${engine} elements=${visualFeatures.features.elementBoundingBoxes.length} hierarchy=${visualFeatures.features.visualHierarchy.length}`,
           )
-          appendLog(job, "info", `[VisionPreprocessor] Extracted ${visualFeatures.features.elementBoundingBoxes.length} element features; hierarchy depth: ${visualFeatures.features.visualHierarchy.length}`)
         }
       }
     } catch (visionError: any) {
       appendLog(job, "warn", `[VisionPreprocessor] Visual preprocessing failed: ${visionError?.message || String(visionError)}`)
     }
     
+    // Enrich criteria with OpenCV visual ranks before asking Laya
+    let criteria = chooseCriteria(decisionCandidates)
+    let layaInstructions =
+      "Choose the safest meaningful untested candidate. Prefer high-value coverage and do not choose escalate unless no candidate is useful."
+    try {
+      const { enrichCriteriaWithVision, LAYA_VISION_INSTRUCTIONS } = await import("./human-loop-vision")
+      criteria = enrichCriteriaWithVision(criteria, decisionCandidates, visualFeatures)
+      layaInstructions = LAYA_VISION_INSTRUCTIONS
+    } catch {
+      // human-loop-vision unavailable — keep defaults
+    }
+
     try {
       // Prepare state payload with optional visual context
       const statePayload: any = {
@@ -1022,13 +1037,15 @@ export async function runHumanLikeDecisionLoop(
         failedRequests: runtimeEvidence.failedRequests.slice(-5),
         badResponses: runtimeEvidence.badResponses.slice(-5),
         previousTestIds: [...tested].slice(-20),
+        visionEngine: visualFeatures?.engine || null,
       }
-      
+
       // Add visual context if available
       if (beforeScreenshotUrl || visualFeatures) {
         statePayload.visual = {
           screenshotUrl: beforeScreenshotUrl || undefined,
           screenshotCapturedAt: Date.now(),
+          engine: visualFeatures?.engine || undefined,
           ...(visualFeatures?.features && {
             elementCount: visualFeatures.features.elementBoundingBoxes.length,
             topElements: visualFeatures.features.visualHierarchy.slice(0, 10).map((el: any) => ({
@@ -1042,15 +1059,19 @@ export async function runHumanLikeDecisionLoop(
             })),
           }),
         }
-        appendLog(job, "info", `[HumanLoop] Sending visual context to Laya: screenshot=${!!beforeScreenshotUrl}, features=${!!visualFeatures}`)
+        appendLog(
+          job,
+          "info",
+          `[HumanLoop] Sending visual context to Laya: screenshot=${!!beforeScreenshotUrl}, features=${!!visualFeatures}, engine=${visualFeatures?.engine || "none"}`,
+        )
       }
-      
+
       const result = await layaPredict(layaUrl, {
         state: JSON.stringify(statePayload),
         questions: {
           next_test: {
             type: "choice",
-            instructions: "Choose the safest meaningful untested candidate. Prefer high-value coverage and do not choose escalate unless no candidate is useful.",
+            instructions: layaInstructions,
             criteria,
           },
         },

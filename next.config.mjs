@@ -8,13 +8,25 @@ const nextConfig = {
     'sharp',
     '@techstark/opencv-js',
   ],
-  typescript: {
-    ignoreBuildErrors: true,
-  },
   images: {
     unoptimized: true,
   },
+  async headers() {
+    const securityHeaders = [
+      { key: 'X-Content-Type-Options', value: 'nosniff' },
+      { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+      { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+      { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+      ...(process.env.NODE_ENV === 'production'
+        ? [{ key: 'Strict-Transport-Security', value: 'max-age=31536000; includeSubDomains' }]
+        : []),
+    ]
+    return [{ source: '/:path*', headers: securityHeaders }]
+  },
   async rewrites() {
+    // Local simulator proxies are development-only. Never expose loopback services
+    // through production or preview deployments.
+    if (process.env.NODE_ENV !== 'development') return []
     return [
       {
         source: '/proxy/:port',

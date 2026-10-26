@@ -5,12 +5,22 @@
  * command ("click the login button"), enumerate the page's interactable
  * elements and let a local Laya server pick the matching action in ~30ms.
  *
+ * Now enhanced with OpenCV visual candidates: we detect button/input-like
+ * regions on the screenshot and enrich the DOM candidates so Laya can use
+ * both structural and visual signals.
+ *
  * Confidence-gated: anything Laya is unsure about (or when Laya is offline)
  * returns null and the caller escalates to the full AI interpreter unchanged.
  */
 
 import type { Page } from "puppeteer"
 import { layaPredict, DEFAULT_LAYA_URL } from "@/lib/journey/laya-client"
+import {
+  detectVisualElements,
+  matchVisualToDom,
+  type VisualCandidate,
+} from "./opencv-element-detector"
+
 type AICommandInterpretation = {
   planSummary: string
   actions: Array<{ type: "click" | "type"; target: string; value?: string; description: string; thought?: string }>
@@ -21,6 +31,14 @@ export type ReflexCandidate = {
   kind: "click" | "type"
   label: string
   selector: string
+  /** Bounding box in viewport coordinates (for visual matching) */
+  box?: { x: number; y: number; width: number; height: number }
+  /** Enriched by OpenCV when a visual match is found */
+  visual?: {
+    kind: VisualCandidate["kind"]
+    prominence: number
+    matched: boolean
+  }
 }
 
 const LAYA_CONFIDENCE_THRESHOLD = 0.55
@@ -29,6 +47,7 @@ const MAX_CANDIDATES = 14
 /**
  * Enumerate visible interactable elements and build a precise CSS selector
  * for each (id-based when possible, otherwise an nth-of-type path).
+ * Also captures bounding boxes for later OpenCV matching.
  */
 async function snapshotCandidates(page: Page): Promise<ReflexCandidate[]> {
   const raw = await page
@@ -46,7 +65,12 @@ async function snapshotCandidates(page: Page): Promise<ReflexCandidate[]> {
         const htmlEl = el as HTMLElement
         const input = el as HTMLInputElement
         const svg = htmlEl.querySelector("svg")
-        const svgAria = svg ? (svg.getAttribute("aria-label") || svg.querySelector("title")?.textContent || svg.getAttribute("data-icon") || svg.getAttribute("data-lucide")) : null
+        const svgAria = svg
+          ? svg.getAttribute("aria-label") ||
+            svg.querySelector("title")?.textContent ||
+            svg.getAttribute("data-icon") ||
+            svg.getAttribute("data-lucide")
+          : null
         const testId = htmlEl.getAttribute("data-testid") || htmlEl.getAttribute("data-cy")
         const label = (
           htmlEl.getAttribute("aria-label") ||
@@ -62,6 +86,7 @@ async function snapshotCandidates(page: Page): Promise<ReflexCandidate[]> {
           .trim()
           .replace(/\s+/g, " ")
           .slice(0, 60)
+
         let selector: string
         if (htmlEl.id) {
           selector = "#" + CSS.escape(htmlEl.id)
@@ -79,6 +104,7 @@ async function snapshotCandidates(page: Page): Promise<ReflexCandidate[]> {
           }
           selector = parts.join(" > ")
         }
+
         const tag = el.tagName.toLowerCase()
         const typeAttr = (input.getAttribute("type") || "").toLowerCase()
         const kind =
@@ -88,15 +114,34 @@ async function snapshotCandidates(page: Page): Promise<ReflexCandidate[]> {
             !["button", "submit", "checkbox", "radio", "file", "hidden", "image"].includes(typeAttr))
             ? ("type" as const)
             : ("click" as const)
-        return { label: label || tag, selector, kind }
+
+        const rect = htmlEl.getBoundingClientRect()
+        return {
+          label: label || tag,
+          selector,
+          kind,
+          box: {
+            x: Math.round(rect.x),
+            y: Math.round(rect.y),
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+          },
+        }
       })
     })
     .catch(() => [])
-  return (raw as Array<{ label: string; selector: string; kind: "click" | "type" }>).map((c, i) => ({
+
+  return (raw as Array<{
+    label: string
+    selector: string
+    kind: "click" | "type"
+    box: { x: number; y: number; width: number; height: number }
+  }>).map((c, i) => ({
     id: i,
     kind: c.kind,
     label: c.label,
     selector: c.selector,
+    box: c.box,
   }))
 }
 
@@ -117,8 +162,44 @@ function readConfidence(ans: any): number {
 }
 
 /**
- * Try to resolve the command locally with Laya. Returns a ready-to-execute
- * plan, or null when Laya is offline / unsure (caller must escalate).
+ * Enrich DOM candidates with OpenCV visual detections.
+ */
+async function enrichWithVision(
+  page: Page,
+  candidates: ReflexCandidate[],
+): Promise<{ candidates: ReflexCandidate[]; visualCount: number }> {
+  try {
+    const screenshot = (await page.screenshot({ type: "png", fullPage: false })) as Buffer
+    const visuals = await detectVisualElements(screenshot)
+
+    if (visuals.length === 0) {
+      return { candidates, visualCount: 0 }
+    }
+
+    const domBoxes = candidates.map((c) => c.box || { x: 0, y: 0, width: 0, height: 0 })
+
+    for (const vis of visuals) {
+      const matchIdx = matchVisualToDom(vis, domBoxes)
+      if (matchIdx >= 0 && candidates[matchIdx]) {
+        candidates[matchIdx].visual = {
+          kind: vis.kind,
+          prominence: vis.prominence,
+          matched: true,
+        }
+      }
+    }
+
+    return { candidates, visualCount: visuals.length }
+  } catch (err) {
+    console.warn("[Laya-Reflex] Vision enrichment failed:", (err as Error)?.message || err)
+    return { candidates, visualCount: 0 }
+  }
+}
+
+/**
+ * Try to resolve the command locally with Laya (now vision-enhanced).
+ * Returns a ready-to-execute plan, or null when Laya is offline / unsure
+ * (caller must escalate).
  */
 export async function tryLayaReflexPlan(
   page: Page,
@@ -127,12 +208,20 @@ export async function tryLayaReflexPlan(
 ): Promise<AICommandInterpretation | null> {
   const baseUrl = (layaBaseUrl || process.env.LAYA_BASE_URL || DEFAULT_LAYA_URL).replace(/\/$/, "")
 
-  const candidates = await snapshotCandidates(page)
+  let candidates = await snapshotCandidates(page)
   if (candidates.length === 0) return null
+
+  // OpenCV visual enrichment
+  const { candidates: enriched, visualCount } = await enrichWithVision(page, candidates)
+  candidates = enriched
 
   const criteria: Record<string, string> = {}
   candidates.slice(0, MAX_CANDIDATES).forEach((c) => {
-    criteria[`act_${c.id}`] = `[${c.kind}] ${c.label}`
+    let desc = `[${c.kind}] ${c.label}`
+    if (c.visual?.matched) {
+      desc += ` (visual:${c.visual.kind}, prominence:${c.visual.prominence.toFixed(2)})`
+    }
+    criteria[`act_${c.id}`] = desc
   })
   criteria["escalate"] = "No candidate clearly matches the command — escalate to the full AI model"
 
@@ -145,12 +234,12 @@ export async function tryLayaReflexPlan(
 
   const started = Date.now()
   const result = await layaPredict(baseUrl, {
-    state: `User command: "${command}"\nPage URL: ${page.url()}\nVisible text: ${pageText}`,
+    state: `User command: "${command}"\nPage URL: ${page.url()}\nVisible text: ${pageText}\nVisual detections: ${visualCount} regions found by OpenCV`,
     questions: {
       action: {
         type: "choice",
         instructions:
-          "Which UI action best fulfills the user's command? Choose escalate unless exactly one candidate is a clear, direct match.",
+          "Which UI action best fulfills the user's command? Prefer candidates that also have a strong visual match (visual:button / visual:input with higher prominence). Choose escalate unless exactly one candidate is a clear, direct match.",
         criteria,
       },
     },
@@ -170,31 +259,35 @@ export async function tryLayaReflexPlan(
   if (confidence < LAYA_CONFIDENCE_THRESHOLD) return null
 
   const confStr = confidence.toFixed(2)
+  const visionNote = candidate.visual?.matched
+    ? ` + OpenCV ${candidate.visual.kind}`
+    : ""
+
   if (candidate.kind === "type") {
     const value = extractTypeValue(command)
     if (!value) return null // needs generated text — escalate
     return {
-      planSummary: `[Laya reflex ${elapsedMs}ms] Type into "${candidate.label}" (confidence ${confStr}) — no cloud call used.`,
+      planSummary: `[Laya reflex ${elapsedMs}ms${visionNote}] Type into "${candidate.label}" (confidence ${confStr}) — no cloud call used.`,
       actions: [
         {
           type: "type",
           target: candidate.selector,
           value,
           description: `Type "${value}" into ${candidate.label}`,
-          thought: `Laya System-1 reflex (${elapsedMs}ms): matched "${command}" to input "${candidate.label}".`,
+          thought: `Laya System-1 reflex (${elapsedMs}ms${visionNote}): matched "${command}" to input "${candidate.label}".`,
         },
       ],
     }
   }
 
   return {
-    planSummary: `[Laya reflex ${elapsedMs}ms] Click "${candidate.label}" (confidence ${confStr}) — no cloud call used.`,
+    planSummary: `[Laya reflex ${elapsedMs}ms${visionNote}] Click "${candidate.label}" (confidence ${confStr}) — no cloud call used.`,
     actions: [
       {
         type: "click",
         target: candidate.selector,
         description: `Click ${candidate.label}`,
-        thought: `Laya System-1 reflex (${elapsedMs}ms): matched "${command}" to "${candidate.label}".`,
+        thought: `Laya System-1 reflex (${elapsedMs}ms${visionNote}): matched "${command}" to "${candidate.label}".`,
       },
     ],
   }

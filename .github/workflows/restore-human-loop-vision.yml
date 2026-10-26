@@ -1,0 +1,44 @@
+name: Restore human-loop OpenCV vision
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  restore-and-wire:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: security/production-hardening-2026-10
+          fetch-depth: 0
+
+      - name: Restore full human-test-loop.ts
+        run: |
+          git checkout 21f68de81e7695240984c8c9fb9add50ec58095e -- lib/ai-automation/human-test-loop.ts
+          wc -l lib/ai-automation/human-test-loop.ts
+          test "$(wc -l < lib/ai-automation/human-test-loop.ts)" -gt 500
+
+      - name: Apply OpenCV-Laya wiring with Python
+        run: python3 scripts/wire-opencv-laya.py
+
+      - name: Verify markers
+        run: |
+          wc -l lib/ai-automation/human-test-loop.ts
+          grep -n runHumanLoopVision lib/ai-automation/human-test-loop.ts
+          grep -n enrichCriteriaWithVision lib/ai-automation/human-test-loop.ts
+          grep -n visionEngine lib/ai-automation/human-test-loop.ts
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add lib/ai-automation/human-test-loop.ts
+          if git diff --cached --quiet; then
+            echo "No changes"
+          else
+            git commit -m "fix(human-loop): restore full file and wire OpenCV into Laya decisions"
+            git push origin HEAD:security/production-hardening-2026-10
+          fi

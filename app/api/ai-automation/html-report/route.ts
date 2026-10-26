@@ -13,7 +13,8 @@ async function assertJobAccess(job: { projectId?: string; userId?: string }) {
       await requireProjectAccess(job.projectId, "view")
       return user
     }
-    if (job.userId && job.userId !== user.id) {
+    // Fail closed for legacy/orphan jobs without a project or explicit owner.
+    if (!job.userId || job.userId !== user.id) {
       throw new AuthError(403, "Not allowed to access this job")
     }
     return user

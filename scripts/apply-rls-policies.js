@@ -30,13 +30,15 @@ async function applyRLSPolicies() {
     process.exit(1)
   }
 
-  process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"
-
   try {
     const { default: pg } = await import("pg")
+    // node-postgres lets connection-string sslmode settings override the ssl object.
+    // Remove sslmode so explicit certificate verification cannot be downgraded by the URL.
+    const secureConnectionString = new URL(postgresUrl)
+    secureConnectionString.searchParams.delete("sslmode")
     const client = new pg.Client({
-      connectionString: postgresUrl,
-      ssl: { rejectUnauthorized: false },
+      connectionString: secureConnectionString.toString(),
+      ssl: { rejectUnauthorized: true },
     })
 
     await client.connect()
@@ -51,13 +53,22 @@ async function applyRLSPolicies() {
       console.log("  ✓ Workflow & comment RLS policies applied")
     }
 
-    // 2. Storage RLS Policies
+    // 2. Storage RLS Policies (least-privilege baseline)
     const storageMigrationPath = path.join(__dirname, "../supabase/migrations/add_storage_rls_policies.sql")
     if (fs.existsSync(storageMigrationPath)) {
       const sql = fs.readFileSync(storageMigrationPath, "utf-8")
       console.log("  Applying storage RLS policies...")
       await client.query(sql)
       console.log("  ✓ Storage RLS policies applied")
+    }
+
+    // 3. Re-apply the hardening migration last so legacy policies cannot re-open access.
+    const hardeningMigrationPath = path.join(__dirname, "../supabase/migrations/20261026000000_harden_designs_storage_policies.sql")
+    if (fs.existsSync(hardeningMigrationPath)) {
+      const sql = fs.readFileSync(hardeningMigrationPath, "utf-8")
+      console.log("  Applying storage security hardening migration...")
+      await client.query(sql)
+      console.log("  ✓ Storage security hardening applied")
     }
 
     await client.end()
