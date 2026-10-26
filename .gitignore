@@ -32,3 +32,6 @@ pnpm-debug.log*
 .jobs/
 .codegraph/
 .opencode
+
+# Generated browser evidence
+test-results/

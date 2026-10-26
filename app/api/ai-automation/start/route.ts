@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
+import { createResponsiveRuns } from "@/lib/ai-automation/responsive-runs"
+import { cancelJob, saveJob } from "@/lib/ai-automation/runner"
 import { createAndStartJob } from "@/lib/ai-automation/runner"
 import type { StartAutomationRequest } from "@/lib/ai-automation/types"
 import {
@@ -16,6 +18,9 @@ export async function POST(req: NextRequest) {
   try {
     const body: StartAutomationRequest = await req.json()
 
+    if (body.responsiveJourney !== undefined && typeof body.responsiveJourney !== "boolean") {
+      return NextResponse.json({ error: "responsiveJourney must be a boolean." }, { status: 400 })
+    }
     if (!body.url || !body.url.trim()) {
       return NextResponse.json({ error: "Missing target URL" }, { status: 400 })
     }
@@ -37,7 +42,7 @@ export async function POST(req: NextRequest) {
       throw e
     }
 
-    const job = await createAndStartJob({
+    const params: StartAutomationRequest = {
       url: safeUrl,
       projectId: body.projectId.trim(),
       userInstruction: body.userInstruction,
@@ -60,7 +65,22 @@ export async function POST(req: NextRequest) {
       paymentCredentials: body.paymentCredentials,
       allowTestPayments: body.allowTestPayments,
       allowActions: body.allowActions,
-    })
+      projectDir: body.projectDir,
+      recordVideo: body.recordVideo,
+    }
+    if (body.responsiveJourney && body.mode !== "full_app" && body.mode !== "feature_workflow") {
+      return NextResponse.json({ error: "Responsive journeys require Full App or Feature Workflow testing." }, { status: 400 })
+    }
+    const start = async (input: StartAutomationRequest) => {
+      const job = await createAndStartJob(input)
+      ;(job as any).userId = access.user.id
+      saveJob(job)
+      return job
+    }
+    const jobs = body.responsiveJourney
+      ? await createResponsiveRuns(params, start, saveJob, cancelJob)
+      : [await start(params)]
+    const job = jobs[0]
 
     ;(job as any).userId = access.user.id
 

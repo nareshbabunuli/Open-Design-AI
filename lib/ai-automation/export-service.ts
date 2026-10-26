@@ -53,6 +53,10 @@ export async function buildTestBundleZip(job: AutomationJob): Promise<{ buffer: 
     zip.file("test-plan.json", JSON.stringify(job.fullAppTestPlan, null, 2))
   }
 
+  if (job.responsiveGroup) {
+    zip.file("responsive-journey.json", JSON.stringify({ group: job.responsiveGroup, viewport: job.viewports[0], snapshots: job.responsiveSnapshots || [], captureErrors: job.responsiveCaptureErrors || [] }, null, 2))
+  }
+
   // 4. Action Ledger
   if (job.actionLedger) {
     zip.file("action-ledger.json", JSON.stringify(job.actionLedger, null, 2))

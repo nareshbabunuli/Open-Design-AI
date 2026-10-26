@@ -76,6 +76,7 @@ import { ThemeToggle } from "@/components/design-review/theme-toggle"
 import { SettingsModal } from "@/components/design-review/settings-modal"
 import TestFlowGraph from "@/components/design-review/test-flow-graph"
 import FullAppTestingView from "@/components/design-review/full-app-testing-view"
+import { ResponsiveJourneyPanel } from "@/components/design-review/responsive-journey-panel"
 import FeatureWorkflowView from "@/components/design-review/feature-workflow-view"
 import AiConfigPanel from "@/components/design-review/ai-config-panel"
 import MovableAiConfigModal from "@/components/design-review/movable-ai-config-modal"
@@ -281,6 +282,7 @@ export default function AISimulatorPage() {
   const [maxScreens, setMaxScreens] = useState(5)
   const [checkBackNav, setCheckBackNav] = useState(true)
   const [checkResponsive, setCheckResponsive] = useState(true)
+  const [responsiveJourneyEnabled, setResponsiveJourneyEnabled] = useState(false)
   const [recordVideo, setRecordVideo] = useState(true)
 
   // Active Automation Job State
@@ -527,6 +529,7 @@ export default function AISimulatorPage() {
 
   // Full App Test Plan & Figma-Style Workflow Map Synthesis (with Project Workflows fallback)
   const activePlan = useMemo(() => {
+    if (currentJob?.responsiveGroup) return currentJob.fullAppTestPlan || null
     const proj = projects.find((p) => p.id === activeProjectId) || projects[0] || DEFAULT_AI_PROJECT
     const synth = synthesizeFullAppPlanFromJob(currentJob)
     if (synth && synth.screens?.length > 0) {
@@ -1826,11 +1829,12 @@ export default function AISimulatorPage() {
   useEffect(() => {
     if (!currentJob?.id || (currentJob.status !== "running" && currentJob.status !== "queued")) return
 
+    let cancelled = false
     const interval = setInterval(async () => {
       try {
         const res = await fetch(`/api/ai-automation/status?jobId=${currentJob.id}`)
         const data = await res.json()
-        if (data?.success && data.job) {
+        if (!cancelled && data?.success && data.job) {
           setCurrentJob(data.job)
           if (data.job.status === "completed" || data.job.status === "failed" || data.job.status === "stopped") {
             clearInterval(interval)
@@ -1843,7 +1847,7 @@ export default function AISimulatorPage() {
       }
     }, 1500)
 
-    return () => clearInterval(interval)
+    return () => { cancelled = true; clearInterval(interval) }
   }, [currentJob?.id, currentJob?.status, loadWorkspace])
 
   // The shared session event stream feeds chat progress; sequence IDs prevent
@@ -2121,6 +2125,7 @@ export default function AISimulatorPage() {
           projectId: activeProject.id,
           projectDir: selectedProjectDir,
           mode: "full_app",
+          responsiveJourney: responsiveJourneyEnabled,
           viewports: [
             {
               name: "Active Simulator Viewport",
@@ -2222,6 +2227,7 @@ export default function AISimulatorPage() {
           projectId: activeProject.id,
           projectDir: selectedProjectDir,
           mode: "feature_workflow",
+          responsiveJourney: responsiveJourneyEnabled,
           workflowPrompt: promptText,
           viewports: [
             {
@@ -2872,6 +2878,20 @@ export default function AISimulatorPage() {
                 </div>
               </div>
 
+              <ResponsiveJourneyPanel
+                job={currentJob}
+                enabled={responsiveJourneyEnabled}
+                onEnabledChange={setResponsiveJourneyEnabled}
+                busy={isSubmitting}
+                onSelectJob={(nextJob) => {
+                  setPreviewPlanState(null)
+                  setAnalyzedSpecState(null)
+                  setCurrentJob(nextJob)
+                  if (nextJob.mode === "full_app" || nextJob.mode === "feature_workflow") setTestingMode(nextJob.mode)
+                  setSimulatorViewport({ width: nextJob.viewports[0].width, height: nextJob.viewports[0].height })
+                }}
+              />
+
               {/* Main Content Workspace Panes */}
               <div className="flex-1 w-full h-full flex overflow-hidden relative">
                 {/* 1. Live Device Pane: shown in "device" or "split" mode */}
@@ -2913,6 +2933,7 @@ export default function AISimulatorPage() {
                       currentAction={currentJob?.currentAction || activeAction}
                       isRunningTest={currentJob?.status === "running"}
                       liveSessionScreenshotUrl={currentJob?.currentScreenshotUrl}
+                      automationViewport={currentJob?.responsiveGroup ? currentJob.viewports[0] : undefined}
                       onViewportChange={handleSimulatorViewportChange}
                     />
                   </div>

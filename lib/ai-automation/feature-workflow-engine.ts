@@ -1,3 +1,5 @@
+import { captureResponsiveSnapshot } from "./responsive-capture"
+import { localResponsiveResult, awaitResponsivePlanApproval } from "./responsive-runs"
 import puppeteer, { type Browser, type Page } from "puppeteer"
 import { safePuppeteerLaunch } from "../browser/secure-browser"
 import {
@@ -14,7 +16,7 @@ import {
   FeatureWorkflowSpec,
   FeatureWorkflowEdgeCase,
 } from "./types"
-import { saveJob, appendLog } from "./job-store"
+import { saveJob, appendLog, getJob } from "./job-store"
 import {
   SYNTHETIC_TEST_DATA,
   normalizePath,
@@ -742,6 +744,8 @@ export async function executeFeatureWorkflowJob(
       },
     ]
 
+    await captureResponsiveSnapshot(job, page, `Discovery: ${screenNodes[0].name}`)
+
     // STEP 4: Create workflow-specific test plan before execution
     job.testingPhase = "planning"
     job.currentStep = "Step 3: Generating workflow-specific test plan (TEST-001, TEST-002...)..."
@@ -758,6 +762,8 @@ export async function executeFeatureWorkflowJob(
       appendLog(job, "info", `  [${s.id}] Screen: ${s.screenName} | Action: ${s.targetName} | Expected: ${s.expectedResult}`)
     })
 
+    if (!await awaitResponsivePlanApproval(job, getJob, saveJob)) return
+
     // STEP 5: Execute the plan systematically (Action → Observe → Verify → Record)
     job.testingPhase = "executing"
     job.currentStep = "Step 4: Executing workflow steps (Action → Observe → Verify → Record)..."
@@ -768,6 +774,7 @@ export async function executeFeatureWorkflowJob(
     let screenSeq = 2
 
     for (let i = 0; i < workflowPlan.steps.length; i++) {
+      if (job.status !== "running") return
       const step = workflowPlan.steps[i]
       step.status = "running"
       job.currentStep = `Executing [${step.id}]: ${step.targetName}...`
@@ -1072,6 +1079,8 @@ export async function executeFeatureWorkflowJob(
           document.getElementById("__antigravity_overlay_root__")?.remove()
         }).catch(() => {})
 
+        await captureResponsiveSnapshot(job, page, `After ${step.actionType}: ${step.targetName}`)
+
         // STEP 8: Handle newly discovered paths or completion loops
         const isExternalStepUrl = !isSameOriginUrl(page.url(), origin)
 
@@ -1104,6 +1113,7 @@ export async function executeFeatureWorkflowJob(
               discoveredAt: new Date().toISOString(),
             }
             screenNodes.push(newNode)
+            await captureResponsiveSnapshot(job, page, `Discovery: ${newNode.name}`)
             workflowPlan.screens = [...screenNodes]
 
             // Add forward transition
@@ -1280,6 +1290,8 @@ export async function executeFeatureWorkflowJob(
       appendLog(job, "warn", `UX Intelligence scoring encountered error: ${uxErr?.message}`)
     }
 
+    if (job.status !== "running") return
+
     // STEP 7 & 9: Build focused Figma map and compile final report
     job.testingPhase = "reporting"
     job.currentStep = "Step 6: Compiling final workflow report & coverage..."
@@ -1319,7 +1331,8 @@ export async function executeFeatureWorkflowJob(
       failedScreens: 0,
       totalIssues: job.issues.length,
       backNavigationScore: 100,
-      responsiveScore: 100,
+      responsiveScore: job.responsiveGroup ? localResponsiveResult(job).score : 100,
+      responsiveStatus: job.responsiveGroup ? localResponsiveResult(job).status : undefined,
       summary: `Workflow "${spec.workflowName}" executed with ${passedSteps}/${totalSteps} steps passing (${workflowCoveragePct}% coverage). ${testedEdgeCases.length} edge cases verified.${job.recordingUrl ? " Session video attached." : ""}`,
       recommendations: [
         `Ensure all form validation error messages for "${spec.workflowName}" are accessible with aria-live attributes.`,

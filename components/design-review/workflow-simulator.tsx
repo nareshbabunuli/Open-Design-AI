@@ -106,6 +106,7 @@ export interface WorkflowSimulatorProps {
   isRunningTest?: boolean
   /** Latest screenshot from the controlled automation browser while a session is running. */
   liveSessionScreenshotUrl?: string
+  automationViewport?: { width: number; height: number }
   onViewportChange?: (viewport: { width: number; height: number; presetId?: string | null }) => void
 }
 
@@ -406,6 +407,7 @@ export function WorkflowSimulator({
   currentAction,
   isRunningTest = false,
   liveSessionScreenshotUrl,
+  automationViewport,
   onViewportChange,
 }: WorkflowSimulatorProps) {
   const workflows = project.workflows || []
@@ -508,6 +510,14 @@ export function WorkflowSimulator({
   const [showDeviceFrame, setShowDeviceFrame] = useState<boolean>(true)
   const [frameFinish, setFrameFinish] = useState<FrameFinish>("titanium")
   const [showDeviceStatusBar, setShowDeviceStatusBar] = useState<boolean>(true)
+
+  useEffect(() => {
+    if (!automationViewport) return
+    setViewportWidth(automationViewport.width)
+    setViewportHeight(automationViewport.height)
+    setSelectedPresetId(null)
+    setIsCustomPreset(true)
+  }, [automationViewport?.width, automationViewport?.height])
 
   const onViewportChangeRef = useRef(onViewportChange)
   useEffect(() => {

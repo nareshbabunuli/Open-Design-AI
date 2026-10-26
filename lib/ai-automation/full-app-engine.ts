@@ -1,3 +1,5 @@
+import { responsiveScreenStatus } from "./responsive-runs"
+import { captureResponsiveSnapshot } from "./responsive-capture"
 import fs from "fs"
 import path from "path"
 import os from "os"
@@ -2077,6 +2079,8 @@ export async function executeStructuredTestPlan(
         saveJob(job)
       } catch {}
 
+      await captureResponsiveSnapshot(job, page, `After ${step.actionType}: ${step.targetName}`)
+
       // Commit the final ledger outcome only after checkpoints and the evidence
       // screenshot have completed, so the history reflects the actual result.
       const ledgerStatus: ActionLedgerEntry["status"] =
@@ -2649,7 +2653,7 @@ export async function executeFullAppTestingJob(
     browser = await safePuppeteerLaunch()
 
     const page = await browser.newPage()
-    const primaryVp = params.viewports?.[0] || { width: 1440, height: 900 }
+    const primaryVp = params.viewports?.[0] || { name: "Desktop", width: 1440, height: 900 }
     const isMobileVp = primaryVp.width <= 768
     await page.setViewport({
       width: primaryVp.width,
@@ -2786,7 +2790,7 @@ export async function executeFullAppTestingJob(
       // Populate screens for UI compatibility
       job.screens = discovery.screens.map((s) => {
         const shots: Record<string, string> = {}
-        if (s.screenshotUrl) shots["Desktop"] = s.screenshotUrl
+        if (s.screenshotUrl) shots[primaryVp.name || "Active viewport"] = s.screenshotUrl
         return {
           url: s.url,
           path: s.path,
@@ -2795,7 +2799,7 @@ export async function executeFullAppTestingJob(
           testedAt: new Date().toISOString(),
           screenshots: shots,
           backNavigationStatus: "passed" as const,
-          responsiveStatus: "passed" as const,
+          responsiveStatus: job.responsiveGroup ? responsiveScreenStatus(job, s.url) : "passed" as const,
           issuesCount: 0,
         }
       })
@@ -2875,9 +2879,9 @@ export async function executeFullAppTestingJob(
             title: `${screen.id} ${screen.name}`,
             screenshotUrl: screen.screenshotUrl,
             testedAt: new Date().toISOString(),
-            screenshots: screen.screenshotUrl ? { Desktop: screen.screenshotUrl } : ({} as Record<string, string>),
+            screenshots: screen.screenshotUrl ? { [primaryVp.name || "Active viewport"]: screen.screenshotUrl } : ({} as Record<string, string>),
             backNavigationStatus: "passed" as const,
-            responsiveStatus: "passed" as const,
+            responsiveStatus: job.responsiveGroup ? responsiveScreenStatus(job, screen.url) : "passed" as const,
             issuesCount: 0,
           }))
           job.fullAppTestPlan = testPlan

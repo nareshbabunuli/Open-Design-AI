@@ -245,6 +245,9 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "approve_test_plan") {
+      if (job.responsiveGroup && job.status !== "running") {
+        return NextResponse.json({ error: "A stopped responsive journey must be restarted before plan approval." }, { status: 409 })
+      }
       if (!job.fullAppTestPlan || (job.planApprovalState !== "awaiting_review" && job.planApprovalState !== "approved")) {
         return NextResponse.json({ error: "This job is not waiting for plan approval." }, { status: 409 })
       }

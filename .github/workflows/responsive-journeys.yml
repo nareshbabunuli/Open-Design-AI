@@ -1,0 +1,54 @@
+name: Responsive journey verification
+
+on:
+  pull_request:
+    paths:
+      - "app/ai-simulator/page.tsx"
+      - "app/api/ai-automation/**"
+      - "components/design-review/responsive-journey-panel.tsx"
+      - "components/design-review/workflow-simulator.tsx"
+      - "lib/ai-automation/**"
+      - "lib/browser/secure-browser.ts"
+      - "tests/responsive*"
+      - ".github/workflows/responsive-journeys.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  responsive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.2
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: "true"
+      - name: Check types
+        run: pnpm exec tsc --noEmit --pretty false
+      - name: Test API authorization, group startup and stop controls
+        run: node --test tests/responsive-routes.test.mjs
+      - name: Test matching and actual OpenCV comparison
+        run: pnpm dlx tsx@4.23.15 --test tests/responsive-comparison.test.ts
+      - name: Install fixture browser
+        run: pnpm exec puppeteer browsers install chrome
+      - name: Test real browser captures at three viewport sizes
+        run: pnpm dlx tsx@4.23.15 --test tests/responsive-capture.browser.test.ts
+      - name: Upload browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: responsive-journey-evidence
+          path: test-results/responsive/
+          if-no-files-found: ignore
+          retention-days: 7

@@ -282,6 +282,7 @@ async function tryAutoLogin(
 /** Strip secrets before persisting or returning a job object */
 export function sanitizeJobForClient<T extends Record<string, unknown>>(job: T): T {
   const clone = { ...job } as Record<string, unknown>
+  if (clone.responsiveGroup) delete clone.responsiveSnapshots
   delete clone.credentials
   delete clone.pendingCredentials
   delete clone.pendingSettingsCredentials

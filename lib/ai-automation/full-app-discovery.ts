@@ -1,3 +1,4 @@
+import { captureResponsiveSnapshot } from "./responsive-capture"
 import type { Page } from "puppeteer"
 import {
   AutomationJob,
@@ -1044,6 +1045,7 @@ export async function discoverAndMapApp(
       isReady: layaInfo.ready,
     }
     screens.push(node)
+    await captureResponsiveSnapshot(job, page, `Discovery: ${displayName}`)
     pathScreenMap.set(curPath, id)
     // Publish the same live browser frame the crawler is currently inspecting.
     if (shot) job.currentScreenshotUrl = shot

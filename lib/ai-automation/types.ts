@@ -1,3 +1,5 @@
+import type { ResponsiveGroup, ResponsiveSnapshot } from "./responsive-types"
+
 export type AutomationViewport = {
   name: string
   width: number
@@ -189,6 +191,7 @@ export type AutomationReport = {
   totalIssues: number
   backNavigationScore: number // 0-100 percentage
   responsiveScore: number // 0-100 percentage
+  responsiveStatus?: string
   summary: string
   recommendations: string[]
   issues?: AutomationIssue[]
@@ -643,6 +646,9 @@ export type PendingSessionNavigation = {
 }
 
 export type AutomationJob = {
+  responsiveGroup?: ResponsiveGroup
+  responsiveSnapshots?: ResponsiveSnapshot[]
+  responsiveCaptureErrors?: string[]
   id: string
   /** Stable identity for the shared live-testing session; defaults to the job ID. */
   sessionId?: string
@@ -807,6 +813,9 @@ export type FeatureWorkflowSpec = {
 }
 
 export type StartAutomationRequest = {
+  responsiveJourney?: boolean
+  /** Assigned internally when creating separate responsive journeys. */
+  responsiveGroup?: ResponsiveGroup
   url: string
   projectId: string
   projectDir?: string

@@ -281,7 +281,7 @@ async function executeCandidate(page: Page, candidate: CandidateTest, job: Autom
   }
 
   if (candidate.pattern === "responsive_layout") {
-    const original = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }))
+    const original = page.viewport() || await page.evaluate(() => ({ width: innerWidth, height: innerHeight }))
     try {
       await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 1 })
       await new Promise((resolve) => setTimeout(resolve, 350))
@@ -300,7 +300,7 @@ async function executeCandidate(page: Page, candidate: CandidateTest, job: Autom
     } catch (error: any) {
       return { ok: false, observation: "Responsive viewport check failed: " + (error?.message || String(error)) }
     } finally {
-      await page.setViewport({ width: original.width, height: original.height, deviceScaleFactor: 1 }).catch(() => {})
+      await page.setViewport(original).catch(() => {})
     }
   }
 

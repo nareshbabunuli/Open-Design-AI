@@ -630,6 +630,7 @@ function generateStatsSection(job: AutomationJob): string {
       </div>
       <div class="stat-card">
         <div class="stat-value">${report.responsiveScore}%</div>
+        ${report.responsiveStatus ? `<div>${escapeHtml(report.responsiveStatus)} · this viewport only</div>` : ""}
         <div class="stat-label">Responsive Score</div>
       </div>
       ${job.fullAppTestPlan ? `

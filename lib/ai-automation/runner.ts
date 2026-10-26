@@ -208,6 +208,7 @@ export async function createAndStartJob(params: StartAutomationRequest): Promise
   const newJob: AutomationJob = {
     id: jobId,
     sessionId: jobId,
+    responsiveGroup: params.responsiveGroup,
     sessionEventSequence: 0,
     sessionEvents: [],
     currentUrl: params.url.trim(),

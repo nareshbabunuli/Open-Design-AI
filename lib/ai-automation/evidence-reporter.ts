@@ -1,3 +1,4 @@
+import { localResponsiveResult } from "./responsive-runs"
 import {
   AutomationJob,
   AutomationReport,
@@ -165,7 +166,8 @@ export function buildAutomationReport(
     failedScreens,
     totalIssues,
     backNavigationScore: 100,
-    responsiveScore: 100,
+    responsiveScore: job.responsiveGroup ? localResponsiveResult(job).score : 100,
+    responsiveStatus: job.responsiveGroup ? localResponsiveResult(job).status : undefined,
     summary,
     recommendations,
     issues: job.issues,
@@ -190,6 +192,12 @@ export function buildAutomationReport(
     }
   }
 
+  if (job.responsiveGroup) {
+    report.markdownReport += `\n\n## Responsive journey evidence\n\nViewport: ${job.viewports[0].name}. Status: ${localResponsiveResult(job).status}. Captured states: ${job.responsiveSnapshots?.length || 0}.\n\nThis score covers this viewport's observed states only. Open the responsive Compare report for matched desktop/tablet/mobile evidence.\n`
+    for (const snapshot of job.responsiveSnapshots || []) for (const finding of snapshot.findings) {
+      report.markdownReport += `\n- [${finding.status}] ${snapshot.state}: ${finding.message}`
+    }
+  }
   job.report = report
   return report
 }
