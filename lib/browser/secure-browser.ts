@@ -31,7 +31,6 @@ const SAFE_ARGS = [
   "--disable-extensions",
   "--mute-audio",
   "--no-default-browser-check",
-  "--disable-web-security",
 ]
 
 function launchArgs(): string[] {
