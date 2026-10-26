@@ -161,7 +161,9 @@ function calculatePositionScore(
   const horizontalScore = 1 - normalizedX * 0.5 // Left is better, but not heavily weighted
   const verticalScore = 1 - normalizedY * 0.7 // Top is significantly better
 
-  return (horizontalScore + verticalScore) / 2
+  // DOM bounds may extend beyond the captured viewport (for example after
+  // scrolling). Keep the documented 0–1 weight range in both analysis paths.
+  return Math.max(0, Math.min(1, (horizontalScore + verticalScore) / 2))
 }
 
 /**
