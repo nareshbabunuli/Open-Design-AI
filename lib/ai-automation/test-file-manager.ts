@@ -246,146 +246,16 @@ export function pickUploadFile(
   fileSizeKB?: number
   cleanUp?: () => void
 } {
-  if (inventory && inventory.files.length > 0) {
-    const acceptTokens = (criteria.acceptAttr || "")
-      .split(",")
-      .map((t) => t.trim().toLowerCase())
-      .filter(Boolean)
-    // 1. If fileTypeRequired is specified, check if any file in that category satisfies acceptTokens
-    if (criteria.fileTypeRequired && inventory.filesByType[criteria.fileTypeRequired]?.length > 0) {
-      const candidates = inventory.filesByType[criteria.fileTypeRequired]
-      if (acceptTokens.length > 0) {
-        const matchingAccept = candidates.find((f) =>
-          acceptTokens.some(
-            (token) =>
-              (token.endsWith("/*") && f.mimeType.toLowerCase().startsWith(token.slice(0, -2))) ||
-              (token.startsWith(".") && f.extension.toLowerCase() === token) ||
-              f.mimeType.toLowerCase() === token
-          )
-        )
-        if (matchingAccept) {
-          return {
-            filePath: matchingAccept.filePath,
-            fileName: matchingAccept.fileName,
-            isFromFolder: true,
-            fileSizeKB: Math.round(matchingAccept.sizeBytes / 1024),
-          }
-        }
-      } else {
-        const first = candidates[0]
-        return {
-          filePath: first.filePath,
-          fileName: first.fileName,
-          isFromFolder: true,
-          fileSizeKB: Math.round(first.sizeBytes / 1024),
-        }
-      }
-    }
+  const tokens = (criteria.acceptAttr || "").split(",").map(t => t.trim().toLowerCase()).filter(Boolean)
+  const candidates = (inventory?.files || []).filter(file => file.sizeBytes > 0 &&
+    (!tokens.length || tokens.some(token => token.startsWith(".") ? file.extension.toLowerCase() === token :
+      token.endsWith("/*") ? file.mimeType.toLowerCase().startsWith(token.slice(0, -1)) : file.mimeType.toLowerCase() === token)))
+  const category = criteria.fileTypeRequired
+  const selected = candidates.find(f => f.fileName.toLowerCase() === (criteria.targetName || "").toLowerCase()) ||
+    candidates.find(f => category && f.fileType === category) || candidates[0]
+  if (!selected) throw new Error(`Compatible test file required (${criteria.acceptAttr || category || "any supported file"})`)
+  return { filePath: selected.filePath, fileName: selected.fileName, isFromFolder: true, fileSizeKB: Math.round(selected.sizeBytes / 1024) }
 
-    // 2. Try matching against HTML `accept` attribute
-    if (acceptTokens.length > 0) {
-      for (const token of acceptTokens) {
-        // e.g. "image/*"
-        if (token.endsWith("/*")) {
-          const baseMime = token.slice(0, -2)
-          const match = inventory.files.find((f) => f.mimeType.toLowerCase().startsWith(baseMime))
-          if (match) {
-            return {
-              filePath: match.filePath,
-              fileName: match.fileName,
-              isFromFolder: true,
-              fileSizeKB: Math.round(match.sizeBytes / 1024),
-            }
-          }
-        }
-        // e.g. ".pdf" or ".png"
-        if (token.startsWith(".")) {
-          const match = inventory.files.find((f) => f.extension.toLowerCase() === token)
-          if (match) {
-            return {
-              filePath: match.filePath,
-              fileName: match.fileName,
-              isFromFolder: true,
-              fileSizeKB: Math.round(match.sizeBytes / 1024),
-            }
-          }
-        }
-        // e.g. "application/pdf"
-        const exactMime = inventory.files.find((f) => f.mimeType.toLowerCase() === token)
-        if (exactMime) {
-          return {
-            filePath: exactMime.filePath,
-            fileName: exactMime.fileName,
-            isFromFolder: true,
-            fileSizeKB: Math.round(exactMime.sizeBytes / 1024),
-          }
-        }
-      }
-    }
-
-    // 2. Try matching by requested file type (image, pdf, csv, video, document)
-    const category = criteria.fileTypeRequired || "image"
-    const byCategory = inventory.filesByType[category]
-    if (byCategory && byCategory.length > 0) {
-      const match = byCategory[0]
-      return {
-        filePath: match.filePath,
-        fileName: match.fileName,
-        isFromFolder: true,
-        fileSizeKB: Math.round(match.sizeBytes / 1024),
-      }
-    }
-
-    // 3. Match by control label keywords (e.g. avatar/photo -> image, resume/doc -> document)
-    const label = (criteria.targetName || "").toLowerCase()
-    if (/avatar|photo|profile|picture|img|thumbnail/i.test(label) && inventory.filesByType.image.length > 0) {
-      const match = inventory.filesByType.image[0]
-      return {
-        filePath: match.filePath,
-        fileName: match.fileName,
-        isFromFolder: true,
-        fileSizeKB: Math.round(match.sizeBytes / 1024),
-      }
-    }
-    if (/resume|cv|invoice|receipt|contract|doc/i.test(label)) {
-      const docMatch = inventory.filesByType.pdf[0] || inventory.filesByType.document[0]
-      if (docMatch) {
-        return {
-          filePath: docMatch.filePath,
-          fileName: docMatch.fileName,
-          isFromFolder: true,
-          fileSizeKB: Math.round(docMatch.sizeBytes / 1024),
-        }
-      }
-    }
-
-    // 4. Default: first non-empty file
-    const fallback = inventory.files[0]
-    return {
-      filePath: fallback.filePath,
-      fileName: fallback.fileName,
-      isFromFolder: true,
-      fileSizeKB: Math.round(fallback.sizeBytes / 1024),
-    }
-  }
-
-  // Fallback: Generate realistic synthetic dummy file buffer
-  const category = criteria.fileTypeRequired || "image"
-  const dummy = createDummyFileBuffer(category)
-  const tmpPath = path.join(os.tmpdir(), `upload-test-${Date.now()}-${dummy.fileName}`)
-  fs.writeFileSync(tmpPath, dummy.buffer)
-
-  return {
-    filePath: tmpPath,
-    fileName: dummy.fileName,
-    isFromFolder: false,
-    fileSizeKB: Math.round(dummy.buffer.length / 1024),
-    cleanUp: () => {
-      try {
-        fs.unlinkSync(tmpPath)
-      } catch {}
-    },
-  }
 }
 
 /**

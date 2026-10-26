@@ -642,7 +642,21 @@ export type PendingSessionNavigation = {
   requestedAt: string
 }
 
+export type PendingUpload = {
+  context?: string
+  id: string
+  targetName: string
+  accept: string
+  multiple: boolean
+  status: "waiting" | "ready" | "skip"
+  filePaths?: string[]
+  error?: string
+  createdAt: string
+}
+
 export type AutomationJob = {
+  pendingUpload?: PendingUpload
+
   id: string
   /** Stable identity for the shared live-testing session; defaults to the job ID. */
   sessionId?: string

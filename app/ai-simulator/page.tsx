@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo, useCallback, useRef } from "react"
 import Link from "next/link"
+import { UploadFilesPrompt } from "@/components/ai-automation/upload-files-prompt"
 import {
   Sparkles,
   Smartphone,
@@ -2446,6 +2447,7 @@ export default function AISimulatorPage() {
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-slate-900 text-slate-100">
+      {currentJob?.pendingUpload?.status === 'waiting' && <UploadFilesPrompt key={currentJob.pendingUpload.id} jobId={currentJob.id} pending={currentJob.pendingUpload} />}
       {/* Main Workspace: Simulator Frame + Live AI Automation Dock */}
       <main className="flex-1 w-full overflow-hidden flex relative">
         {loading ? (

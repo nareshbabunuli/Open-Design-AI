@@ -630,7 +630,7 @@ export function generateStructuredTestPlan(
 
     // 5. Plan Standalone Checkboxes & Toggles
     const standaloneToggles = screen.actionableElements.filter(
-      (el) => (el.type === "checkbox" || el.type === "toggle") && (!el.formId || !handledFormIds.has(el.formId))
+      (el) => (el.type === "checkbox" || el.type === "toggle" || el.type === "radio") && (!el.formId || !handledFormIds.has(el.formId))
     )
     for (const toggle of standaloneToggles) {
       steps.push({
@@ -641,7 +641,8 @@ export function generateStructuredTestPlan(
         actionType: "toggle",
         targetName: toggle.name,
         targetSelector: toggle.selector,
-        expectedResult: `Toggle/Checkbox "${toggle.name}" toggles state cleanly.`,
+        syntheticValue: "true",
+        expectedResult: `Selection "${toggle.name}" is checked.`,
         status: "pending",
       })
     }

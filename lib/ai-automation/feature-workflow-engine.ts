@@ -1,3 +1,5 @@
+import { uploadControl } from "./upload-interaction"
+import { setSelection, ControlBlocked } from "./control-interactions"
 import puppeteer, { type Browser, type Page } from "puppeteer"
 import { safePuppeteerLaunch } from "../browser/secure-browser"
 import {
@@ -535,10 +537,17 @@ export function buildWorkflowTestPlan(
         : "Synthetic Test Data"
     } else if (/upload|photo|image|file/i.test(act)) {
       actionType = "upload"
-    } else if (/verify|assert|check/i.test(act) || isLast) {
+    } else if (/\b(uncheck|check|select|choose)\b/i.test(act) && /checkbox|radio|option|toggle|switch/i.test(act)) {
+      actionType = "toggle"
+      syntheticVal = /\buncheck\b/i.test(act) ? "false" : "true"
+    } else if (/verify|assert/i.test(act)) {
       actionType = "verify"
     }
 
+    const matchingControls = targetScreen.actionableElements.filter(element =>
+      element.name && act.toLowerCase().includes(element.name.toLowerCase()) &&
+      (actionType !== 'toggle' || ['checkbox', 'radio', 'toggle'].includes(element.type)))
+    const matchedControl = matchingControls.length === 1 ? matchingControls[0] : undefined
     steps.push({
       id: `TEST-${String(stepIdx++).padStart(3, "0")}`,
       screenId: targetScreen.id,
@@ -547,7 +556,8 @@ export function buildWorkflowTestPlan(
       componentLocation: targetScreen.componentLocation || targetScreen.sourceFile,
       stepIndex: i + 1,
       actionType,
-      targetName: act,
+      targetName: matchedControl?.name || act,
+      targetSelector: matchedControl?.selector,
       syntheticValue: syntheticVal,
       expectedResult: isLast ? spec.expectedOutcome : `Screen advances and accepts: ${act}`,
       status: "pending",
@@ -903,33 +913,15 @@ export async function executeFeatureWorkflowJob(
 
         // 2. UPLOAD ACTION
         else if (step.actionType === "upload") {
-          const fileInputs = await page.$$('input[type="file"]')
-          if (fileInputs.length > 0) {
-            const targetInput = fileInputs[0]
-            const acceptAttr = await targetInput.evaluate((el) => el.getAttribute("accept") || "").catch(() => "")
-            const uploadDir = resolveUploadFolder({
-              uploadFilesDir: job.uploadFilesDir,
-              projectDir: job.projectDir,
-              prompt: step.targetName,
-            })
-            const inv = uploadDir ? scanUploadFolder(uploadDir) : null
-            const picked = pickUploadFile(inv, {
-              fileTypeRequired: step.fileTypeRequired || "image",
-              acceptAttr,
-              targetName: step.targetName,
-            })
-            await (targetInput as any).uploadFile(picked.filePath)
-            await targetInput.evaluate((el) => {
-              el.dispatchEvent(new Event("input", { bubbles: true }))
-              el.dispatchEvent(new Event("change", { bubbles: true }))
-            }).catch(() => {})
-            actionSuccess = await targetInput.evaluate((el) => ((el as HTMLInputElement).files?.length || 0) > 0).catch(() => true)
-            step.actualResult = actionSuccess
-              ? `Uploaded test file: ${picked.fileName}`
-              : `Failed to attach file to ${step.targetName}`
-          } else {
-            step.actualResult = "No file input element found on screen"
-          }
+          const result = await uploadControl(page, job, { selector: step.targetSelector, name: step.targetName })
+          actionSuccess = result.ok
+          step.actualResult = result.observation
+          ;(step as any).uploadEvidence = result
+        }
+        else if (step.actionType === "toggle") {
+          const result = await setSelection(page, { selector: step.targetSelector, name: step.targetName }, step.syntheticValue !== "false")
+          actionSuccess = result.ok
+          step.actualResult = result.observation
         }
 
         // 3. CLICK ACTION
@@ -1031,8 +1023,7 @@ export async function executeFeatureWorkflowJob(
 
         // 4. VERIFY ACTION
         else {
-          actionSuccess = true
-          step.actualResult = `Verified expected outcome: ${step.expectedResult}`
+          throw new ControlBlocked(`No executable assertion for ${step.actionType}: ${step.expectedResult}`)
         }
 
         // Render visual cursor overlay before snapshot
@@ -1149,7 +1140,7 @@ export async function executeFeatureWorkflowJob(
           `✓ [${step.id}] Status: ${step.status.toUpperCase()} | Result: ${step.actualResult}`
         )
       } catch (stepErr: any) {
-        step.status = "failed"
+        step.status = stepErr instanceof ControlBlocked ? "blocked" : "failed"
         step.error = stepErr?.message || "Step execution failed"
         step.actualResult = `Error: ${step.error}`
         appendLog(job, "error", `✗ [${step.id}] Step failed: ${step.error}`)
