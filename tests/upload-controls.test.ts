@@ -29,7 +29,7 @@ test('hidden checkbox labels and radio groups reach desired state without toggli
   try {
     const page = await browser.newPage()
     await page.setContent('<input hidden type=checkbox id=c><label for=c>Accept terms</label><input type=radio name=g id=a checked><input type=radio name=g id=b>')
-    assert.equal((await setSelection(page,{selector:'#c'},true)).ok,true)
+    assert.equal((await setSelection(page,{name:'Accept terms'},true)).ok,true)
     assert.equal((await setSelection(page,{selector:'#c'},true)).ok,true)
     assert.equal((await setSelection(page,{selector:'#b'},true)).ok,true)
     assert.deepEqual(await page.$$eval('input',els=>els.map(e=>(e as HTMLInputElement).checked)),[true,false,true])

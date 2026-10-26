@@ -7,17 +7,17 @@ export type ControlTarget = { selector?: string; name?: string }
 export async function resolveControl(page: Page, target: ControlTarget, kind: 'upload' | 'selection'): Promise<ElementHandle<Element>> {
   const handle = await page.evaluateHandle(({ target, kind }) => {
     const allowed = kind === 'upload' ? 'input[type=file],button,[role=button],label,[data-dropzone]' : 'input[type=checkbox],input[type=radio],[role=checkbox],[role=radio],[role=switch]'
-    const named = (el: Element) => {
-      const input = el as HTMLInputElement
-      const labelled = (el.getAttribute('aria-labelledby') || '').split(/\s+/).map(id => document.getElementById(id)?.textContent || '').join(' ')
-      return [el.getAttribute('aria-label'), labelled, ...(Array.from(input.labels || []).map(l => l.textContent)), el.getAttribute('name'), el.id, el.textContent].filter(Boolean).map(s => String(s).trim().toLowerCase())
-    }
     let el: Element | null = null
     if (target.selector) {
       try { const matches = document.querySelectorAll(target.selector); if (matches.length === 1) el = matches[0] } catch {}
     }
     if (!el && target.name) {
-      const matches = Array.from(document.querySelectorAll(allowed)).filter(e => named(e).includes(target.name!.trim().toLowerCase()))
+      const matches = Array.from(document.querySelectorAll(allowed)).filter(e => {
+        const input = e as HTMLInputElement
+        const labelled = (e.getAttribute('aria-labelledby') || '').split(/\s+/).map(id => document.getElementById(id)?.textContent || '').join(' ')
+        const names = [e.getAttribute('aria-label'), labelled, ...Array.from(input.labels || []).map(label => label.textContent), e.getAttribute('name'), e.id, e.textContent]
+        return names.filter(Boolean).map(value => String(value).trim().toLowerCase()).includes(target.name!.trim().toLowerCase())
+      })
       if (matches.length === 1) el = matches[0]
       // A label and its control are the same target.
       else if (matches.length === 2 && matches.some(e => e instanceof HTMLLabelElement && matches.includes(e.control!))) el = matches.find(e => !(e instanceof HTMLLabelElement))!
