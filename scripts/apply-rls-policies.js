@@ -32,8 +32,12 @@ async function applyRLSPolicies() {
 
   try {
     const { default: pg } = await import("pg")
+    // node-postgres lets connection-string sslmode settings override the ssl object.
+    // Remove sslmode so explicit certificate verification cannot be downgraded by the URL.
+    const secureConnectionString = new URL(postgresUrl)
+    secureConnectionString.searchParams.delete("sslmode")
     const client = new pg.Client({
-      connectionString: postgresUrl,
+      connectionString: secureConnectionString.toString(),
       ssl: { rejectUnauthorized: true },
     })
 
