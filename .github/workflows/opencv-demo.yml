@@ -1,0 +1,42 @@
+name: OpenCV demo evidence
+
+on:
+  pull_request:
+    paths:
+      - 'tests/opencv-demo/**'
+      - 'lib/ai-automation/vision-preprocessor.ts'
+      - 'lib/ai-automation/opencv-layout-optimizer.ts'
+      - '.github/workflows/opencv-demo.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  demo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Verify actual OpenCV 5 analysis
+        run: npx --yes tsx@4.23.15 --test tests/opencv-demo/self-test.ts
+      - name: Install Chrome for screenshot capture
+        run: pnpm exec puppeteer browsers install chrome
+      - name: Capture and evaluate the website
+        run: npx --yes tsx@4.23.15 tests/opencv-demo/run.ts
+        env:
+          PUPPETEER_NO_SANDBOX: 'true'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: opencv-demo-evidence
+          path: tests/opencv-demo/artifacts/
+          if-no-files-found: warn
