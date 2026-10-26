@@ -643,6 +643,7 @@ export type PendingSessionNavigation = {
 }
 
 export type PendingUpload = {
+  fileTypeRequired?: "image" | "pdf" | "document" | "video" | "csv" | "other"
   context?: string
   id: string
   targetName: string

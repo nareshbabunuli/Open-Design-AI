@@ -42,9 +42,24 @@ test('custom chooser uses its linked hidden input and leaves unrelated input emp
   try {
     await generateUploadFixtures(folder,'Customer CSV')
     const page = await browser.newPage()
-    await page.setContent('<input type=file id=other><input hidden type=file id=data accept=".csv"><button id=choose onclick="document.querySelector(\'#data\').click()">Choose data</button>')
+    await page.setContent('<input type=file id=other><input hidden type=file id=data accept=".csv" onchange="window.changes=(window.changes||0)+1" oninput="window.inputs=(window.inputs||0)+1"><button id=choose onclick="document.querySelector(\'#data\').click()">Choose data</button>')
     const result = await uploadControl(page,{uploadFilesDir:folder} as any,{selector:'#choose'})
     assert.equal(result.state,'selected')
+    assert.deepEqual(await page.evaluate(()=>[(window as any).inputs,(window as any).changes]),[1,1])
     assert.deepEqual(await page.$$eval('input',els=>els.map(e=>(e as HTMLInputElement).files?.length)),[0,1])
   } finally { await browser.close(); await fs.rm(folder,{recursive:true,force:true}) }
+})
+
+test('missing accept never chooses an arbitrary file; planned types are mandatory', async () => {
+  const folder = await fs.mkdtemp(path.join(os.tmpdir(), 'qa-types-'))
+  try {
+    const chosen = await generateUploadFixtures(folder, 'Résumé upload')
+    assert.match(chosen, /\.docx$/)
+    const zip = await JSZip.loadAsync(await fs.readFile(chosen))
+    assert.match(await zip.file('word/document.xml')!.async('string'), /Fictional résumé/)
+    const inventory = scanUploadFolder(folder)
+    assert.throws(() => pickUploadFile(inventory, {}))
+    assert.match(pickUploadFile(inventory, {fileTypeRequired:'pdf'}).fileName, /\.pdf$/)
+    assert.throws(() => pickUploadFile(inventory, {fileTypeRequired:'pdf',acceptAttr:'image/*'}))
+  } finally { await fs.rm(folder,{recursive:true,force:true}) }
 })

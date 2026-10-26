@@ -913,7 +913,7 @@ export async function executeFeatureWorkflowJob(
 
         // 2. UPLOAD ACTION
         else if (step.actionType === "upload") {
-          const result = await uploadControl(page, job, { selector: step.targetSelector, name: step.targetName })
+          const result = await uploadControl(page, job, { selector: step.targetSelector, name: step.targetName, fileTypeRequired: step.fileTypeRequired })
           actionSuccess = result.ok
           step.actualResult = result.observation
           ;(step as any).uploadEvidence = result
@@ -1021,7 +1021,17 @@ export async function executeFeatureWorkflowJob(
           step.actualResult = actionSuccess ? `Clicked action element for: "${step.targetName}"` : "Action element not found"
         }
 
-        // 4. VERIFY ACTION
+        // Explicit DOM assertions; unsupported natural-language claims remain blocked.
+        else if (step.actionType === 'verify') {
+          const quoted = step.expectedResult.match(/["“]([^"”]+)["”]/)?.[1]
+          if (!step.targetSelector && !quoted) throw new ControlBlocked(`Verification needs a selector or quoted expected text: ${step.expectedResult}`)
+          actionSuccess = await page.evaluate(({ selector, text }) => {
+            const visible = (el: Element) => { const r = el.getBoundingClientRect(); const s = getComputedStyle(el); return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' }
+            if (selector) { const matches = document.querySelectorAll(selector); return matches.length === 1 && visible(matches[0]) && (!text || (matches[0].textContent || '').includes(text)) }
+            return Array.from(document.querySelectorAll('body *')).some(el => visible(el) && !el.children.length && (el.textContent || '').includes(text!))
+          }, { selector: step.targetSelector, text: quoted })
+          step.actualResult = actionSuccess ? 'Verified expected visible element/text' : 'Expected visible element/text not found'
+        }
         else {
           throw new ControlBlocked(`No executable assertion for ${step.actionType}: ${step.expectedResult}`)
         }

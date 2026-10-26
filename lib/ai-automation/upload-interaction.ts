@@ -3,11 +3,11 @@ import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import type { AutomationJob } from './types'
 import { saveJob, getJob } from './job-store'
-import { resolveUploadFolder, scanUploadFolder, pickUploadFile } from './test-file-manager'
+import { resolveUploadFolder, scanUploadFolder, pickUploadFile, inferUploadType, type TestFileType } from './test-file-manager'
 import { resolveControl, ControlBlocked, type ControlTarget } from './control-interactions'
 
-export async function waitForUploadFiles(job: AutomationJob, targetName: string, accept: string, multiple: boolean, context?: string): Promise<string[]> {
-  const request = { context, id: randomUUID(), targetName, accept, multiple, status: 'waiting' as const, createdAt: new Date().toISOString() }
+export async function waitForUploadFiles(job: AutomationJob, targetName: string, accept: string, multiple: boolean, context?: string, fileTypeRequired?: TestFileType): Promise<string[]> {
+  const request = { context, fileTypeRequired, id: randomUUID(), targetName, accept, multiple, status: 'waiting' as const, createdAt: new Date().toISOString() }
   job.pendingUpload = request
   job.currentStep = `Test files required: ${targetName}`
   saveJob(job)
@@ -31,7 +31,7 @@ export async function waitForUploadFiles(job: AutomationJob, targetName: string,
   }
 }
 
-export async function uploadControl(page: Page, job: AutomationJob, target: ControlTarget) {
+export async function uploadControl(page: Page, job: AutomationJob, target: ControlTarget & { fileTypeRequired?: TestFileType }) {
   let control = await resolveControl(page, target, 'upload')
   let input: ElementHandle<Element> | null = null
   let chooser: FileChooser | undefined
@@ -79,19 +79,20 @@ export async function uploadControl(page: Page, job: AutomationJob, target: Cont
         }).catch(() => {})
       }
     }
+    const fileTypeRequired = target.fileTypeRequired || inferUploadType(`${target.name || ""} ${context}`)
     let files: string[] = []
     const folder = resolveUploadFolder({ uploadFilesDir: job.uploadFilesDir, projectDir: job.projectDir })
     if (input && folder) {
-      try { files = [pickUploadFile(scanUploadFolder(folder), { acceptAttr: accept, targetName: target.name }).filePath] } catch {}
+      try { files = [pickUploadFile(scanUploadFolder(folder), { acceptAttr: accept, targetName: target.name, fileTypeRequired }).filePath] } catch {}
     }
-    if (!files.length) files = await waitForUploadFiles(job, target.name || target.selector || 'Upload', accept, multiple, context)
+    if (!files.length) files = await waitForUploadFiles(job, target.name || target.selector || 'Upload', accept, multiple, context, fileTypeRequired)
     if (!multiple && files.length !== 1) throw new ControlBlocked('This control accepts only one file')
     if (files.some(file => !fs.existsSync(file))) throw new ControlBlocked('Selected test file is no longer available')
     // Revalidate accept on resume, including externally supplied fixtures.
-    if (accept) for (const file of files) {
+    for (const file of files) {
       const inventory = scanUploadFolder((await import('node:path')).dirname(file))
       inventory.files = inventory.files.filter(f => f.filePath === file)
-      try { pickUploadFile(inventory, { acceptAttr: accept }) } catch { throw new ControlBlocked('Selected file does not match this control’s accepted formats') }
+      try { pickUploadFile(inventory, { acceptAttr: accept, fileTypeRequired, targetName: file.split(/[\\/]/).pop() }) } catch { throw new ControlBlocked('Selected file does not match this control’s accepted formats') }
     }
     const network: Array<{ status: number; url: string }> = []
     const observe = (response: HTTPResponse) => {
@@ -103,8 +104,11 @@ export async function uploadControl(page: Page, job: AutomationJob, target: Cont
     }
     page.on('response', observe)
     try {
-      if (input) await (input as ElementHandle<HTMLInputElement>).uploadFile(...files)
-      else await chooser!.accept(files)
+      // FileChooser.accept delegates to Puppeteer's uploadFile, which emits input
+      // and change. Resolve an intercepted chooser exactly once; never cancel it
+      // after attachment or dispatch duplicate framework events.
+      if (chooser) { const activeChooser = chooser; chooser = undefined; await activeChooser.accept(files) }
+      else if (input) await (input as ElementHandle<HTMLInputElement>).uploadFile(...files)
       await new Promise(r => setTimeout(r, 1000))
       const selected = input ? await input.evaluate(el => Array.from((el as HTMLInputElement).files || []).map(f => f.name)).catch(() => []) : []
       const names = files.map(f => f.split(/[\\/]/).pop()!)

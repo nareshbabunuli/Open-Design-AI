@@ -17,6 +17,6 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile --ignore-scripts
-      - run: pnpm exec puppeteer browsers install chrome --install-deps
+      - run: pnpm exec puppeteer browsers install chrome
       - run: pnpm run typecheck
       - run: pnpm dlx tsx --test tests/upload-controls.test.ts

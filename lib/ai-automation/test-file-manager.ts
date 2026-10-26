@@ -232,6 +232,14 @@ export function scanUploadFolder(folderPath: string): UploadFolderInventory {
  * 2. The required file category (image, pdf, document, csv, video)
  * 3. Fallback to generating a synthetic dummy buffer if no real file exists
  */
+export function inferUploadType(hint = ''): TestFileType | undefined {
+  if (/\bpdf\b/i.test(hint)) return 'pdf'
+  if (/\bcsv\b|spreadsheet|contact.*list/i.test(hint)) return 'csv'
+  if (/résumé|resume|\bcv\b|document|invoice|receipt|\bdocx?\b|text file/i.test(hint)) return 'document'
+  if (/image|photo|avatar|picture/i.test(hint)) return 'image'
+  if (/video|movie/i.test(hint)) return 'video'
+}
+
 export function pickUploadFile(
   inventory: UploadFolderInventory | null,
   criteria: {
@@ -247,12 +255,12 @@ export function pickUploadFile(
   cleanUp?: () => void
 } {
   const tokens = (criteria.acceptAttr || "").split(",").map(t => t.trim().toLowerCase()).filter(Boolean)
-  const candidates = (inventory?.files || []).filter(file => file.sizeBytes > 0 &&
+  const candidates = (inventory?.files || []).filter(file => file.sizeBytes > 0 && (!criteria.fileTypeRequired || file.fileType === criteria.fileTypeRequired) &&
     (!tokens.length || tokens.some(token => token.startsWith(".") ? file.extension.toLowerCase() === token :
       token.endsWith("/*") ? file.mimeType.toLowerCase().startsWith(token.slice(0, -1)) : file.mimeType.toLowerCase() === token)))
   const category = criteria.fileTypeRequired
   const selected = candidates.find(f => f.fileName.toLowerCase() === (criteria.targetName || "").toLowerCase()) ||
-    candidates.find(f => category && f.fileType === category) || candidates[0]
+    candidates.find(f => category && f.fileType === category) || ((tokens.length || category) ? candidates[0] : undefined)
   if (!selected) throw new Error(`Compatible test file required (${criteria.acceptAttr || category || "any supported file"})`)
   return { filePath: selected.filePath, fileName: selected.fileName, isFromFolder: true, fileSizeKB: Math.round(selected.sizeBytes / 1024) }
 

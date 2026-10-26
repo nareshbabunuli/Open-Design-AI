@@ -25,7 +25,8 @@ export async function POST(req: NextRequest) {
     const folder = path.join(process.cwd(), '.jobs', 'upload-fixtures', randomUUID())
     await fs.mkdir(folder, { recursive: true })
     try {
-      if (body.action === 'generate') await generateUploadFixtures(folder, pending.targetName, pending.context)
+      let generated: string | undefined
+      if (body.action === 'generate') generated = await generateUploadFixtures(folder, pending.targetName, pending.context, pending.accept, pending.fileTypeRequired)
       else {
         const files = (form?.getAll('files') || []).filter((f): f is File => typeof f !== 'string')
         if (!files.length || files.length > (pending.multiple ? 10 : 1)) throw new Error('Provide the required number of files (maximum 10)')
@@ -38,8 +39,8 @@ export async function POST(req: NextRequest) {
       }
       const inventory = scanUploadFolder(folder)
       let selected: string[]
-      if (body.action === 'generate') selected = [pickUploadFile(inventory, { acceptAttr: pending.accept, targetName: pending.targetName }).filePath]
-      else selected = inventory.files.map(file => pickUploadFile({ ...inventory, files: [file] }, { acceptAttr: pending.accept }).filePath)
+      if (body.action === 'generate') selected = [generated!]
+      else selected = inventory.files.map(file => pickUploadFile({ ...inventory, files: [file] }, { acceptAttr: pending.accept, fileTypeRequired: pending.fileTypeRequired, targetName: file.fileName }).filePath)
       if (!selected.length) throw new Error('No compatible files found')
       if (job.status !== 'running' || job.pendingUpload?.id !== pending.id || pending.status !== 'waiting') throw new Error('Upload request changed; try again')
       pending.filePaths = selected

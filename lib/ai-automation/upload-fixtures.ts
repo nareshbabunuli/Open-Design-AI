@@ -1,9 +1,9 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import JSZip from 'jszip'
-import { createDummyFileBuffer } from './test-file-manager'
+import { createDummyFileBuffer, inferUploadType, pickUploadFile, scanUploadFolder, type TestFileType } from './test-file-manager'
 
-export async function generateUploadFixtures(folder: string, label = 'Test upload', context = '') {
+export async function generateUploadFixtures(folder: string, label = 'Test upload', context = '', accept = '', fileTypeRequired?: TestFileType) {
   await fs.mkdir(folder, { recursive: true })
   for (const type of ['image', 'pdf', 'csv', 'document'] as const) {
     const file = createDummyFileBuffer(type)
@@ -33,4 +33,8 @@ export async function generateUploadFixtures(folder: string, label = 'Test uploa
   zip.file('word/document.xml', `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>${xmlText}</w:t></w:r></w:p></w:body></w:document>`)
   await fs.writeFile(path.join(folder, 'sample-document.docx'), await zip.generateAsync({ type: 'nodebuffer' }))
   for (const [name, content] of Object.entries({ 'sample.json': '{"example":true}', 'sample.js': 'export const example = true;\n', 'sample.ts': 'export const example: boolean = true;\n', 'sample.py': 'example = True\n', 'sample.html': '<!doctype html><title>Test fixture</title>', 'sample.css': 'body { color: black; }', 'sample.md': '# Fictional QA fixture\n' })) await fs.writeFile(path.join(folder, name), content)
+  const preferred = /resume|résumé|\bcv\b/i.test(hint) ? 'sample-document.docx' : undefined
+  const inventory = scanUploadFolder(folder)
+  // Return the exact chosen fixture, rather than selecting again from a mixed folder.
+  return pickUploadFile(inventory, { acceptAttr: accept, fileTypeRequired: fileTypeRequired || inferUploadType(hint) || (accept ? undefined : 'document'), targetName: preferred }).filePath
 }

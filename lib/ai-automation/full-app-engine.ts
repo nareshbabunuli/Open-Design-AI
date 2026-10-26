@@ -1430,7 +1430,7 @@ export async function executeStructuredTestPlan(
           }
         }
       } else if (step.actionType === "upload") {
-        const result = await uploadControl(page, job, { selector: step.targetSelector, name: step.targetName })
+        const result = await uploadControl(page, job, { selector: step.targetSelector, name: step.targetName, fileTypeRequired: step.fileTypeRequired })
         actionVerdict = result.ok ? "passed" : "failed"
         observation = result.observation
         ;(step as any).uploadEvidence = result
