@@ -149,30 +149,17 @@ export async function humanClick(
   }
 
   try {
-    // 1. Authentic human press duration (65ms hold) so React Native Web Pressable detects press
-    await page.mouse.move(pt.x, pt.y)
-    await page.mouse.down()
-    await sleep(65)
-    await page.mouse.up()
-
-    if (opts?.double) {
-      await sleep(100)
-      await page.mouse.down()
-      await sleep(65)
-      await page.mouse.up()
-    }
-
-    // 2. Direct DOM dispatch to trigger React Native Web onPress handler
-    await el.evaluate((node) => {
-      const target = (node as HTMLElement).closest('[tabindex="0"], button, [role="button"]') || node
-      if (typeof (target as HTMLElement).click === "function") {
-        ;(target as HTMLElement).click()
-      }
-      target.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }))
-    }).catch(() => {})
-
-    // 3. CDP ElementHandle click fallback
-    await el.click().catch(() => {})
+    const actionable = await el.evaluate((node) => {
+      const target = node as HTMLElement
+      const rect = target.getBoundingClientRect()
+      const root = target.getRootNode() as Document | ShadowRoot
+      const hit = root.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
+      return !target.matches(":disabled") && target.getAttribute("aria-disabled") !== "true" &&
+        Boolean(hit && (hit === target || target.contains(hit)))
+    })
+    if (!actionable) return null
+    // One caller action, one browser activation. Never follow it with DOM clicks.
+    await page.mouse.click(pt.x, pt.y, { delay: 65, count: opts?.double ? 2 : 1 })
   } catch (err) {
     console.warn("[human-actions] click failed:", (err as Error)?.message)
     return null
@@ -186,9 +173,28 @@ export async function humanType(
   page: Page,
   el: ElementHandle<Element>,
   text: string,
-  opts?: { maskInBanner?: boolean; label?: string },
+  opts?: { maskInBanner?: boolean; label?: string; allowInvalid?: boolean },
 ): Promise<boolean> {
-  const pt = await humanClick(page, el, { double: true, label: "typing" })
+  try {
+    const kind = await el.evaluate(node => {
+      const input = node as HTMLInputElement
+      if (input.matches(":disabled") || input.readOnly || input.getAttribute("aria-readonly") === "true") return "blocked"
+      if (input.tagName === "INPUT") return input.type
+      if (input.tagName === "TEXTAREA" || input.isContentEditable) return "text"
+      return "blocked"
+    })
+    if (kind === "blocked" || ["checkbox", "radio", "file", "hidden", "button", "submit", "reset", "image"].includes(kind)) return false
+    // Native segmented inputs cannot be entered reliably as ordinary text.
+    if (["date", "time", "datetime-local", "month", "week", "color", "range"].includes(kind)) {
+      await el.asLocator().setTimeout(2000).fill(text)
+      await page.waitForFunction((node, value, allowInvalid) => {
+        const input = node as HTMLInputElement
+        return input.value === value && (allowInvalid || input.validity.valid)
+      }, { timeout: 1500 }, el, text, opts?.allowInvalid === true)
+      return true
+    }
+  } catch { return false }
+  const pt = await humanClick(page, el, { label: "typing" })
   if (!pt) {
     console.warn("[human-actions] humanType aborted — could not focus field")
     return false
@@ -233,25 +239,15 @@ export async function humanType(
     await sleep(30)
   }
 
-  // Ensure value took effect for React & React Native Web controlled inputs
+  // Blur commits change handlers. Read back the application value; never force it.
   try {
-    await el.evaluate((node, val) => {
-      const inp = node as HTMLInputElement
-      if (inp) {
-        const proto = inp.tagName === "TEXTAREA"
-          ? window.HTMLTextAreaElement.prototype
-          : window.HTMLInputElement.prototype
-        const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set
-        if (setter) {
-          setter.call(inp, val)
-        } else {
-          inp.value = val
-        }
-        inp.dispatchEvent(new Event("input", { bubbles: true }))
-        inp.dispatchEvent(new Event("change", { bubbles: true }))
-      }
-    }, text)
-  } catch {}
+    await el.evaluate(node => (node as HTMLElement).blur())
+    await page.waitForFunction((node, val, allowInvalid) => {
+      const element = node as HTMLInputElement
+      return element.isContentEditable ? (element.innerText || "").replace(/\r\n/g, "\n") === val :
+        element.value === val && (allowInvalid || element.validity.valid)
+    }, { timeout: 1500 }, el, text, opts?.allowInvalid === true)
+  } catch { return false }
 
   await sleep(HUMAN_PACE.betweenFieldsMs)
   return true

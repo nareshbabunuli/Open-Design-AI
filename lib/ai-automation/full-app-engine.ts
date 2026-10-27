@@ -68,6 +68,7 @@ import {
 import { executeChainedWorkflows } from "./workflow-chainer"
 import { buildAutomationReport } from "./evidence-reporter"
 import { humanClick, humanType, humanMouseMove } from "./human-actions"
+import { resolveExecutionTarget, setCheckedState, selectControlOptions, verifyTabSelection, attachControlFiles, observeFileSelection } from "./control-execution"
 import {
   installVisualOverlay,
   animateCursorTo,
@@ -147,28 +148,8 @@ async function findVisibleInput(
   selector: string | undefined,
   name: string,
 ): Promise<import("puppeteer").ElementHandle<Element> | null> {
-  if (selector) {
-    try {
-      const matches = await page.$$(selector)
-      for (const match of matches) {
-        if (await match.boundingBox()) return match
-      }
-    } catch {}
-  }
-
-  const candidates = await page.$$("input:not([type=hidden]), textarea, [contenteditable=true]")
-  for (const candidate of candidates) {
-    const matches = await candidate.evaluate((node, targetName) => {
-      const el = node as HTMLInputElement
-      const label = el.labels ? Array.from(el.labels).map((item) => item.textContent || "").join(" ") : ""
-      const haystack = [label, el.getAttribute("aria-label"), el.getAttribute("placeholder"), el.getAttribute("name"), el.id]
-        .filter(Boolean).join(" ").toLowerCase()
-      const normalizedTarget = String(targetName).toLowerCase().trim()
-      return haystack.includes(normalizedTarget) || normalizedTarget.split(/\s+/).some((token) => token.length > 2 && haystack.includes(token))
-    }, name).catch(() => false)
-    if (matches && await candidate.boundingBox()) return candidate
-  }
-  return null
+  return resolveExecutionTarget(page, selector, name,
+    'input:not([type=hidden]),textarea,[contenteditable="true"],[contenteditable="plaintext-only"]')
 }
 
 type VisibleFormFillTask = {
@@ -194,7 +175,7 @@ async function fillFormVisibly(
   const markerPrefix = `qa-human-${job.id}-${Date.now()}`
   const tasks = await page.evaluate(
     (sel, data, formPayload, payment, prefix, invalidFormat) => {
-      const form = (document.querySelector(sel) || document.querySelector("form")) as HTMLFormElement | null
+      const form = document.querySelector(sel) as HTMLFormElement | null
       if (!form) return [] as VisibleFormFillTask[]
       const tasks: VisibleFormFillTask[] = []
       const radioGroups = new Set<string>()
@@ -228,7 +209,12 @@ async function fillFormVisibly(
           }
           return
         }
-        if (rect.width <= 0 || rect.height <= 0 || style.display === "none" || style.visibility === "hidden") return
+        const selection = type === "checkbox" || type === "radio"
+        const visibleLabel = selection && field.labels && Array.from(field.labels).some((node: any) => {
+          const r = node.getBoundingClientRect(), s = getComputedStyle(node)
+          return r.width > 2 && r.height > 2 && s.display !== "none" && s.visibility !== "hidden"
+        })
+        if (!visibleLabel && (rect.width <= 0 || rect.height <= 0 || style.display === "none" || style.visibility === "hidden")) return
         if (["submit", "button", "hidden", "reset"].includes(type)) return
 
         const key = String(field.name || field.id || "")
@@ -241,7 +227,7 @@ async function fillFormVisibly(
           return
         }
         if (formPayload && key && Object.prototype.hasOwnProperty.call(formPayload, key)) {
-          tasks.push({ selector: mark(field, index), name: label || placeholder || key || "Form field", value: String(formPayload[key] ?? ""), kind: tag === "select" ? "select" : "type", sensitive })
+          tasks.push({ selector: mark(field, index), name: label || placeholder || key || "Form field", value: String(formPayload[key] ?? ""), kind: tag === "select" ? "select" : (type === "checkbox" || type === "radio") ? "check" : "type", sensitive })
           return
         }
 
@@ -275,7 +261,13 @@ async function fillFormVisibly(
         else if (type === "tel" || /phone|mobile/i.test(name + " " + placeholder + " " + label)) value = String(data.phone || "+15555550123")
         else if (type === "number" || /amount|count|age|qty/i.test(name + " " + placeholder + " " + label)) value = "10"
         else if (type === "url" || /url|website/i.test(name + " " + placeholder + " " + label)) value = "https://example.com"
-        else if (type === "date") value = new Date().toISOString().slice(0, 10)
+        else if (type === "date") value = field.min || new Date().toISOString().slice(0, 10)
+        else if (type === "time") value = field.min || "13:15"
+        else if (type === "datetime-local") value = field.min || new Date().toISOString().slice(0, 16)
+        else if (type === "month") value = field.min || new Date().toISOString().slice(0, 7)
+        else if (type === "week") value = field.min || "2026-W01"
+        else if (type === "color") value = "#336699"
+        else if (type === "range") value = field.min || "0"
 
         if (payment) {
           if (/card[-_]?num|credit[-_]?card|cc[-_]?num|card_number|cardnumber/i.test(name) || /card\s*number/i.test(placeholder)) value = payment.cardNumber || "4242 4242 4242 4242"
@@ -308,22 +300,13 @@ async function fillFormVisibly(
         acceptAttr: task.accept,
         targetName: task.name,
       })
-      try {
-        await (field as any).uploadFile(picked.filePath)
-        await field.evaluate((el) => {
-          el.dispatchEvent(new Event("input", { bubbles: true }))
-          el.dispatchEvent(new Event("change", { bubbles: true }))
-        }).catch(() => {})
-        const attached = await field.evaluate((el) => ((el as HTMLInputElement).files?.length || 0) > 0).catch(() => false)
-        if (!attached) failed++
-      } catch {
-        failed++
-      }
+      const result = await attachControlFiles(page, field, [picked.filePath])
+      if (!result.ok) failed++
       await publishLiveFrame(job, page)
       continue
     }
     const box = await field?.boundingBox().catch(() => null)
-    if (!field || !box) {
+    if (!field || (!box && task.kind !== "check")) {
       failed++
       appendLog(job, "warn", `[FORM] Could not find visible field "${task.name}" for human-paced input.`)
       continue
@@ -337,24 +320,16 @@ async function fillFormVisibly(
       value: task.value,
       sensitive: task.sensitive,
     })
-    await humanMouseMove(page, box.x + box.width / 2, box.y + box.height / 2)
+    if (box) await humanMouseMove(page, box.x + box.width / 2, box.y + box.height / 2)
     await publishLiveFrame(job, page)
 
     let ok = false
     if (task.kind === "type") {
-      ok = await humanType(page, field, task.value, { label: task.name, maskInBanner: task.sensitive })
+      ok = await humanType(page, field, task.value, { label: task.name, maskInBanner: task.sensitive, allowInvalid: forceInvalidFormat })
     } else if (task.kind === "check") {
-      ok = Boolean(await humanClick(page, field))
+      ok = (await setCheckedState(page, field, task.value === "true")).ok
     } else {
-      const optionIndex = await field.evaluate((node, value) => Array.from((node as HTMLSelectElement).options).findIndex((option) => option.value === value), task.value).catch(() => -1)
-      if (optionIndex >= 0 && await humanClick(page, field)) {
-        try {
-          await page.keyboard.press("Home")
-          for (let i = 0; i < optionIndex; i++) await page.keyboard.press("ArrowDown")
-          await page.keyboard.press("Enter")
-          ok = await field.evaluate((node, value) => (node as HTMLSelectElement).value === value, task.value).catch(() => false)
-        } catch {}
-      }
+      ok = (await selectControlOptions(page, field, task.value)).ok
     }
 
     if (!ok) failed++
@@ -368,7 +343,7 @@ async function fillFormVisibly(
 async function clickFormSubmitVisibly(job: AutomationJob, page: Page, formSelector: string, targetName: string): Promise<boolean> {
   const marker = `qa-human-submit-${job.id}-${Date.now()}`
   const selector = await page.evaluate((sel, markerValue) => {
-    const form = (document.querySelector(sel) || document.querySelector("form")) as HTMLFormElement | null
+    const form = document.querySelector(sel) as HTMLFormElement | null
     if (!form) return ""
     const submit = (
       form.querySelector('button[type="submit"], input[type="submit"]') ||
@@ -689,6 +664,19 @@ export async function executeStructuredTestPlan(
       continue
     }
 
+    // Some existing plans label switches/radios as generic clicks. Dispatch from the
+    // actual target semantics so those plans cannot invert an already-correct state.
+    if (step.actionType === "click") {
+      const control = await resolveExecutionTarget(page, step.targetSelector, step.targetName,
+        'input[type="checkbox"],input[type="radio"],[role="checkbox"],[role="radio"],[role="switch"],[aria-pressed]')
+      if (control) {
+        if (await control.evaluate(node => node.matches('input[type="checkbox"],input[type="radio"],[role="checkbox"],[role="radio"],[role="switch"],[aria-pressed]'))) {
+          step.actionType = "toggle"
+        }
+        await control.dispose()
+      }
+    }
+
     // Safety guard check
     const safety = classifyAction(step.targetName, options?.allowActions || [], {
       isProduction: isProd,
@@ -1000,9 +988,9 @@ export async function executeStructuredTestPlan(
 
         const formExists = await page.evaluate((sel) => {
           try {
-            return Boolean(document.querySelector(sel) || document.querySelector("form"))
+            return Boolean(document.querySelector(sel))
           } catch {
-            return Boolean(document.querySelector("form"))
+            return false
           }
         }, formSel)
 
@@ -1022,7 +1010,7 @@ export async function executeStructuredTestPlan(
         } else if (formVariant === "required_empty") {
           // Clear all form inputs
           await page.evaluate((sel) => {
-            const form = (document.querySelector(sel) || document.querySelector("form")) as HTMLFormElement | null
+            const form = document.querySelector(sel) as HTMLFormElement | null
             if (!form) return
             form.querySelectorAll("input, textarea, select").forEach((field: any) => {
               if (field.type === "checkbox" || field.type === "radio") {
@@ -1050,7 +1038,7 @@ export async function executeStructuredTestPlan(
           const mutating2xx = calls.some((c) => c.isMutating && typeof c.status === "number" && c.status >= 200 && c.status < 300)
 
           const validation = await page.evaluate((sel) => {
-            const form = (document.querySelector(sel) || document.querySelector("form")) as HTMLFormElement | null
+            const form = document.querySelector(sel) as HTMLFormElement | null
             if (!form) return { hasError: false, detail: "Form not found" }
 
             const invalids = form.querySelectorAll(":invalid")
@@ -1119,7 +1107,7 @@ export async function executeStructuredTestPlan(
           const mutating2xx = calls.some((c) => c.isMutating && typeof c.status === "number" && c.status >= 200 && c.status < 300)
 
           const validation = await page.evaluate((sel) => {
-            const form = (document.querySelector(sel) || document.querySelector("form")) as HTMLFormElement | null
+            const form = document.querySelector(sel) as HTMLFormElement | null
             if (!form) return { hasError: false, detail: "Form not found" }
 
             const invalids = form.querySelectorAll(":invalid")
@@ -1171,7 +1159,7 @@ export async function executeStructuredTestPlan(
             /payment|checkout|pay|billing|subscription|order|cart/i.test(step.targetName) ||
             /pay|checkout|card/i.test(step.screenName) ||
             (await page.evaluate((sel) => {
-              const form = (document.querySelector(sel) || document.querySelector("form")) as HTMLFormElement | null
+              const form = document.querySelector(sel) as HTMLFormElement | null
               if (!form) return false
               const txt = (form.textContent || "").toLowerCase()
               const inputs = Array.from(form.querySelectorAll("input"))
@@ -1194,7 +1182,7 @@ export async function executeStructuredTestPlan(
           // Reuse valid values already present in the app where safe; explicit
           // Postman mappings and supplied sandbox credentials take precedence.
           const existingValuesReused = await page.evaluate((sel) => {
-            const form = (document.querySelector(sel) || document.querySelector("form")) as HTMLFormElement | null
+            const form = document.querySelector(sel) as HTMLFormElement | null
             if (!form) return 0
             return Array.from(form.querySelectorAll("input, textarea, select")).filter((field: any) => {
               const type = (field.type || "").toLowerCase()
@@ -1325,18 +1313,11 @@ export async function executeStructuredTestPlan(
         const isUsernameField = /user|login/i.test(step.targetName) || /user|login/i.test(step.targetSelector || "")
         const isPasswordField = /pass/i.test(step.targetName) || /pass/i.test(step.targetSelector || "")
 
-        if (isEmailField && credentials?.username) {
+        const authField = testPlan.screens.find(screen => screen.id === step.screenId)?.isLoginWall === true
+        if (authField && (isEmailField || isUsernameField) && credentials?.username) {
           inputVal = credentials.username
-        } else if (isUsernameField && credentials?.username) {
-          inputVal = credentials.username
-        } else if (isPasswordField && credentials?.password) {
+        } else if (authField && isPasswordField && credentials?.password) {
           inputVal = credentials.password
-        } else if (isEmailField && !credentials?.username && job.authState !== "skipped") {
-          appendLog(job, "warn", `[AUTH] Email input field "${step.targetName}" detected. Prompting user for email...`)
-          await authenticateIfNeeded(job, page, credentials)
-          if (credentials?.username) {
-            inputVal = credentials.username
-          }
         }
 
         const isSearchField = /search|filter|find|query/i.test(step.targetName) || /search|filter/i.test(step.targetSelector || "")
@@ -1414,8 +1395,8 @@ export async function executeStructuredTestPlan(
           if (filled) {
             actionVerdict = "passed"
             observation = isSensitiveField
-              ? `Filled sensitive field "${step.targetName}" with native keyboard input (value redacted from evidence).`
-              : `Typed synthetic value "${secretRedactor.redact(inputVal)}" into field "${step.targetName}" using native keyboard input.`
+              ? `Filled sensitive field "${step.targetName}" and verified its accepted value (redacted from evidence).`
+              : `Typed synthetic value "${secretRedactor.redact(inputVal)}" into field "${step.targetName}" and verified the accepted value.`
           } else {
             actionVerdict = "failed"
             observation = `Could not type into visible field "${step.targetName}".`
@@ -1436,89 +1417,19 @@ export async function executeStructuredTestPlan(
         const fileType = step.fileTypeRequired || "image"
         await showActionBanner(page, `Upload ${fileType.toUpperCase()} -> ${step.targetName}`)
 
-        // 1. Resolve target file input or fallback to any file input on the page
-        const fileInput =
-          (step.targetSelector ? await page.$(step.targetSelector).catch(() => null) : null) ||
-          (await page.$('input[type="file"]').catch(() => null))
-
-        const acceptAttr = fileInput
-          ? await fileInput.evaluate((el) => el.getAttribute("accept") || "").catch(() => "")
-          : ""
-
-        // 2. Pick matching file from user-mentioned upload folder or fallback to synthetic dummy
-        const picked = pickUploadFile(activeUploadInventory, {
-          fileTypeRequired: fileType,
-          acceptAttr,
-          targetName: step.targetName,
-        })
-
-        if (!fileInput) {
-          // Fallback: if targetSelector is a custom upload button/dropzone, intercept fileChooser on click
-          const triggerHandle = step.targetSelector ? await page.$(step.targetSelector).catch(() => null) : null
-          if (triggerHandle) {
-            try {
-              const [chooser] = await Promise.all([
-                page.waitForFileChooser({ timeout: 2500 }),
-                triggerHandle.click(),
-              ])
-              await chooser.accept([picked.filePath])
-              await settle(page, netRecorder, 3000)
-              actionVerdict = "passed"
-              observation = `Attached ${fileType.toUpperCase()} file ("${picked.fileName}") via file chooser on "${step.targetName}".`
-            } catch {
-              actionVerdict = "blocked"
-              observation = `No <input type="file"> found for upload "${step.targetName}".`
-            } finally {
-              await triggerHandle.dispose().catch(() => {})
-            }
-          } else {
-            actionVerdict = "blocked"
-            observation = `No <input type="file"> found for upload "${step.targetName}".`
-          }
+        const uploadTarget = await resolveExecutionTarget(page, step.targetSelector, step.targetName,
+          'input[type="file"],button,[role="button"]')
+        if (!uploadTarget) {
+          actionVerdict = "failed"
+          observation = `Upload target "${step.targetName}" is missing or ambiguous; no other input was used.`
         } else {
           try {
-            await (fileInput as any).uploadFile(picked.filePath)
-            await fileInput.evaluate((el) => {
-              el.dispatchEvent(new Event("input", { bubbles: true }))
-              el.dispatchEvent(new Event("change", { bubbles: true }))
-            }).catch(() => {})
-            await settle(page, netRecorder, 3000)
-
-            const uploadState = await fileInput.evaluate((el) => {
-              const input = el as HTMLInputElement
-              const fileCount = input?.files?.length || 0
-              const hasPreview = Boolean(document.querySelector('img[src^="data:"], img[src^="blob:"], .file-preview, [data-preview], #upload-preview'))
-              return { fileCount, hasPreview }
-            }).catch(() => ({ fileCount: 0, hasPreview: false }))
-
-            const calls = netRecorder.getCapturedCalls()
-            const hasMultipartRequest = calls.some((c) => c.isMutating)
-
-            const sourceNote = picked.isFromFolder
-              ? `from folder "${path.basename(picked.filePath)}" (${picked.fileSizeKB} KB)`
-              : `("${picked.fileName}")`
-
-            if (uploadState.fileCount > 0 && (uploadState.hasPreview || hasMultipartRequest)) {
-              actionVerdict = "passed"
-              observation = `Attached ${fileType.toUpperCase()} file ${sourceNote}. Wire/DOM confirmation verified.`
-            } else if (uploadState.fileCount > 0) {
-              actionVerdict = "passed"
-              observation = `File attached to input element: ${sourceNote}.`
-            } else {
-              actionVerdict = "failed"
-              observation = `Failed to attach file to upload control "${step.targetName}".`
-            }
-
-            if (picked.isFromFolder) {
-              appendLog(
-                job,
-                "info",
-                `📁 Attached test file from folder: "${picked.fileName}" (${picked.fileSizeKB} KB) into "${step.targetName}"`
-              )
-            }
-          } finally {
-            await fileInput.dispose().catch(() => {})
-          }
+            const acceptAttr = await uploadTarget.evaluate(node => node.getAttribute("accept") || "")
+            const picked = pickUploadFile(activeUploadInventory, { fileTypeRequired: fileType, acceptAttr, targetName: step.targetName })
+            const result = await attachControlFiles(page, uploadTarget, [picked.filePath])
+            actionVerdict = result.ok ? "passed" : "failed"
+            observation = result.reason
+          } finally { await uploadTarget.dispose() }
         }
 
         step.evidence = {
@@ -1531,202 +1442,40 @@ export async function executeStructuredTestPlan(
           networkCalls: netRecorder.getCapturedCalls(),
           consoleErrors: consoleRecorder.getErrors(),
         }
-      } else if (step.actionType === "select") {
-        const target = (step.targetSelector ? await page.$(step.targetSelector).catch(() => null) : null) || await page.$("select")
-        if (!target || !(await target.boundingBox())) {
-          actionVerdict = "failed"
-          observation = `Could not locate visible dropdown "${step.targetName}".`
-        } else {
-          const selector = step.targetSelector || await target.evaluate((el) => {
-            const node = el as HTMLElement
-            if (!node.id) node.id = `qa-live-select-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
-            return `#${CSS.escape(node.id)}`
-          }).catch(() => "")
-          await publishLiveAction(job, page, {
-            type: "click",
-            description: `Selecting ${step.targetName}`,
-            target: step.targetName,
-            selector,
-            value: step.syntheticValue,
-          })
-          const box = await target.boundingBox()
-          if (box) {
-            await humanMouseMove(page, box.x + box.width / 2, box.y + box.height / 2)
-            await publishLiveFrame(job, page)
-          }
-          const optionIndex = await target.evaluate((node, val) => Array.from((node as HTMLSelectElement).options).findIndex((option) => option.text.includes(val) || option.value.includes(val)), step.syntheticValue || "").catch(() => -1)
-          const focused = await humanClick(page, target)
-          let selected = false
-          if (focused && optionIndex >= 0) {
-            try {
-              await page.keyboard.press("Home")
-              for (let i = 0; i < optionIndex; i++) await page.keyboard.press("ArrowDown")
-              await page.keyboard.press("Enter")
-              selected = await target.evaluate((node, val) => {
-                const el = node as HTMLSelectElement
-                const option = el.options[el.selectedIndex]
-                return Boolean(option && (option.value === val || option.text.includes(val)))
-              }, step.syntheticValue || "").catch(() => false)
-            } catch {}
-          }
-          actionVerdict = selected ? "passed" : "failed"
-          observation = selected ? `Selected option "${step.syntheticValue}" using keyboard input.` : `Failed to select option "${step.syntheticValue}" with visible keyboard input.`
-          if (job.currentAction) job.currentAction.status = selected ? "passed" : "failed"
-          await publishLiveFrame(job, page)
-        }
-
-        step.evidence = {
-          expectedEffects: ["value_changed", "content_changed"],
-          observedEffect: actionVerdict === "passed" ? "value_changed" : "no_effect",
-          verdict: actionVerdict,
-          reason: observation,
-          retriesUsed: 0,
-          settleDurationMs: 250,
-          networkCalls: netRecorder.getCapturedCalls(),
-          consoleErrors: consoleRecorder.getErrors(),
-        }
-      } else if (step.actionType === "toggle") {
-        let target = (step.targetSelector ? await page.$(step.targetSelector).catch(() => null) : null)
-        if (!target) {
-          // Fallback: search by text or label matching step.targetName
-          target = await page.evaluateHandle((name) => {
-            const clean = (name || "").toLowerCase().trim()
-            const labels = Array.from(document.querySelectorAll("label"))
-            for (const l of labels) {
-              if ((l.textContent || "").toLowerCase().includes(clean)) {
-                return l.querySelector('input[type="checkbox"], [role="switch"], [role="checkbox"]') || l
+      } else if (step.actionType === "select" || step.actionType === "toggle") {
+        const target = await resolveExecutionTarget(page, step.targetSelector, step.targetName)
+        let result = { ok: false, reason: `Target "${step.targetName}" is missing or ambiguous; no alternate control was used.` }
+        if (target) {
+          try {
+            await publishLiveAction(job, page, {
+              type: "click", description: `Selecting ${step.targetName}`,
+              target: step.targetName, selector: step.targetSelector, value: step.syntheticValue,
+            })
+            if (step.actionType === "select") {
+              let value: string | string[] = step.syntheticValue ?? ""
+              if (value.startsWith("[")) {
+                const parsed: unknown = JSON.parse(value)
+                if (!Array.isArray(parsed) || !parsed.every(item => typeof item === "string")) throw new Error("Selection must contain string values")
+                value = parsed
               }
+              result = await selectControlOptions(page, target, value)
+            } else {
+              // Missing state defaults to selected/on. Explicit false supports deselection.
+              // Radio options are selected, never inverted or directly unchecked.
+              const desired = step.syntheticValue === "false" ? false : true
+              result = await setCheckedState(page, target, desired)
             }
-            const inputs = Array.from(document.querySelectorAll('input[type="checkbox"], [role="switch"], [role="checkbox"]'))
-            for (const inp of inputs) {
-              const str = (inp.getAttribute("aria-label") || (inp as HTMLInputElement).name || inp.id || "").toLowerCase()
-              if (str.includes(clean)) return inp
-            }
-            return null
-          }, step.targetName).then(h => h.asElement() as ElementHandle<Element> | null).catch(() => null)
+          } finally { await target.dispose().catch(() => {}) }
         }
-
-        const readCurrentState = async () => {
-          if (!target) return false
-          return await target.evaluate((node) => {
-            const el = node as HTMLElement
-            const label = el.closest("label") || (el.id ? document.querySelector(`label[for="${CSS.escape(el.id)}"]`) : null)
-            const inp = el.tagName.toLowerCase() === "input" ? (el as HTMLInputElement) : (label?.querySelector("input") as HTMLInputElement | null)
-            if (inp && typeof inp.checked === "boolean") return inp.checked
-            if (el.getAttribute("aria-checked") !== null) return el.getAttribute("aria-checked") === "true"
-            if (el.getAttribute("data-state") !== null) return el.getAttribute("data-state") === "checked"
-            if (label?.querySelector("[data-state]")) return label.querySelector("[data-state]")!.getAttribute("data-state") === "checked"
-            return false
-          }).catch(() => false)
-        }
-
-        const toggleInfo = target ? await target.evaluate((node) => {
-          const el = node as HTMLElement
-          const label = el.closest("label") || (el.id ? document.querySelector(`label[for="${CSS.escape(el.id)}"]`) : null)
-          const inp = el.tagName.toLowerCase() === "input" ? (el as HTMLInputElement) : (label?.querySelector("input") as HTMLInputElement | null)
-          
-          let beforeVal = false
-          if (inp && typeof inp.checked === "boolean") beforeVal = inp.checked
-          else if (el.getAttribute("aria-checked") !== null) beforeVal = el.getAttribute("aria-checked") === "true"
-          else if (el.getAttribute("data-state") !== null) beforeVal = el.getAttribute("data-state") === "checked"
-          else if (label?.querySelector("[data-state]")) beforeVal = label.querySelector("[data-state]")!.getAttribute("data-state") === "checked"
-
-          const r = el.getBoundingClientRect()
-          const lr = label?.getBoundingClientRect()
-          const elVisible = r.width > 2 && r.height > 2 && window.getComputedStyle(el).opacity !== "0"
-          const labelVisible = Boolean(lr && lr.width > 2 && lr.height > 2)
-
-          const marker = `qa-toggle-${Date.now()}`
-          if (!elVisible && label && labelVisible) {
-            label.setAttribute("data-qa-click-target", marker)
-            return { selector: `[data-qa-click-target="${marker}"]`, before: beforeVal, clickLabel: true }
-          }
-          el.setAttribute("data-qa-click-target", marker)
-          return { selector: `[data-qa-click-target="${marker}"]`, before: beforeVal, clickLabel: false }
-        }).catch(() => null) : null
-
-        if (!target || !toggleInfo) {
-          actionVerdict = "failed"
-          observation = `Could not locate toggle or associated label for "${step.targetName}".`
-        } else {
-          const before = toggleInfo.before
-          const clickEl = await page.$(toggleInfo.selector).catch(() => null) || target
-          const box = await clickEl.boundingBox().catch(() => null) || await target.boundingBox().catch(() => null)
-
-          await publishLiveAction(job, page, {
-            type: "click",
-            description: `Toggling ${step.targetName}`,
-            target: step.targetName,
-            selector: toggleInfo.selector,
-          })
-
-          if (box) {
-            await humanMouseMove(page, box.x + box.width / 2, box.y + box.height / 2)
-            await publishLiveFrame(job, page)
-          }
-
-          let clicked = Boolean(await humanClick(page, clickEl))
-          await settle(page, netRecorder, 250)
-          let after = await readCurrentState()
-
-          // If mouse click on selected target didn't toggle state, try alternative clickable surface or DOM dispatch
-          if (after === before) {
-            const altHandle = await target.evaluateHandle((el) => {
-              const label = el.closest("label") || (el.id ? document.querySelector(`label[for="${CSS.escape(el.id)}"]`) : null)
-              return el === label ? (label?.querySelector("input") || el) : (label || el)
-            }).then(h => h.asElement() as ElementHandle<Element> | null).catch(() => null)
-
-            if (altHandle) {
-              await humanClick(page, altHandle).catch(() => null)
-              await settle(page, netRecorder, 200)
-              after = await readCurrentState()
-            }
-          }
-
-          // If still unchanged, trigger native click/change event directly on the element
-          if (after === before) {
-            await target.evaluate((node, oldVal) => {
-              const el = node as any
-              const label = el.closest("label") || (el.id ? document.querySelector(`label[for="${CSS.escape(el.id)}"]`) : null)
-              if (label && typeof label.click === "function") label.click()
-              else if (typeof el.click === "function") el.click()
-              const inp = el.tagName.toLowerCase() === "input" ? el : label?.querySelector("input")
-              if (inp && typeof inp.checked === "boolean" && inp.checked === oldVal) {
-                inp.checked = !oldVal
-                inp.dispatchEvent(new Event("input", { bubbles: true }))
-                inp.dispatchEvent(new Event("change", { bubbles: true }))
-              }
-            }, before).catch(() => {})
-            await settle(page, netRecorder, 200)
-            after = await readCurrentState()
-            clicked = true
-          }
-
-          const toggled = after !== before
-          actionVerdict = toggled ? "passed" : "failed"
-          observation = toggled
-            ? `Toggled "${step.targetName}" successfully (${before ? "checked ➔ unchecked" : "unchecked ➔ checked"}).`
-            : `Could not confirm a state change for "${step.targetName}".`
-
-          emitSessionEvent(job, "browser_action", {
-            url: page.url(),
-            message: `[TOGGLE] ${step.targetName}: ${observation}`,
-            payload: { stepId: step.id, toggled, before, after },
-          })
-
-          if (job.currentAction) job.currentAction.status = toggled ? "passed" : "failed"
-          await publishLiveFrame(job, page)
-        }
-
+        actionVerdict = result.ok ? "passed" : "failed"
+        observation = `${step.targetName}: ${result.reason}`
+        if (job.currentAction) job.currentAction.status = result.ok ? "passed" : "failed"
+        await publishLiveFrame(job, page)
         step.evidence = {
-          expectedEffects: ["value_changed", "content_changed"],
-          observedEffect: actionVerdict === "passed" ? "value_changed" : "no_effect",
-          verdict: actionVerdict,
-          reason: observation,
-          retriesUsed: 0,
-          settleDurationMs: 250,
-          networkCalls: netRecorder.getCapturedCalls(),
-          consoleErrors: consoleRecorder.getErrors(),
+          expectedEffects: ["value_changed"],
+          observedEffect: result.ok ? "value_changed" : "no_effect",
+          verdict: actionVerdict, reason: observation, retriesUsed: 0, settleDurationMs: 1500,
+          networkCalls: netRecorder.getCapturedCalls(), consoleErrors: consoleRecorder.getErrors(),
         }
       } else if (step.actionType === "click") {
         await publishLiveAction(job, page, {
@@ -1781,6 +1530,7 @@ export async function executeStructuredTestPlan(
 
         const isUploadTrigger = /upload|choose\s*a?\s*file|add\s*a?\s*document|take\s*a?\s*photo|browse\s*files?|select\s*files?|attach|import\s*file/i.test(step.targetName)
         let chooserPromise: Promise<any> | null = null
+        const fileObservation = isUploadTrigger ? await observeFileSelection(page) : null
         if (isUploadTrigger) {
           chooserPromise = page.waitForFileChooser({ timeout: 1500 }).catch(() => null)
         }
@@ -1804,17 +1554,31 @@ export async function executeStructuredTestPlan(
             try {
               await chooser.accept([picked.filePath])
               await settle(page, netRecorder, 2500)
-              ladderResult.verdict = "passed"
-              ladderResult.observedEffect = "value_changed"
-              ladderResult.reason = `Opened native file chooser and attached test file "${picked.fileName}".`
+              const attached = await fileObservation?.verify([picked.filePath])
+              ladderResult.verdict = attached ? "passed" : "failed"
+              ladderResult.observedEffect = attached ? "value_changed" : "no_effect"
+              ladderResult.reason = attached ? "Chooser attachment verified on the changed file input." : "File chooser accepted, but attached files were not verified."
             } catch {}
           }
         }
 
+        await fileObservation?.dispose()
+        const tabTarget = await resolveExecutionTarget(page, step.targetSelector, step.targetName,
+          '[role="tab"],[data-tab]')
+        if (tabTarget) {
+          const isTab = await tabTarget.evaluate(node => node.getAttribute("role") === "tab" || node.hasAttribute("data-tab"))
+          if (isTab) {
+            const tabResult = await verifyTabSelection(page, tabTarget)
+            ladderResult.verdict = tabResult.ok ? "passed" : "failed"
+            ladderResult.observedEffect = tabResult.ok ? "content_changed" : "no_effect"
+            ladderResult.reason = tabResult.reason
+          }
+          await tabTarget.dispose()
+        }
         actionVerdict = ladderResult.verdict
         observation = ladderResult.reason
         if (job.currentAction) {
-          job.currentAction.status = ladderResult.verdict === "passed" || ladderResult.verdict === "suspected_non_functional"
+          job.currentAction.status = ladderResult.verdict === "passed"
             ? "passed"
             : ladderResult.verdict === "blocked" || ladderResult.verdict === "skipped_unsafe"
               ? "blocked"

@@ -40,6 +40,15 @@ export function inferContextualTestValue(input: {
   const placeholder = input.placeholder || ""
   const context = `${screen} ${name} ${placeholder}`.toLowerCase()
 
+  // Native input types take precedence over words elsewhere on the screen.
+  if (type === "number" || type === "range") return "10"
+  if (type === "date") return new Date().toISOString().slice(0, 10)
+  if (type === "time") return "13:15"
+  if (type === "datetime-local") return new Date().toISOString().slice(0, 16)
+  if (type === "month") return new Date().toISOString().slice(0, 7)
+  if (type === "week") return `${new Date().getUTCFullYear()}-W01`
+  if (type === "color") return "#336699"
+
   if (type === "email" || /e-?mail/.test(context)) return SYNTHETIC_TEST_DATA.email
   if (type === "password" || /password|passcode/.test(context)) return SYNTHETIC_TEST_DATA.password
   if (type === "tel" || /phone|mobile|telephone/.test(context)) return SYNTHETIC_TEST_DATA.phone

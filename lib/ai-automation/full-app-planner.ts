@@ -613,7 +613,7 @@ export function generateStructuredTestPlan(
       (el) => el.type === "select" && (!el.formId || !handledFormIds.has(el.formId))
     )
     for (const select of standaloneSelects) {
-      const choice = select.options && select.options.length > 0 ? select.options[0] : "Option 1"
+      const choice = select.options?.find(option => option.trim() && !/^(select|choose|please select|--)/i.test(option.trim())) || select.options?.[0] || "Option 1"
       steps.push({
         id: `step-${stepCounter++}`,
         screenId: screen.id,
