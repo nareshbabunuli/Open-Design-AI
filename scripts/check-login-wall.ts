@@ -4,14 +4,25 @@ import assert from "node:assert"
 import puppeteer from "puppeteer"
 import { hasLoginWall } from "../lib/ai-automation/full-app-discovery"
 
-const browser = await puppeteer.launch({ headless: true })
-const page = await browser.newPage()
+async function run() {
+  const browser = await puppeteer.launch({ headless: true })
+  try {
+    const page = await browser.newPage()
 
-await page.setContent(`<form><input type="email"><input type="password"><label><input type="checkbox"> Remember</label><button>Sign in</button></form>`)
-assert.strictEqual(await hasLoginWall(page), true, "plain login form should be a login wall")
+    await page.setContent(`<form><input type="email"><input type="password"><label><input type="checkbox"> Remember</label><button>Sign in</button></form>`)
+    assert.strictEqual(await hasLoginWall(page), true, "plain login form should be a login wall")
 
-await page.goto(`http://localhost:${process.env.PORT || 3005}/test-inputs.html`, { waitUntil: "domcontentloaded" })
-assert.strictEqual(await hasLoginWall(page), false, "test-inputs fixture must not be a login wall")
+    await page.goto(`http://localhost:${process.env.PORT || 3005}/test-inputs.html`, { waitUntil: "domcontentloaded" })
+    assert.strictEqual(await hasLoginWall(page), false, "test-inputs fixture must not be a login wall")
 
-await browser.close()
-console.log("hasLoginWall checks passed")
+    console.log("hasLoginWall checks passed")
+  } finally {
+    await browser.close()
+  }
+}
+
+run().catch((err) => {
+  console.error(err)
+  process.exit(1)
+})
+
