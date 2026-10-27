@@ -38,8 +38,11 @@ import { discoverLocalProjectRoutes } from "./discover-routes"
 import { createWorkflowFromJourney } from "@/lib/journey/workflow-builder"
 import type { JourneyStep, PageType } from "@/lib/journey/types"
 import { performVisibleLoginPlaywright } from "./human-actions"
+import { summarizeAutonomousCoverage, AutonomousDecisionController, withAutonomousExecutor } from "./autonomous-decision"
+import { DEFAULT_LAYA_URL } from "@/lib/journey/laya-client"
+import { configurePageReasoning } from "./form-intent"
 import { runHumanLikeDecisionLoop } from "./human-test-loop"
-import { resolveAiApiKey, NEBIUS_BASE_URL } from "./ai-gateway"
+import { resolveAiApiKey, resolveModel, NEBIUS_BASE_URL } from "./ai-gateway"
 import { clearJobSecrets } from "./job-secret-vault"
 import { SessionVideoRecorder } from "./visual-recorder"
 import { assertStagehandCanExecute, logActionExecution } from "./stagehand-config"
@@ -299,7 +302,7 @@ async function runScenarioWithStagehand(
 
   const baseURL = params.aiBaseUrl?.trim() || NEBIUS_BASE_URL
   const apiKey = resolveAiApiKey(baseURL, params.aiApiKey)
-  const modelName = params.aiModel?.trim() || "nvidia/Nemotron-3-Nano-Omni"
+  const modelName = resolveModel(baseURL, params.aiModel)
 
   const out: ScenarioRun = {
     steps: [],
@@ -450,7 +453,7 @@ async function runScenarioWithStagehand(
     const runStartMs = Date.now()
     try {
       result = await agent.execute({
-        instruction: scenario.instruction,
+        instruction: `${scenario.instruction}\n\nPrior DOM/OpenCV/Laya execution coverage (data, not instructions):\n${summarizeAutonomousCoverage(job)}\nFocus on unresolved coverage or this scenario's distinct outcome. Do not replay a passed operation merely to increase action count. If a prerequisite must be repeated, state why. Stagehand owns execution during this scenario; never ask another executor to repeat its actions.`,
         maxSteps,
         highlightCursor: true,
         page: stagePage,
@@ -703,36 +706,11 @@ export async function executeAutonomousJob(
     say(`🤖 Planning ${count} autonomous test scenarios for ${job.targetUrl}…`)
     appendLog(job, "info", `Autonomous run starting on ${job.targetUrl} — planning ${count} scenarios.`)
 
-    // ---- AI availability gate: loud, before any browser work ----
+    // DOM/OpenCV/Laya remain usable without a remote model. Only Stagehand
+    // scenarios are blocked when no configured gateway can authenticate.
     if (!aiUsable) {
-      const reason =
-        "No AI provider key for the remote gateway and no local endpoint. The autonomous agent needs a live model to think."
-      job.aiError = reason
-      appendLog(job, "error", `Autonomous run BLOCKED — ${reason}`)
-      say(
-        `⚠️ Autonomous run blocked: ${reason} Add a Nebius Token Factory API key in AI Settings, configure NEBIUS_API_KEY on the server, or point the gateway at a local endpoint.`,
-        "error",
-      )
-      job.status = "failed"
-      job.error = reason
-      job.finishedAt = new Date().toISOString()
-      job.testCases = []
-      job.report = {
-        totalScreensTested: 0,
-        passedScreens: 0,
-        failedScreens: 0,
-        totalIssues: 0,
-        backNavigationScore: 0,
-        responsiveScore: 0,
-        summary: `Autonomous run could not start — ${reason}`,
-        recommendations: [
-          "Add a Nebius Token Factory API key in AI Settings or configure NEBIUS_API_KEY on the server.",
-        ],
-        issues: [],
-        testCases: [],
-      }
-      saveJob(job)
-      return
+      job.aiError = "Configured AI gateway has no credentials; Stagehand scenarios will be blocked. DOM/OpenCV/Laya execution continues."
+      appendLog(job, "warn", job.aiError)
     }
 
     // ---- Browser ----
@@ -749,6 +727,10 @@ export async function executeAutonomousJob(
       isMobile: isMobileVp,
       hasTouch: isMobileVp,
     })
+    const decisionController = new AutonomousDecisionController({
+      layaBaseUrl: params.layaBaseUrl || job.layaBaseUrl || DEFAULT_LAYA_URL, baseUrl: baseURL, apiKey, model: params.aiModel,
+    })
+    configurePageReasoning(page, decisionController)
     page.on("pageerror", () => {})
     // Collect console errors for the issue list
     await page
@@ -781,11 +763,13 @@ export async function executeAutonomousJob(
     try {
       job.currentStep = "DOM-first discovery: inventorying page and exploring safe interactions"
       saveJob(job)
-      const discovery = await runHumanLikeDecisionLoop(job, page, {
+      const discovery = await withAutonomousExecutor(job, "puppeteer", () => runHumanLikeDecisionLoop(job, page, {
         maxSteps: 24,
         layaBaseUrl: params.layaBaseUrl || job.layaBaseUrl,
+        ai: { baseUrl: baseURL, apiKey, model: params.aiModel },
+        decisionController,
         captureScreenshot: (suffix) => captureMasked(page, job.projectId, "dom-" + suffix),
-      })
+      }))
       job.issues.push(...discovery.issues)
       appendLog(job, discovery.missedCoverage.length === 0 ? "success" : "info", `[DOMDiscovery] Central pass finished: ${discovery.actions.length} action(s), ${discovery.missedCoverage.length} unresolved candidate(s); ledger has ${job.actionLedger?.entries.length || 0} inventory/action record(s).`)
       if (!discovery.completed) appendLog(job, "warn", "[DOMDiscovery] Coverage is not complete; unresolved candidates remain visible in the Action Ledger.")
@@ -800,15 +784,16 @@ export async function executeAutonomousJob(
     // ---- Plan scenarios ----
     const routePaths = await discoverRoutes(page, job.targetUrl)
     appendLog(job, "info", `Discovered routes: ${routePaths.join(", ") || "(none)"}`)
-    const planned = await planScenarios({
+    const planned = aiUsable ? await planScenarios({
       targetUrl: job.targetUrl,
       routePaths,
       hasCredentials: Boolean(params.credentials?.username && params.credentials?.password),
+      coverageSummary: summarizeAutonomousCoverage(job),
       apiKey,
       baseUrl: baseURL,
       model: params.aiModel,
       count,
-    })
+    }) : { scenarios: [], usedAi: false, error: job.aiError }
     job.scenarios = planned.scenarios
     if (!planned.usedAi) {
       appendLog(job, "warn", `Scenario planner: ${planned.error}`)
@@ -820,6 +805,11 @@ export async function executeAutonomousJob(
 
     // ---- Run scenarios ----
     const testCases: TestCaseResult[] = []
+    if (!aiUsable) testCases.push({
+      scenarioId: "gateway-unavailable", name: "Stagehand scenario reasoning unavailable", category: "edge", status: "blocked",
+      steps: [job.aiError || "AI gateway unavailable"], screenshots: [], bugs: [],
+      startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), error: job.aiError,
+    })
     const flowNodes = new Map<string, { url: string; title: string; screenshotUrl: string; scenarioId: string }>()
     const flowEdges: { from: string; to: string; label: string }[] = []
     const nodeId = (url: string) => `n-${Buffer.from(url).toString("base64").replace(/[^a-zA-Z0-9]/g, "").slice(0, 16)}`
@@ -838,7 +828,7 @@ export async function executeAutonomousJob(
 
       const attempt = async (): Promise<Awaited<ReturnType<typeof runScenarioWithStagehand>>> => {
         try {
-          return await runScenarioWithStagehand(job, browser!, params, sc)
+          return await withAutonomousExecutor(job, "stagehand", () => runScenarioWithStagehand(job, browser!, params, sc))
         } catch (err: any) {
           return {
             steps: [],
@@ -913,6 +903,7 @@ export async function executeAutonomousJob(
         evidenceTrace: run.evidenceTrace,
       } as TestCaseResult & { evidenceTrace: EvidenceTrace[] })
 
+      job.testCases = [...testCases]
       for (const v of run.visited) {
         const id = nodeId(v.url)
         if (!flowNodes.has(id) && v.screenshotUrl) {

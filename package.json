@@ -13,7 +13,8 @@
     "test:dom-discovery": "npx --yes tsx --test tests/dom-discovery.test.mjs tests/dom-discovery.integration.test.ts tests/action-ledger-reconciliation.test.ts tests/architecture-safety-patterns.test.ts tests/test-plan-safety.test.ts",
     "test:e2e": "playwright test",
     "typecheck": "tsc --noEmit",
-    "test:input-execution": "npx --yes tsx --test tests/input-execution.integration.test.ts"
+    "test:input-execution": "npx --yes tsx --test tests/input-execution.integration.test.ts",
+    "test:autonomous-decisions": "npx --yes tsx --test tests/autonomous-decision.test.ts tests/autonomous-loop.integration.test.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",

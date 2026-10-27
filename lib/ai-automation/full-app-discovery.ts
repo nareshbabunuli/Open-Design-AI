@@ -1,4 +1,5 @@
 import type { Page } from "puppeteer"
+import { isBlockingLoginForm } from "./form-intent"
 import {
   AutomationJob,
   AppScreenNode,
@@ -127,58 +128,11 @@ export async function waitForSpaPageReady(page: Page, timeoutMs = 4000): Promise
   } catch {}
 }
 
-/** True when a visible password field or sign-in form is on the page (login wall). */
+/** True only for a classified blocking login form; password presence is insufficient. */
 export async function hasLoginWall(page: Page): Promise<boolean> {
-  try {
-    return await page.evaluate(() => {
-      const isVisible = (el: HTMLElement) => {
-        const rect = el.getBoundingClientRect()
-        const style = window.getComputedStyle(el)
-        return (
-          (el.offsetParent !== null || rect.height > 0) &&
-          rect.width > 0 &&
-          rect.height > 0 &&
-          style.display !== "none" &&
-          style.visibility !== "hidden" &&
-          style.opacity !== "0"
-        )
-      }
-
-      const pw = (Array.from(document.querySelectorAll('input[type="password"]')) as HTMLInputElement[]).filter(isVisible)
-      if (pw.length > 0) {
-        // A password field alone is not a login wall (settings, profile, test fixtures).
-        // Login = password lives in a small form made only of email/text/tel/password fields.
-        const scope: ParentNode = pw[0].closest("form") || document
-        const fields = (Array.from(
-          scope.querySelectorAll('input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="checkbox"]):not([type="image"]):not([type="reset"]), select, textarea')
-        ) as HTMLElement[]).filter(isVisible)
-        const nonAuthField = fields.some(
-          (f) => !(f instanceof HTMLInputElement && /^(email|text|password|tel)$/.test(f.type))
-        )
-        return fields.length <= 4 && !nonAuthField
-      }
-
-      // Fallback: visible email/username input + visible sign in button / sign in heading
-      const emailOrUser = (Array.from(
-        document.querySelectorAll(
-          'input[type="email"], input[name*="user" i], input[name*="email" i], input[placeholder*="email" i], input[placeholder*="user" i]'
-        )
-      ) as HTMLInputElement[]).filter(isVisible)
-
-      if (emailOrUser.length === 0) return false
-
-      const bodyText = (document.body?.innerText || "").toLowerCase()
-      const hasSignInHeading = /sign\s*in\s*to|log\s*in\s*to|enter\s*your\s*(email|password)|forgot\s*password/i.test(bodyText)
-      const hasAuthButton = Array.from(
-        document.querySelectorAll('button, input[type="submit"], [role="button"], a, div[class*="cursor"], div[class*="r-cursor"], div[tabindex], div, span')
-      ).some((el) => isVisible(el as HTMLElement) && /^\s*(sign\s*in|log\s*in|login)\s*$/i.test(el.textContent?.trim() || ""))
-
-      return hasSignInHeading || hasAuthButton
-    })
-  } catch {
-    return false
-  }
+  return isBlockingLoginForm(page).catch(() => false)
 }
+
 
 /** Types creds into the login form, submits, returns true when the password field is gone. */
 export async function attemptLogin(job: AutomationJob, page: Page, creds: LoginCreds): Promise<boolean> {

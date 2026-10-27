@@ -40,7 +40,7 @@ npx --yes tsx --test --test-name-pattern="actual Full App" tests/input-execution
 
 ## Limits
 
-Passing this suite establishes these execution regressions on the bundled Chromium fixture. It does not establish that every custom widget on an arbitrary application works. Custom calendars, masked-value normalization, custom multiselects, drawing/reordering, and other widget-specific operations still require separate handlers/cases. Login-page classification, discovery completeness, and the existing approved-plan UI are outside this patch's scope. The full original input fixture is used for focused operations; the entire production discovery/UI workflow is not asserted to pass end to end.
+Passing this suite establishes these execution regressions on the bundled Chromium fixture. It does not establish that every custom widget on an arbitrary application works. Custom calendars, masked-value normalization, custom multiselects, drawing/reordering, and other widget-specific operations still require separate handlers/cases. Discovery completeness and the existing approved-plan UI are outside the input-execution scope. Form-intent classification and autonomous resource coordination are documented in AUTONOMOUS_RESOURCE_FLOW.md. The full original input fixture is used for focused operations; the entire production discovery/UI workflow is not asserted to pass end to end.
 
 ## API references
 

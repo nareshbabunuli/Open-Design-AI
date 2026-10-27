@@ -67,6 +67,8 @@ import {
 } from "./types"
 import { executeChainedWorkflows } from "./workflow-chainer"
 import { buildAutomationReport } from "./evidence-reporter"
+import { AutonomousDecisionController } from "./autonomous-decision"
+import { configurePageReasoning } from "./form-intent"
 import { humanClick, humanType, humanMouseMove } from "./human-actions"
 import { resolveExecutionTarget, setCheckedState, selectControlOptions, verifyTabSelection, attachControlFiles, observeFileSelection } from "./control-execution"
 import {
@@ -2506,6 +2508,12 @@ export async function executeFullAppTestingJob(
     browser = await safePuppeteerLaunch()
 
     const page = await browser.newPage()
+    configurePageReasoning(page, new AutonomousDecisionController({
+      layaBaseUrl: params.layaBaseUrl || job.layaBaseUrl || DEFAULT_LAYA_URL, baseUrl: params.aiBaseUrl || job.aiBaseUrl,
+      apiKey: params.aiApiKey, model: params.aiModel || job.aiModel,
+    }), decision => {
+      job.autonomousDecisionTrace = [...(job.autonomousDecisionTrace || []), { stateKey: "form-intent", decision }].slice(-100)
+    })
     const primaryVp = params.viewports?.[0] || { width: 1440, height: 900 }
     const isMobileVp = primaryVp.width <= 768
     await page.setViewport({

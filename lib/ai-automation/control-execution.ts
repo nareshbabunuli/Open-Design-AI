@@ -180,6 +180,7 @@ export async function setCheckedState(
 
 export async function selectControlOptions(
   page: Page, target: ElementHandle<Element>, requested: string | string[],
+  options?: { alreadyOpen?: boolean },
 ): Promise<ControlResult> {
   const values = Array.isArray(requested) ? requested : [requested]
   const native = await target.evaluate(node => node.tagName === "SELECT")
@@ -208,7 +209,7 @@ export async function selectControlOptions(
     } catch { return { ok: false, reason: "Native select did not retain the requested selection." } }
   }
   if (values.length !== 1) return { ok: false, reason: "Custom multiselect requires a widget-specific handler." }
-  if (!await humanClick(page, target)) return { ok: false, reason: "Could not open custom option list." }
+  if (!options?.alreadyOpen && !await humanClick(page, target)) return { ok: false, reason: "Could not open custom option list." }
   try {
     await page.waitForFunction(() => Array.from(document.querySelectorAll('[role="option"]')).some(el => {
       const r = el.getBoundingClientRect(), s = getComputedStyle(el)

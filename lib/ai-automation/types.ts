@@ -644,6 +644,9 @@ export type PendingSessionNavigation = {
 
 export type AutomationJob = {
   id: string
+  /** Per-decision provenance and measured provider token usage; no raw screenshots/prompts. */
+  autonomousDecisionTrace?: Array<{ stateKey: string; decision: import("./autonomous-decision").DecisionResult }>
+  autonomousExecutionOwner?: "puppeteer" | "stagehand"
   /** Stable identity for the shared live-testing session; defaults to the job ID. */
   sessionId?: string
   /** Monotonic cursor and bounded event history consumed by every live view. */

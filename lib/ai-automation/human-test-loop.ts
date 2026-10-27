@@ -2,8 +2,9 @@
  * Closed-loop human-like autonomous testing controller.
  *
  * Pattern engine discovers bounded candidate tests.
- * OpenCV scores visual prominence; Laya chooses the next candidate using DOM + vision.
- * Puppeteer executes only safe candidates.
+ * OpenCV scores masked visual evidence; Laya chooses from bounded candidates.
+ * Uncertain local decisions escalate through the configured AI gateway.
+ * Puppeteer executes verified safe operations through the shared control helpers.
  * The Action Ledger records every decision and untested candidate.
  *
  * This controller deliberately does not replace Stagehand or the existing
@@ -12,7 +13,7 @@
  */
 
 import type { Page } from "puppeteer"
-import { layaPredict, DEFAULT_LAYA_URL } from "@/lib/journey/laya-client"
+import { DEFAULT_LAYA_URL } from "@/lib/journey/laya-client"
 import {
   generateCandidateTests,
   type CandidateTest,
@@ -24,10 +25,16 @@ import { inspectPageDom, exploreInternalLinkAndReturn, installDomNavigationObser
 import { reconcileActionLedger } from "./action-ledger-reconciliation"
 import { logActionExecution } from "./stagehand-config"
 import { isSameOriginUrl } from "./full-app-utils"
+import { AutonomousDecisionController, type DecisionConfig, type DecisionSource } from "./autonomous-decision"
+import { classifyVisibleForms, configurePageReasoning } from "./form-intent"
+import { maskPageSecretsBeforeScreenshot } from "./secure-credentials-manager"
+import { prepareDecisionImage } from "./human-loop-vision"
+import { humanClick, humanType } from "./human-actions"
+import { resolveExecutionTarget, setCheckedState, selectControlOptions, attachControlFiles, verifyTabSelection } from "./control-execution"
+import { inferContextualTestValue } from "./full-app-utils"
 import { resolveUploadFolder, scanUploadFolder, pickUploadFile } from "./test-file-manager"
 
 const MAX_LOOP_STEPS = 24
-const LAYA_THRESHOLD = 0.35
 
 function visibleSelector(el: Element): string {
   const html = el as HTMLElement
@@ -89,7 +96,7 @@ async function readPatternState(page: Page, stateKey: string): Promise<PatternSt
     const labelOf = (el: Element) => {
       const h = el as HTMLElement
       const input = el as HTMLInputElement
-      return (h.getAttribute("aria-label") || h.innerText || input.placeholder || input.name || input.value || el.tagName)
+      return (h.getAttribute("aria-label") || h.innerText || input.placeholder || input.name || h.id || el.tagName)
         .replace(/\s+/g, " ").trim().slice(0, 100)
     }
     const elements = Array.from(document.querySelectorAll(
@@ -196,31 +203,11 @@ function chooseCriteria(candidates: CandidateTest[]): Record<string, string> {
   return criteria
 }
 
-function readChoice(answer: any, candidates: CandidateTest[]): { index: number; confidence: number } | null {
-  const raw = String(answer?.choice ?? answer?.label ?? answer?.value ?? answer?.answer ?? "")
-  if (/^\s*(escalate|stop|none)\b/i.test(raw)) return { index: -1, confidence: 1 }
-  const indexed = raw.match(/(?:test|opt|option)[_\s-]*(\d+)/i)
-  let index = indexed ? Number(indexed[1]) : -1
-  if (index < 0 || index >= candidates.length) {
-    const normalized = raw.trim().toLowerCase()
-    index = candidates.findIndex((candidate) =>
-      normalized === candidate.title.toLowerCase() ||
-      normalized.startsWith(candidate.title.toLowerCase() + " |") ||
-      normalized.includes(candidate.title.toLowerCase())
-    )
-  }
-  if (index < 0 || index >= candidates.length) return null
-  const scoreValue = answer?.confidence ?? answer?.probability ?? answer?.score
-  // Laya often omits confidence for choice answers. A valid listed choice is still a decision.
-  const confidence = scoreValue == null ? 1 : Number(scoreValue)
-  return { index, confidence: Number.isFinite(confidence) ? confidence : 0 }
-}
-
 function isDestructive(candidate: CandidateTest): boolean {
   return candidate.risk === "destructive" || /delete|remove|destroy|purchase|pay|checkout|charge|send|publish|deploy|invite|refund|transfer|grant access|revoke access|change password|reset password|log\s*out|sign\s*out|unsubscribe/i.test(candidate.title)
 }
 
-async function executeCandidate(page: Page, candidate: CandidateTest, job: AutomationJob): Promise<{ ok: boolean; blocked?: boolean; observation: string }> {
+export async function executeCandidate(page: Page, candidate: CandidateTest, job: AutomationJob): Promise<{ ok: boolean; blocked?: boolean; observation: string }> {
   const unsafeText = [candidate.title, candidate.target?.label || "", candidate.target?.href || ""].join(" ")
   if (
     isDestructive(candidate) ||
@@ -403,7 +390,7 @@ async function executeCandidate(page: Page, candidate: CandidateTest, job: Autom
 
   const selector = candidate.target?.selector
   if (!selector) return { ok: false, observation: "Candidate has no executable target; it cannot be marked passed." }
-  const target = await page.$(selector).catch(() => null)
+  const target = await resolveExecutionTarget(page, selector, candidate.target?.label || candidate.title)
   if (!target) return { ok: false, observation: "Target is no longer present; state changed before execution." }
   const targetInfo = await target.evaluate((el) => {
     const input = el as HTMLInputElement
@@ -420,26 +407,58 @@ async function executeCandidate(page: Page, candidate: CandidateTest, job: Autom
     return { ok: false, observation: "Target is disabled or not actionable." }
   }
 
-  const setInputValue = async (value: string) => target.evaluate((el, nextValue) => {
-    const input = el as HTMLInputElement
-    const proto = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype
-      : input instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype
-    const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set
-    if (setter) setter.call(input, nextValue)
-    else input.value = nextValue
-    input.dispatchEvent(new Event("input", { bubbles: true }))
-    input.dispatchEvent(new Event("change", { bubbles: true }))
-  }, value)
+  const setInputValue = (value: string) => humanType(page, target, value, { allowInvalid: true, maskInBanner: targetInfo.type === "password" })
 
-  if (candidate.pattern === "dropdown" && (await target.evaluate((el) => el.tagName.toLowerCase() === "select").catch(() => false))) {
-    const info = await target.evaluate((el) => {
-      const select = el as HTMLSelectElement
-      return { count: select.options.length, value: select.value, hasSelectedOption: select.selectedIndex >= 0 }
-    }).catch(() => null)
-    await target.dispose().catch(() => {})
-    return info && info.count > 0 && info.hasSelectedOption
-      ? { ok: true, observation: "Native dropdown exposes " + info.count + " option(s) and a valid selected option; no form submission or persistent mutation performed." }
-      : { ok: false, observation: "Native dropdown has no selectable options or no valid selected option." }
+  if (["checkbox", "radio", "toggle"].includes(candidate.pattern)) {
+    const result = await setCheckedState(page, target, true)
+    await target.dispose()
+    return { ok: result.ok, observation: result.reason }
+  }
+  if (candidate.pattern === "dropdown") {
+    const value = await target.evaluate(node => {
+      if (node.tagName !== "SELECT") return null
+      const select = node as HTMLSelectElement
+      return Array.from(select.options).find(option => !option.disabled && option.value && option.value !== select.value)?.value || null
+    })
+    if (value) {
+      const result = await selectControlOptions(page, target, value)
+      await target.dispose()
+      return { ok: result.ok, observation: result.reason }
+    }
+    if (await target.evaluate(node => node.tagName === "SELECT")) {
+      await target.dispose()
+      return { ok: false, observation: "No alternative enabled native option was available for selection." }
+    }
+    // Open once, ground an available option in this trigger's list, then reuse
+    // the shared selection verifier without clicking the trigger a second time.
+    try {
+      if (!await humanClick(page, target)) throw new Error("Could not open custom option list")
+      await page.waitForFunction(() => Array.from(document.querySelectorAll('[role="option"]')).some(node => {
+        const rect = node.getBoundingClientRect(), style = getComputedStyle(node)
+        return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden"
+      }), { timeout: 1500 })
+      const choice = await target.evaluate(node => {
+        const ids = (node.getAttribute("aria-controls") || node.getAttribute("aria-owns") || "").split(/\s+/).filter(Boolean)
+        const lists = ids.length ? ids.map(id => document.getElementById(id)).filter(Boolean) :
+          Array.from(document.querySelectorAll('[role="listbox"]')).filter(list => {
+            const rect = list.getBoundingClientRect(), style = getComputedStyle(list)
+            return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden"
+          })
+        if (lists.length !== 1) return null
+        const option = Array.from(lists[0]!.querySelectorAll('[role="option"]')).find(option => {
+          const rect = option.getBoundingClientRect()
+          return rect.width > 0 && rect.height > 0 && option.getAttribute("aria-disabled") !== "true" && option.getAttribute("aria-selected") !== "true"
+        })
+        return option ? (option.getAttribute("aria-label") || option.textContent || "").trim() : null
+      })
+      if (!choice) throw new Error("No uniquely scoped enabled custom option was available")
+      const result = await selectControlOptions(page, target, choice, { alreadyOpen: true })
+      await target.dispose()
+      return { ok: result.ok, observation: result.reason }
+    } catch (error: any) {
+      await target.dispose()
+      return { ok: false, observation: "Custom selection not verified: " + String(error?.message || error) }
+    }
   }
 
   if (candidate.pattern === "required_validation") {
@@ -450,9 +469,9 @@ async function executeCandidate(page: Page, candidate: CandidateTest, job: Autom
       return { ok: false, observation: "Target is not itself a required field." }
     }
     try {
-      await setInputValue("")
+      if (!await setInputValue("")) throw new Error("Required field did not accept empty input")
       const emptyIsInvalid = await target.evaluate((el) => !(el as HTMLInputElement).checkValidity()).catch(() => false)
-      await setInputValue(original).catch(() => {})
+      if (!await setInputValue(original)) throw new Error("Could not restore the original field value")
       await target.dispose().catch(() => {})
       return emptyIsInvalid
         ? { ok: true, observation: "Required field correctly fails native validity when empty; original value restored and no submission occurred." }
@@ -471,9 +490,9 @@ async function executeCandidate(page: Page, candidate: CandidateTest, job: Autom
     }
     const original = targetInfo.value
     try {
-      await setInputValue(targetInfo.type === "email" ? "not-an-email" : "not-a-url")
+      if (!await setInputValue(targetInfo.type === "email" ? "not-an-email" : "not-a-url")) throw new Error("Malformed value was not entered")
       const invalid = await target.evaluate((el) => !(el as HTMLInputElement).checkValidity()).catch(() => false)
-      await setInputValue(original).catch(() => {})
+      if (!await setInputValue(original)) throw new Error("Could not restore the original field value")
       await target.dispose().catch(() => {})
       return invalid
         ? { ok: true, observation: "Browser rejected malformed email via native validity; original value restored." }
@@ -498,17 +517,9 @@ async function executeCandidate(page: Page, candidate: CandidateTest, job: Autom
         acceptAttr,
         targetName: candidate.target?.label || candidate.title,
       })
-      await (target as any).uploadFile(picked.filePath)
-      await target.evaluate((el) => {
-        el.dispatchEvent(new Event("input", { bubbles: true }))
-        el.dispatchEvent(new Event("change", { bubbles: true }))
-      }).catch(() => {})
-      await new Promise((resolve) => setTimeout(resolve, 400))
-      const attached = await target.evaluate((el) => ((el as HTMLInputElement).files?.length || 0) > 0).catch(() => false)
-      await target.dispose().catch(() => {})
-      return attached
-        ? { ok: true, observation: `Attached test file "${picked.fileName}" to ${candidate.title}.` }
-        : { ok: false, observation: `Failed to attach file to ${candidate.title}.` }
+      const result = await attachControlFiles(page, target, [picked.filePath])
+      await target.dispose()
+      return { ok: result.ok, observation: result.reason }
     } catch (error: any) {
       await target.dispose().catch(() => {})
       return { ok: false, observation: "File upload interaction failed: " + (error?.message || String(error)) }
@@ -517,25 +528,20 @@ async function executeCandidate(page: Page, candidate: CandidateTest, job: Autom
 
   if (candidate.pattern === "search" || candidate.pattern === "valid_input") {
     const original = targetInfo.value
-    const value = targetInfo.type === "email"
-      ? "qa-test+" + Date.now() + "@example.com"
-      : targetInfo.type === "url"
-        ? "https://example.com/qa-test"
-        : targetInfo.type === "tel"
-          ? "2025550100"
-          : targetInfo.type === "password"
-            ? "Qa-test-Only-123!"
-            : targetInfo.type === "search"
-              ? "qa-test-search"
-              : "QA test input"
+    const value = inferContextualTestValue({ fieldName: candidate.target?.label || candidate.title, inputType: targetInfo.type })
     try {
-      await setInputValue(value)
-      await new Promise((resolve) => setTimeout(resolve, 500))
+      if (!await humanType(page, target, value, { maskInBanner: targetInfo.type === "password" })) {
+        await setInputValue(original).catch(() => {})
+        await target.dispose()
+        return { ok: false, observation: "Synthetic input value was not accepted by the application." }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250))
       const actual = await target.evaluate((el) => String((el as HTMLInputElement).value || "")).catch(() => "")
       const afterText = await page.evaluate(() => (document.body?.innerText || "").replace(/\s+/g, " ").slice(0, 1200)).catch(() => "")
       const searchShowsOutcome = before?.text !== afterText || /no results|no matches|nothing found|no data/i.test(afterText)
-      await setInputValue(original).catch(() => {})
+      const restored = await setInputValue(original).catch(() => false)
       await target.dispose().catch(() => {})
+      if (!restored) return { ok: false, observation: "Field accepted input but could not be restored to its original value." }
       if (actual !== value) return { ok: false, observation: 'Input did not retain the synthetic value; observed "' + actual.slice(0, 60) + '".' }
       if (candidate.pattern === "search" && !searchShowsOutcome) return { ok: false, observation: "Search accepted the query but no visible result/empty-state change was observed; verify whether search is wired up." }
       return { ok: true, observation: "Synthetic value accepted by " + candidate.title + "; field verified and original value restored. Visible text: " + afterText.slice(0, 180) }
@@ -552,11 +558,19 @@ async function executeCandidate(page: Page, candidate: CandidateTest, job: Autom
   }
   try {
     await target.evaluate((el) => el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" }))
-    await target.click()
+    if (!await humanClick(page, target)) {
+      await target.dispose()
+      return { ok: false, blocked: true, observation: "Target did not receive the intended pointer interaction." }
+    }
+    if (await target.evaluate(node => node.getAttribute("role") === "tab")) {
+      const result = await verifyTabSelection(page, target)
+      await target.dispose()
+      return { ok: result.ok, observation: result.reason }
+    }
     
     // Phase 1: Log action source for audit trail
     logActionExecution(
-      'full_app',  // This is always Full App Testing mode
+      job.mode || 'autonomous',
       'click',
       'puppeteer',
       candidate.target?.selector || candidate.title,
@@ -851,7 +865,7 @@ function recordDomGraphEdge(
 export async function runHumanLikeDecisionLoop(
   job: AutomationJob,
   page: Page,
-  options?: { maxSteps?: number; layaBaseUrl?: string; captureScreenshot?: (label: string) => Promise<string> },
+  options?: { maxSteps?: number; layaBaseUrl?: string; ai?: DecisionConfig; decisionController?: AutonomousDecisionController; captureScreenshot?: (label: string) => Promise<string> },
 ): Promise<{ actions: AgentAction[]; issues: AutomationIssue[]; completed: boolean; missedCoverage: string[] }> {
   const actions: AgentAction[] = []
   const issues: AutomationIssue[] = []
@@ -866,7 +880,11 @@ export async function runHumanLikeDecisionLoop(
   page.on("response", onResponse)
   const maxSteps = Math.max(0, Math.min(options?.maxSteps ?? MAX_LOOP_STEPS, 50))
   const layaUrl = (options?.layaBaseUrl || job.layaBaseUrl || process.env.LAYA_BASE_URL || DEFAULT_LAYA_URL).replace(/\/$/, "")
-  const tested = new Set<string>((job.actionLedger?.entries || []).map((entry) => entry.actionKey))
+  const controller = options?.decisionController || new AutonomousDecisionController({ ...options?.ai, layaBaseUrl: layaUrl })
+  configurePageReasoning(page, controller, decision => {
+    job.autonomousDecisionTrace = [...(job.autonomousDecisionTrace || []), { stateKey: "form-intent", decision }].slice(-100)
+  })
+  const tested = new Set<string>((job.actionLedger?.entries || []).filter(entry => ["passed", "failed", "blocked", "skipped"].includes(entry.status)).map(entry => entry.actionKey))
   const routeQueue: Array<{ url: string; returnTo: string }> = []
   const queuedRoutes = new Set<string>([page.url()])
   let activeRoute: { url: string; returnTo: string } | null = null
@@ -944,7 +962,7 @@ export async function runHumanLikeDecisionLoop(
       break
     }
     const nonNavigation = candidates.filter((candidate) => !["link_navigation", "back_navigation", "forward_navigation", "external_link"].includes(candidate.pattern))
-    const decisionCandidates = nonNavigation.length > 0 ? nonNavigation.slice(0, 18) : candidates.filter((candidate) => candidate.pattern === "link_navigation").slice(0, 18)
+    const decisionCandidates = nonNavigation.length > 0 ? nonNavigation.slice(0, 14) : candidates.filter((candidate) => candidate.pattern === "link_navigation").slice(0, 14)
     if (decisionCandidates.length === 0) {
       // These candidates are intentionally not auto-executed by policy. Record
       // them as blocked, not untested, so the ledger distinguishes a deliberate
@@ -973,7 +991,7 @@ export async function runHumanLikeDecisionLoop(
       break
     }
     let selected: CandidateTest | null = null
-    let selectionSource: "laya" | "fallback" = "fallback"
+    let selectionSource: DecisionSource = "fallback"
     
     // Capture screenshot before Laya decision
     const beforeScreenshotUrl = await options?.captureScreenshot?.("human-loop-before-" + step).catch(() => "") || ""
@@ -982,8 +1000,11 @@ export async function runHumanLikeDecisionLoop(
     let screenshotBuffer: Buffer | undefined
     let visualFeatures: any = undefined
     try {
-      const screenshot = await page.screenshot({ type: "png" }).catch(() => undefined)
-      screenshotBuffer = screenshot ? Buffer.from(screenshot) : undefined
+      const unmask = await maskPageSecretsBeforeScreenshot(page)
+      try {
+        const screenshot = await page.screenshot({ type: "png" }).catch(() => undefined)
+        screenshotBuffer = screenshot ? Buffer.from(screenshot) : undefined
+      } finally { await unmask() }
       if (screenshotBuffer) {
         const { runHumanLoopVision } = await import("./human-loop-vision").catch(() => ({ runHumanLoopVision: null as any }))
         const domForVision = state.elements
@@ -1022,80 +1043,38 @@ export async function runHumanLikeDecisionLoop(
       // human-loop-vision unavailable — keep defaults
     }
 
-    try {
-      // Prepare state payload with optional visual context
-      const statePayload: any = {
-        url: state.url,
-        title: state.title,
-        route: state.route,
-        interactiveCount: state.elements.length,
-        forms: state.forms.length,
-        tables: state.tables.map((t) => ({ name: t.name, rows: t.rowCount, empty: t.hasExplicitEmptyState })),
-        dialogs: state.dialogs.length,
-        consoleErrors: runtimeEvidence.consoleErrors.slice(-5),
-        pageErrors: runtimeEvidence.pageErrors.slice(-5),
-        failedRequests: runtimeEvidence.failedRequests.slice(-5),
-        badResponses: runtimeEvidence.badResponses.slice(-5),
-        previousTestIds: [...tested].slice(-20),
-        visionEngine: visualFeatures?.engine || null,
-      }
-
-      // Add visual context if available
-      if (beforeScreenshotUrl || visualFeatures) {
-        statePayload.visual = {
-          screenshotUrl: beforeScreenshotUrl || undefined,
-          screenshotCapturedAt: Date.now(),
-          engine: visualFeatures?.engine || undefined,
-          ...(visualFeatures?.features && {
-            elementCount: visualFeatures.features.elementBoundingBoxes.length,
-            topElements: visualFeatures.features.visualHierarchy.slice(0, 10).map((el: any) => ({
-              selector: el.selector,
-              rank: el.rank,
-              prominence: el.prominence,
-            })),
-            layoutClusters: visualFeatures.features.layoutClusters.map((cluster: any) => ({
-              group: cluster.spatialGroup,
-              elementCount: cluster.elements.length,
-            })),
-          }),
-        }
-        appendLog(
-          job,
-          "info",
-          `[HumanLoop] Sending visual context to Laya: screenshot=${!!beforeScreenshotUrl}, features=${!!visualFeatures}, engine=${visualFeatures?.engine || "none"}`,
-        )
-      }
-
-      const result = await layaPredict(layaUrl, {
-        state: JSON.stringify(statePayload),
-        questions: {
-          next_test: {
-            type: "choice",
-            instructions: layaInstructions,
-            criteria,
-          },
-        },
-      })
-      const choice = readChoice(result?.answers?.next_test, decisionCandidates)
-      if (choice?.index === -1) {
-        appendLog(job, "info", "[HumanLoop] Laya escalated: no safe candidate selected; remaining coverage stays queued.")
-        break
-      }
-      if (choice && choice.confidence >= LAYA_THRESHOLD && choice.index >= 0 && choice.index < decisionCandidates.length) {
-        selected = decisionCandidates[choice.index]
-        selectionSource = "laya"
-      }
-    } catch (error: any) {
-      appendLog(job, "warn", `[HumanLoop] Laya unavailable: ${error?.message || String(error)}. Falling back to deterministic priority.`)
+    const statePayload = {
+      url: state.url, title: state.title, route: state.route,
+      formIntents: await classifyVisibleForms(page).catch(() => []),
+      forms: state.forms.map(form => ({ name: form.name, submitTargets: form.submitTargets, fields: form.fields.map(field => ({ label: field.label, type: field.type, required: field.required })) })),
+      tables: state.tables.map(table => ({ name: table.name, rows: table.rowCount, empty: table.hasExplicitEmptyState })),
+      dialogs: state.dialogs.length,
+      consoleErrors: runtimeEvidence.consoleErrors.slice(-3), failedRequests: runtimeEvidence.failedRequests.slice(-3),
+      previousTestIds: [...tested].slice(-20),
+      vision: { engine: visualFeatures?.engine || null, topElements: visualFeatures?.features?.visualHierarchy?.slice(0, 10) || [] },
     }
-
-    if (!selected) {
-      selected = decisionCandidates[0]
-      appendLog(job, "info", `[HumanLoop] Deterministic fallback selected: ${selected.title}`)
+    let decisionImage: string | undefined
+    if (screenshotBuffer) {
+      const selectors = new Set(decisionCandidates.map(candidate => candidate.target?.selector))
+      const regions = state.elements.filter(element => selectors.has(element.selector) && element.bounds).map(element => element.bounds)
+      decisionImage = await prepareDecisionImage(screenshotBuffer, regions, state.viewport?.width).catch(() => undefined)
     }
+    const decision = await controller.decide({
+      context: statePayload, choices: criteria, instruction: layaInstructions, image: decisionImage, fallbackChoice: "test_0",
+    })
+    job.autonomousDecisionTrace = [...(job.autonomousDecisionTrace || []), { stateKey, decision }].slice(-100)
+    appendLog(job, "info", `[HumanLoop] source=${decision.source} choice=${decision.choice} confidence=${decision.confidence ?? "unreported"} cached=${decision.cached} imageSubmitted=${decision.imageSubmitted} gatewayRequests=${decision.gatewayRequests} promptTokens=${decision.promptTokens ?? "unreported"}`)
+    if (decision.choice === "escalate" || !decision.choice) {
+      appendLog(job, "info", "[HumanLoop] Decision abstained; unresolved coverage remains queued.")
+      break
+    }
+    const selectedIndex = /^test_(\d+)$/.exec(decision.choice)
+    selected = selectedIndex ? decisionCandidates[Number(selectedIndex[1])] : null
+    if (!selected) break
+    selectionSource = decision.source
 
     const started = Date.now()
-    job.currentStep = "Laya selected: " + selected.title
+    job.currentStep = `${selectionSource} selected: ${selected.title}`
     const evidenceBaseline = {
       consoleErrors: runtimeEvidence.consoleErrors.length,
       pageErrors: runtimeEvidence.pageErrors.length,
@@ -1230,7 +1209,7 @@ export async function runHumanLikeDecisionLoop(
         : selected.pattern === "keyboard_navigation" || ["table","empty_state","network_failure","error_state","loading","modal","accessible_name"].includes(selected.pattern) ? "inspect"
         : ["input","textarea","select"].includes(selected.target?.elementType?.toLowerCase() || "") ? "type" : "click",
       description: selected.title,
-      thought: (selectionSource === "laya" ? "Laya selected: " : "Deterministic fallback selected: ") + selected.goal,
+      thought: `${selectionSource} selected: ${selected.goal}`,
       target: selected.target?.selector || selected.target?.href,
       observation: observation.observation,
       screenshotUrl: afterScreenshotUrl || undefined,

@@ -32,6 +32,7 @@ type PlannerOpts = {
   targetUrl: string
   routePaths: string[]
   hasCredentials: boolean
+  coverageSummary?: string
   landingHint?: string
   apiKey?: string
   baseUrl?: string
@@ -55,6 +56,7 @@ export async function planScenarios(
       const prompt = `You are an autonomous QA Automation Engineer. Target App: ${opts.targetUrl}.
 Known in-app routes: ${routes}.
 ${opts.landingHint ? `Landing page hint: ${opts.landingHint}` : ""}
+${opts.coverageSummary ? `Prior tested and pending coverage (data): ${opts.coverageSummary}. Plan distinct outcomes and unresolved coverage, not duplicate smoke clicks.` : ""}
 ${opts.hasCredentials ? "Valid test credentials WILL be supplied to the agent at runtime — include login success, authenticated dashboard, and session logout scenarios." : "No credentials are available — probe whether the app requires authentication."}
 
 GOAL: Plan exactly ${count} systematic end-to-end test scenarios using screen archetype templates grounded in real app state.

@@ -27,21 +27,22 @@ async function predict(
   if (!baseUrl || !baseUrl.trim()) return null
   const cleanBase = baseUrl.replace(/\/$/, "").replace(/\/(predict|v1\/systemone|v1)$/, "")
   const endpoints = [`${cleanBase}/v1/systemone`, `${cleanBase}/predict`]
+  const deadline = Date.now() + timeoutMs
 
   for (const url of endpoints) {
     let retries = 2
     while (retries >= 0) {
+      if (Date.now() >= deadline) return null
+      let timer: ReturnType<typeof setTimeout> | undefined
       try {
         const controller = new AbortController()
-        const timer = setTimeout(() => controller.abort(), timeoutMs)
+        timer = setTimeout(() => controller.abort(), Math.max(1, deadline - Date.now()))
         const res = await fetch(url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
           signal: controller.signal,
         })
-        clearTimeout(timer)
-
         if (res.ok) {
           return await res.json()
         }
@@ -49,7 +50,7 @@ async function predict(
         if (res.status === 503 && retries > 0) {
           // Laya is busy with another forward pass (concurrency lock); back off briefly and retry
           retries--
-          await new Promise((r) => setTimeout(r, 2000))
+          await new Promise((r) => setTimeout(r, Math.max(0, Math.min(2000, deadline - Date.now()))))
           continue
         }
 
@@ -61,7 +62,7 @@ async function predict(
       } catch (err: any) {
         console.warn(`[Laya] ${url} connection failed:`, err?.message || err)
         break
-      }
+      } finally { if (timer) clearTimeout(timer) }
     }
   }
   return null
@@ -197,6 +198,7 @@ export { DEFAULT_LAYA_URL }
 export async function layaPredict(
   baseUrl: string,
   payload: LayaPredictPayload,
+  timeoutMs?: number,
 ): Promise<Record<string, any> | null> {
-  return predict(baseUrl, payload)
+  return predict(baseUrl, payload, timeoutMs)
 }
