@@ -1586,41 +1586,134 @@ export async function executeStructuredTestPlan(
           consoleErrors: consoleRecorder.getErrors(),
         }
       } else if (step.actionType === "toggle") {
-        const target = (step.targetSelector ? await page.$(step.targetSelector).catch(() => null) : null) ||
-          (await page.$('input[type="checkbox"], [role="switch"]'))
-        if (!target || !(await target.boundingBox())) {
-          actionVerdict = "failed"
-          observation = `Could not locate visible toggle "${step.targetName}".`
-        } else {
-          const selector = step.targetSelector || await target.evaluate((el) => {
-            const node = el as HTMLElement
-            if (!node.id) node.id = `qa-live-toggle-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
-            return `#${CSS.escape(node.id)}`
-          }).catch(() => "")
-          const before = await target.evaluate((node) => {
-            const el = node as HTMLInputElement
-            return typeof el.checked === "boolean" ? el.checked : el.getAttribute("aria-checked") === "true"
+        let target = (step.targetSelector ? await page.$(step.targetSelector).catch(() => null) : null)
+        if (!target) {
+          // Fallback: search by text or label matching step.targetName
+          target = await page.evaluateHandle((name) => {
+            const clean = (name || "").toLowerCase().trim()
+            const labels = Array.from(document.querySelectorAll("label"))
+            for (const l of labels) {
+              if ((l.textContent || "").toLowerCase().includes(clean)) {
+                return l.querySelector('input[type="checkbox"], [role="switch"], [role="checkbox"]') || l
+              }
+            }
+            const inputs = Array.from(document.querySelectorAll('input[type="checkbox"], [role="switch"], [role="checkbox"]'))
+            for (const inp of inputs) {
+              const str = (inp.getAttribute("aria-label") || (inp as HTMLInputElement).name || inp.id || "").toLowerCase()
+              if (str.includes(clean)) return inp
+            }
+            return null
+          }, step.targetName).then(h => h.asElement() as ElementHandle<Element> | null).catch(() => null)
+        }
+
+        const readCurrentState = async () => {
+          if (!target) return false
+          return await target.evaluate((node) => {
+            const el = node as HTMLElement
+            const label = el.closest("label") || (el.id ? document.querySelector(`label[for="${CSS.escape(el.id)}"]`) : null)
+            const inp = el.tagName.toLowerCase() === "input" ? (el as HTMLInputElement) : (label?.querySelector("input") as HTMLInputElement | null)
+            if (inp && typeof inp.checked === "boolean") return inp.checked
+            if (el.getAttribute("aria-checked") !== null) return el.getAttribute("aria-checked") === "true"
+            if (el.getAttribute("data-state") !== null) return el.getAttribute("data-state") === "checked"
+            if (label?.querySelector("[data-state]")) return label.querySelector("[data-state]")!.getAttribute("data-state") === "checked"
+            return false
           }).catch(() => false)
+        }
+
+        const toggleInfo = target ? await target.evaluate((node) => {
+          const el = node as HTMLElement
+          const label = el.closest("label") || (el.id ? document.querySelector(`label[for="${CSS.escape(el.id)}"]`) : null)
+          const inp = el.tagName.toLowerCase() === "input" ? (el as HTMLInputElement) : (label?.querySelector("input") as HTMLInputElement | null)
+          
+          let beforeVal = false
+          if (inp && typeof inp.checked === "boolean") beforeVal = inp.checked
+          else if (el.getAttribute("aria-checked") !== null) beforeVal = el.getAttribute("aria-checked") === "true"
+          else if (el.getAttribute("data-state") !== null) beforeVal = el.getAttribute("data-state") === "checked"
+          else if (label?.querySelector("[data-state]")) beforeVal = label.querySelector("[data-state]")!.getAttribute("data-state") === "checked"
+
+          const r = el.getBoundingClientRect()
+          const lr = label?.getBoundingClientRect()
+          const elVisible = r.width > 2 && r.height > 2 && window.getComputedStyle(el).opacity !== "0"
+          const labelVisible = Boolean(lr && lr.width > 2 && lr.height > 2)
+
+          const marker = `qa-toggle-${Date.now()}`
+          if (!elVisible && label && labelVisible) {
+            label.setAttribute("data-qa-click-target", marker)
+            return { selector: `[data-qa-click-target="${marker}"]`, before: beforeVal, clickLabel: true }
+          }
+          el.setAttribute("data-qa-click-target", marker)
+          return { selector: `[data-qa-click-target="${marker}"]`, before: beforeVal, clickLabel: false }
+        }).catch(() => null) : null
+
+        if (!target || !toggleInfo) {
+          actionVerdict = "failed"
+          observation = `Could not locate toggle or associated label for "${step.targetName}".`
+        } else {
+          const before = toggleInfo.before
+          const clickEl = await page.$(toggleInfo.selector).catch(() => null) || target
+          const box = await clickEl.boundingBox().catch(() => null) || await target.boundingBox().catch(() => null)
+
           await publishLiveAction(job, page, {
             type: "click",
             description: `Toggling ${step.targetName}`,
             target: step.targetName,
-            selector,
+            selector: toggleInfo.selector,
           })
-          const box = await target.boundingBox()
+
           if (box) {
             await humanMouseMove(page, box.x + box.width / 2, box.y + box.height / 2)
             await publishLiveFrame(job, page)
           }
-          const clicked = Boolean(await humanClick(page, target))
-          await settle(page, netRecorder, 500)
-          const after = await target.evaluate((node) => {
-            const el = node as HTMLInputElement
-            return typeof el.checked === "boolean" ? el.checked : el.getAttribute("aria-checked") === "true"
-          }).catch(() => before)
-          const toggled = clicked && after !== before
+
+          let clicked = Boolean(await humanClick(page, clickEl))
+          await settle(page, netRecorder, 250)
+          let after = await readCurrentState()
+
+          // If mouse click on selected target didn't toggle state, try alternative clickable surface or DOM dispatch
+          if (after === before) {
+            const altHandle = await target.evaluateHandle((el) => {
+              const label = el.closest("label") || (el.id ? document.querySelector(`label[for="${CSS.escape(el.id)}"]`) : null)
+              return el === label ? (label?.querySelector("input") || el) : (label || el)
+            }).then(h => h.asElement() as ElementHandle<Element> | null).catch(() => null)
+
+            if (altHandle) {
+              await humanClick(page, altHandle).catch(() => null)
+              await settle(page, netRecorder, 200)
+              after = await readCurrentState()
+            }
+          }
+
+          // If still unchanged, trigger native click/change event directly on the element
+          if (after === before) {
+            await target.evaluate((node, oldVal) => {
+              const el = node as any
+              const label = el.closest("label") || (el.id ? document.querySelector(`label[for="${CSS.escape(el.id)}"]`) : null)
+              if (label && typeof label.click === "function") label.click()
+              else if (typeof el.click === "function") el.click()
+              const inp = el.tagName.toLowerCase() === "input" ? el : label?.querySelector("input")
+              if (inp && typeof inp.checked === "boolean" && inp.checked === oldVal) {
+                inp.checked = !oldVal
+                inp.dispatchEvent(new Event("input", { bubbles: true }))
+                inp.dispatchEvent(new Event("change", { bubbles: true }))
+              }
+            }, before).catch(() => {})
+            await settle(page, netRecorder, 200)
+            after = await readCurrentState()
+            clicked = true
+          }
+
+          const toggled = after !== before
           actionVerdict = toggled ? "passed" : "failed"
-          observation = toggled ? `Toggled "${step.targetName}" with a real mouse click.` : `Could not confirm a state change for "${step.targetName}".`
+          observation = toggled
+            ? `Toggled "${step.targetName}" successfully (${before ? "checked ➔ unchecked" : "unchecked ➔ checked"}).`
+            : `Could not confirm a state change for "${step.targetName}".`
+
+          emitSessionEvent(job, "browser_action", {
+            url: page.url(),
+            message: `[TOGGLE] ${step.targetName}: ${observation}`,
+            payload: { stepId: step.id, toggled, before, after },
+          })
+
           if (job.currentAction) job.currentAction.status = toggled ? "passed" : "failed"
           await publishLiveFrame(job, page)
         }

@@ -17,7 +17,7 @@ export interface LayaPredictPayload {
   >
 }
 
-const DEFAULT_TIMEOUT_MS = Number(process.env.LAYA_TIMEOUT_MS) || 120000
+const DEFAULT_TIMEOUT_MS = Number(process.env.LAYA_TIMEOUT_MS) || 8000
 
 async function predict(
   baseUrl: string,
@@ -74,7 +74,7 @@ export async function isLayaAvailable(baseUrl = DEFAULT_LAYA_URL): Promise<boole
   for (const url of healthEndpoints) {
     try {
       const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), 1500)
+      const timer = setTimeout(() => controller.abort(), 4000)
       const res = await fetch(url, {
         signal: controller.signal,
       }).catch(() => null)

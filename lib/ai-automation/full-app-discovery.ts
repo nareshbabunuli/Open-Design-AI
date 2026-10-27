@@ -63,6 +63,11 @@ export async function publishLiveAction(
     timestamp: new Date().toISOString(),
   }
   job.currentUrl = page.url()
+  emitSessionEvent(job, "browser_action", {
+    url: page.url(),
+    message: `${details.description}${details.target && !details.description.includes(details.target) ? ` ("${details.target}")` : ""}`,
+    payload: { action: job.currentAction },
+  })
   saveJob(job)
 }
 
@@ -139,8 +144,19 @@ export async function hasLoginWall(page: Page): Promise<boolean> {
         )
       }
 
-      const pw = Array.from(document.querySelectorAll('input[type="password"]')) as HTMLInputElement[]
-      if (pw.some(isVisible)) return true
+      const pw = (Array.from(document.querySelectorAll('input[type="password"]')) as HTMLInputElement[]).filter(isVisible)
+      if (pw.length > 0) {
+        // A password field alone is not a login wall (settings, profile, test fixtures).
+        // Login = password lives in a small form made only of email/text/tel/password fields.
+        const scope: ParentNode = pw[0].closest("form") || document
+        const fields = (Array.from(
+          scope.querySelectorAll('input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="checkbox"]):not([type="image"]):not([type="reset"]), select, textarea')
+        ) as HTMLElement[]).filter(isVisible)
+        const nonAuthField = fields.some(
+          (f) => !(f instanceof HTMLInputElement && /^(email|text|password|tel)$/.test(f.type))
+        )
+        return fields.length <= 4 && !nonAuthField
+      }
 
       // Fallback: visible email/username input + visible sign in button / sign in heading
       const emailOrUser = (Array.from(
@@ -923,7 +939,7 @@ export async function discoverAndMapApp(
           await page.evaluate((y) => window.scrollTo({ top: y, behavior: "instant" }), currentScroll).catch(() => {})
           await new Promise((r) => setTimeout(r, 180))
 
-          const scrolledInv = await extractActionableInventory(page, layaUrl)
+          const scrolledInv = await extractActionableInventory(page)
           for (const el of scrolledInv.actionableElements) {
             if (!inv.actionableElements.some((e) => e.selector === el.selector || (e.name === el.name && e.type === el.type))) {
               inv.actionableElements.push(el)

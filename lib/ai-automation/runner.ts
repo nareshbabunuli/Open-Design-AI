@@ -38,7 +38,7 @@ import {
   isFeatureWorkflowCommand,
 } from "./feature-workflow-engine"
 import type { JourneyStep, PageType } from "@/lib/journey/types"
-import { emitSessionEvent } from "./job-store"
+import { emitSessionEvent, activeJobIds } from "./job-store"
 
 const DEFAULT_VIEWPORTS: AutomationViewport[] = [
   { name: "Mobile", width: 390, height: 844 },
@@ -265,6 +265,7 @@ export async function createAndStartJob(params: StartAutomationRequest): Promise
 }
 
 export function cancelJob(jobId: string): boolean {
+  activeJobIds.delete(jobId)
   const job = getJob(jobId)
   if (!job) return false
   if (job.status === "running" || job.status === "queued") {
@@ -854,6 +855,15 @@ async function executeSingleAction(job: AutomationJob, page: Page, act: AgentAct
 }
 
 export async function executeJob(job: AutomationJob, params: StartAutomationRequest) {
+  activeJobIds.add(job.id)
+  try {
+    return await executeJobInternal(job, params)
+  } finally {
+    activeJobIds.delete(job.id)
+  }
+}
+
+async function executeJobInternal(job: AutomationJob, params: StartAutomationRequest) {
   job.status = "running"
   const openRouterKey = params.aiApiKey || process.env.OPENROUTER_API_KEY || process.env.UNOROUTER_API_KEY
   const aiBase = (params.aiBaseUrl || "").trim()

@@ -56,6 +56,7 @@ import type {
 import TestFlowGraph from "./test-flow-graph"
 import { buildFigmaWorkflowMap, isFullAppCommand } from "@/lib/ai-automation/full-app-utils"
 import AiConfigPanel from "./ai-config-panel"
+import FormattedMessageText from "./formatted-message-text"
 
 interface FeatureWorkflowViewProps {
   job: AutomationJob | null
@@ -472,6 +473,43 @@ export default function FeatureWorkflowView({
     }
   }, [job?.status, job?.id, activeSubTab, onSubTabChange, activePlan])
 
+  // Stream live operations and events directly into chat so user sees every action
+  const lastEventSeqRef = useRef<number>(0)
+  useEffect(() => {
+    if (!job?.sessionEvents?.length) return
+    const currentSeq = lastEventSeqRef.current
+    const newEvents = job.sessionEvents.filter((e) => e.sequence > currentSeq)
+    if (newEvents.length === 0) return
+    lastEventSeqRef.current = Math.max(...newEvents.map((e) => e.sequence))
+
+    const visibleEvents = newEvents.filter((e) =>
+      Boolean(e.message) && ["browser_action", "test_result", "progress", "screen_discovered", "error"].includes(e.type)
+    )
+    if (visibleEvents.length === 0) return
+
+    setChatMessages((prev) => {
+      const seen = new Set(prev.map((m) => m.id))
+      const additions = visibleEvents
+        .filter((e) => !seen.has(`live-evt-${e.id}`))
+        .map((e) => {
+          let icon = "⚡"
+          if (e.type === "browser_action") icon = "🖱️"
+          else if (e.type === "test_result") icon = e.payload?.status === "passed" ? "✅" : "❌"
+          else if (e.type === "screen_discovered") icon = "📍"
+          else if (e.type === "error") icon = "⚠️"
+
+          return {
+            id: `live-evt-${e.id}`,
+            sender: "agent" as const,
+            text: `${icon} ${e.message}`,
+            timestamp: e.timestamp,
+            status: (e.type === "error" ? "error" : "completed") as any,
+          }
+        })
+      return additions.length ? [...prev, ...additions] : prev
+    })
+  }, [job?.sessionEvents])
+
   // Natural language chat / workflow analyzer
   const handleSendChatMessage = async (customPrompt?: string) => {
     const text = (customPrompt || chatInput).trim()
@@ -523,14 +561,42 @@ export default function FeatureWorkflowView({
         await handleExecuteUnblock("retry")
         return
       }
-      if (emailMatch || passMatch) {
-        const u = emailMatch ? emailMatch[0] : (text.match(/(?:user(?:name)?|login|email)[:=\s]+(\S+)/i)?.[1] || "")
-        const p = passMatch ? passMatch[1] : ""
-        setChatMessages((prev) => [...prev, userMsg])
-        setIsAnalyzing(false)
-        await handleExecuteUnblock("credentials", u, p)
-        return
+      if (emailMatch || passMatch || /[:\/,]/.test(text) || text.trim().split(/\s+/).length >= 2) {
+        let u = emailMatch ? emailMatch[0] : (text.match(/(?:user(?:name)?|login|email)[:=\s]+(\S+)/i)?.[1] || "")
+        let p = passMatch ? passMatch[1] : ""
+        if (!p && emailMatch) {
+          const rest = text.replace(emailMatch[0], "").replace(/^[ \t\/:,;-]+/, "").trim()
+          if (rest) p = rest.split(/\s+/)[0]
+        }
+        if (!u && !p && text.includes("/")) {
+          const parts = text.split("/")
+          u = parts[0]?.trim() || ""
+          p = parts.slice(1).join("/").trim()
+        }
+        if (u || p) {
+          setChatMessages((prev) => [...prev, userMsg])
+          setIsAnalyzing(false)
+          await handleExecuteUnblock("credentials", u, p)
+          return
+        }
       }
+    }
+
+    if (isRunning && job?.id && !isFullAppCommand(text)) {
+      setChatMessages((prev) => [...prev, userMsg])
+      try {
+        await fetch("/api/ai-automation/status", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jobId: job.id,
+            action: "session_input",
+            text,
+          }),
+        })
+      } catch {}
+      setIsAnalyzing(false)
+      return
     }
 
     if (isFullAppCommand(text)) {
@@ -761,13 +827,26 @@ export default function FeatureWorkflowView({
                     Testing in progress: {job?.currentStep || "Executing actions..."}
                   </span>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => onSubTabChange && onSubTabChange("plan")}
-                  className="px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[10px] shrink-0 cursor-pointer"
-                >
-                  View Active Plan →
-                </button>
+                <div className="flex items-center gap-2 shrink-0">
+                  {onCancelJob && (
+                    <button
+                      type="button"
+                      onClick={onCancelJob}
+                      className="px-2 py-1 rounded bg-rose-600/80 hover:bg-rose-600 text-white font-bold text-[10px] shrink-0 cursor-pointer transition flex items-center gap-1 shadow"
+                      title="Stop Running Test"
+                    >
+                      <Square className="w-3 h-3 fill-current" />
+                      <span>Stop Test</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => onSubTabChange && onSubTabChange("plan")}
+                    className="px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[10px] shrink-0 cursor-pointer"
+                  >
+                    View Active Plan →
+                  </button>
+                </div>
               </div>
             )}
 
@@ -825,7 +904,7 @@ export default function FeatureWorkflowView({
                           <span>{msg.text}</span>
                         </div>
                       ) : (
-                        <p className="whitespace-pre-wrap">{msg.text}</p>
+                        <FormattedMessageText text={msg.text} isUser={isUser} />
                       )}
 
                       {/* Understood Workflow Spec Card & Execution CTA */}
@@ -1409,7 +1488,7 @@ export default function FeatureWorkflowView({
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={isAnalyzing || isRunning}
+                disabled={isAnalyzing || isUnblockingWorkflows}
                 className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 hover:border-indigo-500 hover:text-indigo-400 text-slate-400 transition cursor-pointer shrink-0 disabled:opacity-50"
                 title="Upload Mockup / Screenshot Image"
               >
@@ -1424,7 +1503,7 @@ export default function FeatureWorkflowView({
                     setAttachedImage(job.currentScreenshotUrl)
                   }
                 }}
-                disabled={isAnalyzing || isRunning}
+                disabled={isAnalyzing || isUnblockingWorkflows}
                 className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 hover:border-indigo-500 hover:text-indigo-400 text-slate-400 transition cursor-pointer shrink-0 disabled:opacity-50"
                 title="Capture Live Simulator Screen & Test"
               >
@@ -1442,25 +1521,29 @@ export default function FeatureWorkflowView({
                       handleSendChatMessage()
                     }
                   }}
-                  disabled={isAnalyzing || isRunning}
+                  disabled={isAnalyzing || isUnblockingWorkflows}
                   placeholder={
-                    attachedImage
+                    blockedScreenNames.length > 0 || job?.authState === "awaiting_credentials"
+                      ? "Type credentials (username / pass) or type 'skip', 'retry', 'synthetic' to unblock..."
+                      : attachedImage
                       ? "Add instructions for attached image or press Send..."
+                      : isRunning
+                      ? "Message the bot (e.g. steer testing, answer questions, provide guidance)..."
                       : "Tell the testing bot what to test (e.g. 'Act as customer and test checkout', 'Test user profile update')..."
                   }
                   className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 shadow-inner disabled:opacity-50"
                 />
-                {isAnalyzing && (
+                {(isAnalyzing || isUnblockingWorkflows) && (
                   <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1 text-[10px] text-purple-300">
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    <span>Analyzing...</span>
+                    <span>{isUnblockingWorkflows ? "Unblocking..." : "Analyzing..."}</span>
                   </div>
                 )}
               </div>
 
               <button
                 type="button"
-                disabled={(!chatInput.trim() && !attachedImage) || isAnalyzing || isRunning}
+                disabled={(!chatInput.trim() && !attachedImage) || isAnalyzing || isUnblockingWorkflows}
                 onClick={() => handleSendChatMessage()}
                 className="px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-md shadow-purple-950 shrink-0"
               >

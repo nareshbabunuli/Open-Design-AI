@@ -13,6 +13,7 @@ import type {
 import TestFlowGraph from "./test-flow-graph"
 import ActionLedgerPanel from "./action-ledger-panel"
 import { synthesizeFullAppPlanFromJob, buildFigmaWorkflowMap } from "@/lib/ai-automation/full-app-utils"
+import FormattedMessageText from "./formatted-message-text"
 import {
   Compass,
   Map as MapIcon,
@@ -1267,7 +1268,9 @@ export default function FullAppTestingView({
                   <div className="max-h-36 overflow-y-auto space-y-2 rounded-lg bg-slate-950/70 p-2.5" aria-live="polite">
                     {planChatMessages.map((message, index) => (
                       <div key={index} className={message.role === "user" ? "text-right" : "text-left"}>
-                        <span className={message.role === "user" ? "inline-block max-w-[90%] rounded-lg bg-indigo-600/30 px-3 py-2 text-xs text-indigo-100" : "inline-block max-w-[90%] rounded-lg bg-slate-800 px-3 py-2 text-xs text-slate-200"}>{message.text}</span>
+                        <span className={message.role === "user" ? "inline-block max-w-[90%] rounded-lg bg-indigo-600/30 px-3 py-2 text-xs text-indigo-100" : "inline-block max-w-[90%] rounded-lg bg-slate-800 px-3 py-2 text-xs text-slate-200"}>
+                          <FormattedMessageText text={message.text} isUser={message.role === "user"} />
+                        </span>
                       </div>
                     ))}
                   </div>

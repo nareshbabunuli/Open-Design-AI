@@ -8,7 +8,7 @@ import {
 } from "@/lib/auth/require-project-access"
 import { sanitizeJobForClient } from "@/lib/browser/secure-browser"
 import { setJobSecrets, clearJobSecrets } from "@/lib/ai-automation/job-secret-vault"
-import { emitSessionEvent } from "@/lib/ai-automation/job-store"
+import { emitSessionEvent, isJobActive } from "@/lib/ai-automation/job-store"
 import { assertSafeTargetUrlWithDevBypass, UrlGuardError } from "@/lib/security/url-guard"
 
 async function assertJobAccess(job: { projectId?: string; userId?: string }) {
@@ -467,7 +467,7 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      if (job.status !== "running") {
+      if (job.status !== "running" || !isJobActive(job.id)) {
         job.status = "running"
         saveJob(job)
         setImmediate(() => {

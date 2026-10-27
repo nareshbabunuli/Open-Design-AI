@@ -12,13 +12,23 @@ import type { AutomationJob, AutomationLog, SessionEventType } from "./types"
 declare global {
   // eslint-disable-next-line no-var
   var __AI_AUTOMATION_JOBS__: Map<string, AutomationJob> | undefined
+  var __AI_ACTIVE_JOB_IDS__: Set<string> | undefined
 }
 
 if (!globalThis.__AI_AUTOMATION_JOBS__) {
   globalThis.__AI_AUTOMATION_JOBS__ = new Map<string, AutomationJob>()
 }
 
+if (!globalThis.__AI_ACTIVE_JOB_IDS__) {
+  globalThis.__AI_ACTIVE_JOB_IDS__ = new Set<string>()
+}
+
 const jobStore = globalThis.__AI_AUTOMATION_JOBS__
+export const activeJobIds = globalThis.__AI_ACTIVE_JOB_IDS__
+
+export function isJobActive(jobId: string): boolean {
+  return activeJobIds.has(jobId)
+}
 
 const JOBS_DIR = path.join(process.cwd(), ".jobs")
 
@@ -118,6 +128,12 @@ export function getJob(jobId: string): AutomationJob | null {
     const filePath = path.join(JOBS_DIR, `${jobId}.json`)
     if (fs.existsSync(filePath)) {
       const data = JSON.parse(fs.readFileSync(filePath, "utf8")) as AutomationJob
+      if ((data.status === "running" || data.status === "queued") && !activeJobIds.has(data.id)) {
+        data.status = "stopped"
+        data.finishedAt = data.finishedAt || new Date().toISOString()
+        data.currentStep = "Testing interrupted by server restart. Ready to run again."
+        flushJobToDiskSync(data)
+      }
       jobStore.set(jobId, data)
       return data
     }
@@ -154,6 +170,12 @@ export function getLatestJobForProject(projectId: string): AutomationJob | null 
           const raw = fs.readFileSync(filePath, "utf8")
           const parsed = JSON.parse(raw) as AutomationJob
           if (parsed && parsed.projectId === projectId) {
+            if ((parsed.status === "running" || parsed.status === "queued") && !activeJobIds.has(parsed.id)) {
+              parsed.status = "stopped"
+              parsed.finishedAt = parsed.finishedAt || new Date().toISOString()
+              parsed.currentStep = "Testing interrupted by server restart. Ready to run again."
+              flushJobToDiskSync(parsed)
+            }
             const time = new Date(parsed.startedAt || (parsed as any).createdAt || 0).getTime()
             if (time >= latestTime) {
               latestTime = time
