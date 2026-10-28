@@ -7,6 +7,7 @@ import type {
   TestPlanStep,
   AppWorkflowTransition,
   FullAppTestPlan,
+  FlowGraphNode,
 } from "@/lib/ai-automation/types"
 import {
   Maximize2,
@@ -39,6 +40,7 @@ import {
   FileCode,
   Monitor,
   Tablet,
+  Smartphone,
 } from "lucide-react"
 import { generateAppMapHtml } from "@/lib/ai-automation/map-html-exporter"
 
@@ -258,15 +260,163 @@ export default function TestFlowGraph({
   // Track locally deleted screen node IDs for instant UI responsiveness
   const [deletedNodeIds, setDeletedNodeIds] = useState<Set<string>>(new Set())
 
+    const [selectedDeviceFilter, setSelectedDeviceFilter] = useState<string>("all")
+  const [isDeviceMenuOpen, setIsDeviceMenuOpen] = useState(false)
+
+  const getNodeDeviceType = useCallback((node: FlowGraphNode): "desktop" | "tablet" | "compact" | "mobile" => {
+    if (node.deviceType === "desktop") return "desktop"
+    if (node.deviceType === "tablet") return "tablet"
+    if ((node as any).deviceType === "compact") return "compact"
+    if (node.deviceType === "mobile") {
+      if (/compact|360/i.test(node.title || node.id)) return "compact"
+      return "mobile"
+    }
+    const t = `${node.title || ""} ${node.id || ""}`.toLowerCase()
+    if (/desktop|1440|1920/.test(t)) return "desktop"
+    if (/tablet|ipad|768|1024/.test(t)) return "tablet"
+    if (/compact|360/.test(t)) return "compact"
+    return "mobile"
+  }, [])
+
   const visibleNodes = useMemo(() => {
-    return graph.nodes.filter((n) => !deletedNodeIds.has(n.id))
-  }, [graph.nodes, deletedNodeIds])
+    return graph.nodes.filter((n) => {
+      if (deletedNodeIds.has(n.id)) return false
+      if (selectedDeviceFilter === "all") return true
+      return getNodeDeviceType(n) === selectedDeviceFilter
+    })
+  }, [graph.nodes, deletedNodeIds, selectedDeviceFilter, getNodeDeviceType])
 
   const visibleEdges = useMemo(() => {
+    const visibleIdSet = new Set(visibleNodes.map((n) => n.id))
     return graph.edges.filter(
-      (e) => !deletedNodeIds.has(e.from) && !deletedNodeIds.has(e.to)
+      (e) => visibleIdSet.has(e.from) && visibleIdSet.has(e.to)
     )
-  }, [graph.edges, deletedNodeIds])
+  }, [graph.edges, visibleNodes])
+
+  const availableDevices = useMemo(() => {
+    const counts: Record<string, number> = { desktop: 0, tablet: 0, mobile: 0, compact: 0 }
+    for (const n of graph.nodes) {
+      if (deletedNodeIds.has(n.id)) continue
+      const dev = getNodeDeviceType(n)
+      counts[dev] = (counts[dev] || 0) + 1
+    }
+
+    const list: { id: string; label: string; sub: string; count: number; icon: any }[] = []
+
+    if (counts.desktop > 0) {
+      list.push({
+        id: "desktop",
+        label: "Desktop Workflow",
+        sub: "1440×900",
+        count: counts.desktop,
+        icon: Monitor,
+      })
+    }
+    if (counts.tablet > 0) {
+      list.push({
+        id: "tablet",
+        label: "Tablet Workflow",
+        sub: "768×1024",
+        count: counts.tablet,
+        icon: Tablet,
+      })
+    }
+    if (counts.mobile > 0) {
+      list.push({
+        id: "mobile",
+        label: "Mobile Workflow",
+        sub: "393×852",
+        count: counts.mobile,
+        icon: Smartphone,
+      })
+    }
+    if (counts.compact > 0) {
+      list.push({
+        id: "compact",
+        label: "Compact Mobile",
+        sub: "360×780",
+        count: counts.compact,
+        icon: Smartphone,
+      })
+    }
+
+    if (list.length === 0) {
+      list.push(
+        { id: "desktop", label: "Desktop Workflow", sub: "1440×900", count: 0, icon: Monitor },
+        { id: "tablet", label: "Tablet Workflow", sub: "768×1024", count: 0, icon: Tablet },
+        { id: "mobile", label: "Mobile Workflow", sub: "393×852", count: graph.nodes.length, icon: Smartphone }
+      )
+    }
+
+    return list
+  }, [graph.nodes, deletedNodeIds, getNodeDeviceType])
+
+  const currentDeviceMeta = useMemo(() => {
+    if (selectedDeviceFilter === "all") {
+      const total = graph.nodes.filter((n) => !deletedNodeIds.has(n.id)).length
+      return {
+        label: total > 1 && availableDevices.some((d) => d.count > 0) ? `All Devices (${total})` : "All Workflows",
+        icon: Layers,
+      }
+    }
+    const match = availableDevices.find((d) => d.id === selectedDeviceFilter)
+    if (match) {
+      return { label: match.label, icon: match.icon }
+    }
+    if (selectedDeviceFilter === "desktop") return { label: "Desktop (1440×900)", icon: Monitor }
+    if (selectedDeviceFilter === "tablet") return { label: "Tablet (768×1024)", icon: Tablet }
+    if (selectedDeviceFilter === "compact") return { label: "Compact Mobile (360×780)", icon: Smartphone }
+    return { label: "Mobile (393×852)", icon: Smartphone }
+  }, [selectedDeviceFilter, availableDevices, graph.nodes, deletedNodeIds])
+
+  const handleSelectDeviceFilter = useCallback(
+    (devId: string) => {
+      setSelectedDeviceFilter(devId)
+      setIsDeviceMenuOpen(false)
+
+      setTimeout(() => {
+        const filtered = graph.nodes.filter((n) => {
+          if (deletedNodeIds.has(n.id)) return false
+          if (devId === "all") return true
+          return getNodeDeviceType(n) === devId
+        })
+        if (filtered.length > 0) {
+          const activeIds = filtered.map((n) => n.id)
+          const coords = activeIds.map((id) => nodePositions[id]).filter(Boolean)
+          if (coords.length > 0) {
+            const rect = containerRef.current?.getBoundingClientRect()
+            const viewW = rect?.width && rect.width > 200 ? rect.width : 1180
+            const viewH = rect?.height && rect.height > 200 ? rect.height : 620
+
+            const minX = Math.min(...coords.map((p) => p.x))
+            const maxX = Math.max(...coords.map((p) => p.x + CARD_WIDTH))
+            const minY = Math.min(...coords.map((p) => p.y))
+            const maxY = Math.max(...coords.map((p) => p.y + CARD_HEIGHT))
+
+            const contentW = Math.max(CARD_WIDTH, maxX - minX)
+            const contentH = Math.max(CARD_HEIGHT, maxY - minY)
+
+            const availW = Math.max(320, viewW - 96)
+            const availH = Math.max(260, viewH - 120)
+
+            const scaleX = availW / contentW
+            const scaleY = availH / contentH
+            const nextZoom = Math.min(1.2, Math.max(0.2, Math.min(scaleX, scaleY) * 0.9))
+
+            const centerX = (minX + maxX) / 2
+            const centerY = (minY + maxY) / 2
+
+            setZoom(nextZoom)
+            setPan({
+              x: viewW / 2 - centerX * nextZoom,
+              y: viewH / 2 - centerY * nextZoom,
+            })
+          }
+        }
+      }, 60)
+    },
+    [graph.nodes, deletedNodeIds, getNodeDeviceType, nodePositions]
+  )
 
   const handleDeleteNode = useCallback(
     (nodeId: string, e?: React.MouseEvent) => {
@@ -1336,6 +1486,92 @@ export default function TestFlowGraph({
             </div>
           )}
           </div>
+
+          {/* Device Workflow Filter Dropdown */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setIsDeviceMenuOpen((prev) => !prev)}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-semibold backdrop-blur-md transition cursor-pointer shadow-lg ${
+                selectedDeviceFilter !== "all"
+                  ? "bg-indigo-950/80 border-indigo-500/50 text-indigo-200 hover:bg-indigo-900/80"
+                  : "bg-slate-900/90 border-slate-700/80 text-slate-200 hover:text-white hover:border-slate-600"
+              }`}
+              title="Filter workflow map by tested device dimension"
+            >
+              <currentDeviceMeta.icon className="h-3.5 w-3.5 text-cyan-400 shrink-0" />
+              <span className="font-medium whitespace-nowrap">{currentDeviceMeta.label}</span>
+              <ChevronDown className={`h-3 w-3 text-slate-400 transition-transform ${isDeviceMenuOpen ? "rotate-180" : ""}`} />
+            </button>
+
+            {isDeviceMenuOpen && (
+              <>
+                <div
+                  className="fixed inset-0 z-40"
+                  onClick={() => setIsDeviceMenuOpen(false)}
+                />
+                <div className="absolute top-full left-0 mt-1 w-64 rounded-xl bg-slate-900/95 border border-slate-700 shadow-2xl z-50 p-1.5 space-y-1 backdrop-blur-md text-xs text-slate-200 animate-in fade-in zoom-in-95 duration-100">
+                  <div className="px-2 py-1 text-[10px] font-mono font-bold text-slate-400 uppercase tracking-wider flex items-center justify-between">
+                    <span>Workflow by Device</span>
+                    <span className="text-slate-500 font-normal">{visibleNodes.length} visible</span>
+                  </div>
+
+                  {/* Option: All Workflows / Devices */}
+                  <button
+                    type="button"
+                    onClick={() => handleSelectDeviceFilter("all")}
+                    className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg transition cursor-pointer text-left ${
+                      selectedDeviceFilter === "all"
+                        ? "bg-indigo-600/30 text-indigo-200 border border-indigo-500/40"
+                        : "text-slate-300 hover:bg-slate-800/80 hover:text-white"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <Layers className="h-4 w-4 text-indigo-400 shrink-0" />
+                      <div>
+                        <div className="font-semibold text-[11px]">All Devices &amp; Flows</div>
+                        <div className="text-[10px] text-slate-400">Multi-device reflow chain</div>
+                      </div>
+                    </div>
+                    <span className="px-1.5 py-0.2 rounded font-mono text-[10px] bg-slate-800 text-slate-300 border border-slate-700">
+                      {graph.nodes.filter((n) => !deletedNodeIds.has(n.id)).length}
+                    </span>
+                  </button>
+
+                  <div className="h-px bg-slate-800 my-1" />
+
+                  {/* Individual Device Workflows */}
+                  {availableDevices.map((dev) => {
+                    const DevIcon = dev.icon
+                    const isSelected = selectedDeviceFilter === dev.id
+                    return (
+                      <button
+                        key={dev.id}
+                        type="button"
+                        onClick={() => handleSelectDeviceFilter(dev.id)}
+                        className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg transition cursor-pointer text-left ${
+                          isSelected
+                            ? "bg-indigo-600/30 text-indigo-200 border border-indigo-500/40"
+                            : "text-slate-300 hover:bg-slate-800/80 hover:text-white"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <DevIcon className="h-4 w-4 text-cyan-400 shrink-0" />
+                          <div>
+                            <div className="font-semibold text-[11px]">{dev.label}</div>
+                            <div className="text-[10px] text-slate-400 font-mono">{dev.sub}</div>
+                          </div>
+                        </div>
+                        <span className="px-1.5 py-0.2 rounded font-mono text-[10px] bg-slate-800 text-slate-300 border border-slate-700">
+                          {dev.count}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </>
+            )}
+          </div>
         </div>
 
         {/* Right Controls */}
@@ -1812,6 +2048,7 @@ export default function TestFlowGraph({
 
             const isDesktopCard = /desktop|1440|1920/i.test(node.title) || (node as any).deviceType === "desktop";
             const isTabletCard = /tablet|ipad|768|1024/i.test(node.title) || (node as any).deviceType === "tablet";
+            const isCompactCard = /compact|360/i.test(node.title) || (node as any).deviceType === "compact";
 
             return (
               <div
@@ -1996,6 +2233,20 @@ export default function TestFlowGraph({
                         <div className="flex items-center gap-1.5 text-[9px] font-mono text-cyan-300 bg-slate-900 px-2 py-0.5 rounded border border-slate-800">
                           <Tablet className="w-2.5 h-2.5 text-cyan-400" />
                           <span>Tablet (768×1024)</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span className="inline-block w-2 h-1.5 rounded-[1px] bg-slate-300" />
+                          <span className="inline-block w-3 h-1.5 rounded-[2px] border border-slate-300 p-[0.5px]">
+                            <span className="block w-full h-full bg-emerald-400" />
+                          </span>
+                        </div>
+                      </div>
+                    ) : isCompactCard ? (
+                      <div className="px-3 pt-1.5 pb-1 bg-slate-950 flex items-center justify-between text-[9px] font-semibold text-slate-300 shrink-0">
+                        <span className="font-mono text-[9px]">9:41</span>
+                        <div className="flex items-center gap-1 text-[9px] font-mono text-amber-300 bg-slate-900 px-2 py-0.5 rounded border border-slate-800">
+                          <Smartphone className="w-2.5 h-2.5 text-amber-400" />
+                          <span>Compact (360×780)</span>
                         </div>
                         <div className="flex items-center gap-1">
                           <span className="inline-block w-2 h-1.5 rounded-[1px] bg-slate-300" />

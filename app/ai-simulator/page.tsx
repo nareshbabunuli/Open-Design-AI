@@ -2625,7 +2625,7 @@ export default function AISimulatorPage() {
             {/* 1. CORE WORKSPACE: PHONE SIMULATOR PAGE OR FULL PAGE TABS OR SIDE-BY-SIDE */}
             <div className="flex-1 h-full w-full flex flex-col overflow-hidden relative">
               {/* Unified Top Navigation Bar (Hick's Law: Layout switcher + 4 Stage Tabs + Run/Stop + Export & Settings in 1 bar) */}
-              <div className="h-10 px-3 bg-[#0c0e14] border-b border-slate-800 flex items-center justify-between gap-2 text-xs shrink-0 select-none z-20">
+              <div className="h-10 px-3 bg-[#0c0e14] border-b border-slate-800 flex items-center justify-between gap-2 text-xs shrink-0 select-none relative z-40">
                 {/* Left: Workspace Layout Switcher + 4 Non-Overlapping Stage Tabs */}
                 <div className="flex items-center gap-2 overflow-x-auto custom-scrollbar">
                   <div className="flex items-center bg-slate-900 border border-slate-800 rounded-md p-0.5 shrink-0">
@@ -2837,7 +2837,7 @@ export default function AISimulatorPage() {
                   )}
 
                   {currentJob?.id && (
-                    <div className="relative flex items-center">
+                    <div className="relative flex items-center z-50">
                       <button
                         type="button"
                         onClick={() => setIsExportMenuOpen((prev) => !prev)}
@@ -2852,10 +2852,10 @@ export default function AISimulatorPage() {
                       {isExportMenuOpen && (
                         <>
                           <div
-                            className="fixed inset-0 z-40"
+                            className="fixed inset-0 z-[90]"
                             onClick={() => setIsExportMenuOpen(false)}
                           />
-                          <div className="absolute right-0 top-8 w-56 rounded-xl border border-slate-800 bg-[#0f1118] p-1.5 shadow-2xl z-50 flex flex-col text-xs text-slate-200">
+                          <div className="absolute right-0 top-full mt-1.5 w-60 rounded-xl border border-slate-800 bg-[#0f1118] p-1.5 shadow-2xl z-[100] flex flex-col text-xs text-slate-200 animate-in fade-in zoom-in-95 duration-100">
                             <button
                               type="button"
                               onClick={() => {
@@ -3351,7 +3351,7 @@ export default function AISimulatorPage() {
       {/* Pre-Flight Continuous Testing Setup Modal */}
       {showPreFlightModal && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-150"
+          className="fixed inset-0 z-[110] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-150"
           onClick={() => setShowPreFlightModal(false)}
         >
           <div
@@ -3702,7 +3702,7 @@ export default function AISimulatorPage() {
       {/* Full-resolution Image Preview Modal */}
       {imagePreviewModal && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-150"
+          className="fixed inset-0 z-[110] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-150"
           onClick={() => setImagePreviewModal(null)}
         >
           <div
@@ -3738,7 +3738,7 @@ export default function AISimulatorPage() {
       {/* Test Data Explorer & Verification Modal */}
       {isTestDataModalOpen && testDataStatus && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs animate-in fade-in duration-150"
+          className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs animate-in fade-in duration-150"
           onClick={() => setIsTestDataModalOpen(false)}
         >
           <div
