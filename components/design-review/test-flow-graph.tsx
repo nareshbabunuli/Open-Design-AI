@@ -1245,19 +1245,7 @@ export default function TestFlowGraph({
               <MousePointer className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">Select</span>
             </button>
-            <button
-              type="button"
-              onClick={() => setCanvasTool("pan")}
-              className={`px-2 py-1 rounded flex items-center gap-1 font-semibold transition cursor-pointer ${
-                canvasTool === "pan"
-                  ? "bg-indigo-600 text-white shadow-xs"
-                  : "text-slate-400 hover:text-white"
-              }`}
-              title="Pan Canvas (Drag canvas to move around)"
-            >
-              <Compass className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Pan</span>
-            </button>
+
           </div>
 
           <div className="relative">
@@ -1402,25 +1390,7 @@ export default function TestFlowGraph({
             </span>
           </button>
 
-          <button
-            type="button"
-            onClick={() => handleApplyPresetLayout("row")}
-            className="px-2 py-1 rounded hover:bg-slate-800 text-slate-300 hover:text-white transition cursor-pointer flex items-center gap-1 text-[11px] font-medium"
-            title="Arrange all phone screens side-by-side in a horizontal storyboard row"
-          >
-            <Columns className="h-3.5 w-3.5 text-sky-400" />
-            <span className="hidden lg:inline">Row</span>
-          </button>
 
-          <button
-            type="button"
-            onClick={() => handleApplyPresetLayout("grid")}
-            className="px-2 py-1 rounded hover:bg-slate-800 text-slate-300 hover:text-white transition cursor-pointer flex items-center gap-1 text-[11px] font-medium"
-            title="Arrange all phone screens in a widescreen grid fitted to screen"
-          >
-            <LayoutGrid className="h-3.5 w-3.5 text-purple-400" />
-            <span className="hidden lg:inline">Grid</span>
-          </button>
 
           <button
             type="button"
@@ -1464,19 +1434,7 @@ export default function TestFlowGraph({
             <span className="hidden sm:inline">Back Nav</span>
           </button>
 
-          <div className="w-px h-4 bg-slate-700 mx-0.5" />
 
-          {/* Export Standalone Map HTML */}
-          <button
-            type="button"
-            onClick={handleExportMapHtml}
-            disabled={isExportingHtml}
-            className="p-1.5 rounded hover:bg-slate-800 text-slate-300 hover:text-emerald-300 transition cursor-pointer flex items-center gap-1 text-[11px] font-medium"
-            title="Export interactive standalone HTML map (offline viewable & printable to PDF)"
-          >
-            <FileCode className="h-3.5 w-3.5 text-emerald-400" />
-            <span className="hidden sm:inline">Export HTML</span>
-          </button>
 
           <div className="w-px h-4 bg-slate-700 mx-0.5" />
 
