@@ -681,6 +681,7 @@ export type AutomationJob = {
   progress: number // 0 to 100
   currentStep: string
   currentAction?: AgentAction
+  currentViewport?: AutomationViewport
   currentScreenshotUrl?: string
   actionHistory?: AgentAction[]
   messages?: AgentChatMessage[]

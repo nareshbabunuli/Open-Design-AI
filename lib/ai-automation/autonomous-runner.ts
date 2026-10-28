@@ -719,8 +719,14 @@ export async function executeAutonomousJob(
       args: ["--autoplay-policy=no-user-gesture-required"],
     })
     const page = await browser.newPage()
-    const primaryVp = params.viewports?.[0] || { width: 1440, height: 900 }
+    const primaryVp = params.viewports?.[0] || { name: "Desktop", width: 1440, height: 900 }
     const isMobileVp = primaryVp.width <= 768
+    job.currentViewport = {
+      name: primaryVp.name || (primaryVp.width >= 1024 ? "Desktop" : primaryVp.width >= 600 ? "Tablet" : "Mobile"),
+      width: primaryVp.width,
+      height: primaryVp.height,
+    }
+    saveJob(job)
     await page.setViewport({
       width: primaryVp.width,
       height: primaryVp.height,

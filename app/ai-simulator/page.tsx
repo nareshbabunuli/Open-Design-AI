@@ -2930,6 +2930,7 @@ export default function AISimulatorPage() {
                       currentAction={currentJob?.currentAction || activeAction}
                       isRunningTest={currentJob?.status === "running"}
                       liveSessionScreenshotUrl={currentJob?.currentScreenshotUrl}
+                      currentJobViewport={currentJob?.currentViewport}
                       onViewportChange={handleSimulatorViewportChange}
                     />
                   </div>

@@ -731,6 +731,11 @@ export async function runMultiDeviceResponsiveAudit(
     if (page.isClosed()) break
 
     const isMobile = vp.width <= 768
+    job.currentViewport = {
+      name: vp.name,
+      width: vp.width,
+      height: vp.height,
+    }
     job.currentStep = `Responsive audit: testing on ${vp.name} (${vp.width}×${vp.height})...`
     saveJob(job)
 
@@ -921,6 +926,11 @@ export async function runMultiDeviceResponsiveAudit(
       isMobile: initialVp.width <= 768,
       hasTouch: initialVp.width <= 768,
     })
+    job.currentViewport = {
+      name: initialVp.width >= 1024 ? "Desktop" : initialVp.width >= 600 ? "Tablet" : "Mobile",
+      width: initialVp.width,
+      height: initialVp.height,
+    }
   } catch {}
 
   job.responsiveResults = results
@@ -2999,8 +3009,14 @@ export async function executeFullAppTestingJob(
     }), decision => {
       job.autonomousDecisionTrace = [...(job.autonomousDecisionTrace || []), { stateKey: "form-intent", decision }].slice(-100)
     })
-    const primaryVp = params.viewports?.[0] || { width: 1440, height: 900 }
+    const primaryVp = params.viewports?.[0] || { name: "Desktop", width: 1440, height: 900 }
     const isMobileVp = primaryVp.width <= 768
+    job.currentViewport = {
+      name: primaryVp.name || (primaryVp.width >= 1024 ? "Desktop" : primaryVp.width >= 600 ? "Tablet" : "Mobile"),
+      width: primaryVp.width,
+      height: primaryVp.height,
+    }
+    saveJob(job)
     await page.setViewport({
       width: primaryVp.width,
       height: primaryVp.height,
