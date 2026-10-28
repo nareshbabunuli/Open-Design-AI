@@ -1985,6 +1985,51 @@ export default function AISimulatorPage() {
       })
     }
 
+    // 3. Multi-device responsive workflows (Desktop, Tablet, Mobile)
+    if (currentJob?.responsiveResults && currentJob.responsiveResults.length > 0) {
+      for (const resp of currentJob.responsiveResults) {
+        const wfId = `resp-workflow-${resp.name.toLowerCase()}`
+        if (!existingIds.has(wfId)) {
+          dynamicWorkflows.push({
+            id: wfId,
+            projectId: activeProject.id,
+            title: `${resp.name} Experience (${resp.width}×${resp.height})`,
+            designA: null,
+            designB: resp.screenshotUrl || null,
+            figmaUrl: null,
+            ourNotes: `[Multi-Device Responsive Audit: ${resp.name}]\nDimensions: ${resp.width}×${resp.height}\nStatus: ${resp.status.toUpperCase()}\nHorizontal Overflow: ${resp.overflowDetected ? `YES (+${resp.overflowPixels}px)` : "Zero (PASSED)"}\nSmall Touch Targets: ${resp.touchTargetViolations}\nBroken Images: ${resp.brokenImages}\n\nObservations:\n${(resp.observations || []).map((o) => `• ${o}`).join("\n")}`,
+            clientMessage: `${resp.name} responsive audit complete (${resp.status.toUpperCase()}).`,
+            clientTaskDone: resp.status !== "failed",
+            reason: resp.observations?.[0] || `${resp.name} layout verified`,
+            isDone: resp.status !== "failed",
+            comments: [],
+            revisions: [],
+          })
+        }
+      }
+    } else if (selectedViewports.length > 1) {
+      for (const vp of selectedViewports) {
+        const wfId = `device-vp-${vp.name.toLowerCase()}`
+        if (!existingIds.has(wfId)) {
+          dynamicWorkflows.push({
+            id: wfId,
+            projectId: activeProject.id,
+            title: `${vp.name} (${vp.width}×${vp.height})`,
+            designA: null,
+            designB: null,
+            figmaUrl: null,
+            ourNotes: `[Planned Responsive Device Viewport]\nDevice: ${vp.name}\nDimensions: ${vp.width}×${vp.height}\nStatus: PENDING AUDIT`,
+            clientMessage: `Pending automated audit across ${vp.name} (${vp.width}×${vp.height}).`,
+            clientTaskDone: false,
+            reason: `Planned ${vp.name} responsive workflow`,
+            isDone: false,
+            comments: [],
+            revisions: [],
+          })
+        }
+      }
+    }
+
     if (currentJob?.screens) {
       for (let i = 0; i < currentJob.screens.length; i++) {
         const s = currentJob.screens[i]
@@ -2026,6 +2071,8 @@ export default function AISimulatorPage() {
     activeAction,
     activeActionIndex,
     chronologicalActions.length,
+    currentJob?.responsiveResults,
+    selectedViewports,
   ])
 
   // Automatically focus selected action step, live feed, or latest screen

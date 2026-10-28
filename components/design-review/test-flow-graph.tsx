@@ -37,6 +37,8 @@ import {
   ChevronUp,
   ChevronDown,
   FileCode,
+  Monitor,
+  Tablet,
 } from "lucide-react"
 import { generateAppMapHtml } from "@/lib/ai-automation/map-html-exporter"
 
@@ -1850,6 +1852,9 @@ export default function TestFlowGraph({
               })
             })
 
+            const isDesktopCard = /desktop|1440|1920/i.test(node.title) || (node as any).deviceType === "desktop";
+            const isTabletCard = /tablet|ipad|768|1024/i.test(node.title) || (node as any).deviceType === "tablet";
+
             return (
               <div
                 key={node.id}
@@ -1971,9 +1976,15 @@ export default function TestFlowGraph({
                   </div>
                 </div>
 
-                {/* PHONE HARDWARE CHASSIS / BEZEL */}
+                {/* DEVICE HARDWARE CHASSIS / BEZEL */}
                 <div
-                  className={`relative flex-1 min-h-0 rounded-[34px] p-2 bg-slate-950 flex flex-col justify-between shadow-2xl border-[3px] transition-colors ${
+                  className={`relative flex-1 min-h-0 ${
+                    isDesktopCard
+                      ? "rounded-2xl p-1.5"
+                      : isTabletCard
+                      ? "rounded-[24px] p-2"
+                      : "rounded-[34px] p-2"
+                  } bg-slate-950 flex flex-col justify-between shadow-2xl border-[3px] transition-colors ${
                     isDragging || isSelected
                       ? "border-indigo-400 shadow-indigo-500/40 ring-2 ring-indigo-500/60"
                       : isInJourney
@@ -1987,10 +1998,14 @@ export default function TestFlowGraph({
                       : "border-slate-700/90 group-hover/phone:border-indigo-400/80"
                   }`}
                 >
-                  {/* Side Hardware Button Accents (Volume + Power) */}
-                  <span className="absolute -left-[5px] top-16 w-[3px] h-7 rounded-l bg-slate-700 pointer-events-none" />
-                  <span className="absolute -left-[5px] top-26 w-[3px] h-7 rounded-l bg-slate-700 pointer-events-none" />
-                  <span className="absolute -right-[5px] top-20 w-[3px] h-10 rounded-r bg-slate-700 pointer-events-none" />
+                  {/* Side Hardware Button Accents (Only on Mobile Phone) */}
+                  {!isDesktopCard && !isTabletCard && (
+                    <>
+                      <span className="absolute -left-[5px] top-16 w-[3px] h-7 rounded-l bg-slate-700 pointer-events-none" />
+                      <span className="absolute -left-[5px] top-26 w-[3px] h-7 rounded-l bg-slate-700 pointer-events-none" />
+                      <span className="absolute -right-[5px] top-20 w-[3px] h-10 rounded-r bg-slate-700 pointer-events-none" />
+                    </>
+                  )}
 
                   {/* Figma Selection Corner Handles */}
                   {isSelected && (
@@ -2002,21 +2017,49 @@ export default function TestFlowGraph({
                     </>
                   )}
 
-                  {/* INNER PHONE OLED DISPLAY */}
-                  <div className="flex-1 min-h-0 rounded-[25px] bg-slate-900 border border-slate-800/90 overflow-hidden flex flex-col justify-between relative">
-                    {/* 1. iOS Status Bar + Dynamic Island Notch */}
-                    <div className="px-3 pt-1.5 pb-1 bg-slate-950 flex items-center justify-between text-[9px] font-semibold text-slate-300 shrink-0">
-                      <span className="font-mono text-[9px]">9:41</span>
-                      <div className="w-14 h-3 rounded-full bg-black border border-slate-800/90 flex items-center justify-end pr-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-950 border border-indigo-500/40" />
+                  {/* INNER DEVICE DISPLAY */}
+                  <div className={`flex-1 min-h-0 ${isDesktopCard ? "rounded-xl" : isTabletCard ? "rounded-[18px]" : "rounded-[25px]"} bg-slate-900 border border-slate-800/90 overflow-hidden flex flex-col justify-between relative`}>
+                    {/* Device Status Bar / Window Controls */}
+                    {isDesktopCard ? (
+                      <div className="px-3 pt-2 pb-1.5 bg-slate-950 flex items-center justify-between text-[9px] font-semibold text-slate-300 shrink-0 border-b border-slate-800/80">
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-rose-500/80 inline-block" />
+                          <span className="w-2 h-2 rounded-full bg-amber-500/80 inline-block" />
+                          <span className="w-2 h-2 rounded-full bg-emerald-500/80 inline-block" />
+                        </div>
+                        <div className="flex items-center gap-1 text-[9px] font-mono text-indigo-300 bg-slate-900 px-2 py-0.5 rounded border border-slate-800">
+                          <Monitor className="w-2.5 h-2.5 text-indigo-400" />
+                          <span>Desktop (1440×900)</span>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-1">
-                        <span className="inline-block w-2 h-1.5 rounded-[1px] bg-slate-300" />
-                        <span className="inline-block w-3 h-1.5 rounded-[2px] border border-slate-300 p-[0.5px]">
-                          <span className="block w-full h-full bg-emerald-400" />
-                        </span>
+                    ) : isTabletCard ? (
+                      <div className="px-3 pt-1.5 pb-1 bg-slate-950 flex items-center justify-between text-[9px] font-semibold text-slate-300 shrink-0">
+                        <span className="font-mono text-[9px]">9:41</span>
+                        <div className="flex items-center gap-1.5 text-[9px] font-mono text-cyan-300 bg-slate-900 px-2 py-0.5 rounded border border-slate-800">
+                          <Tablet className="w-2.5 h-2.5 text-cyan-400" />
+                          <span>Tablet (768×1024)</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span className="inline-block w-2 h-1.5 rounded-[1px] bg-slate-300" />
+                          <span className="inline-block w-3 h-1.5 rounded-[2px] border border-slate-300 p-[0.5px]">
+                            <span className="block w-full h-full bg-emerald-400" />
+                          </span>
+                        </div>
                       </div>
-                    </div>
+                    ) : (
+                      <div className="px-3 pt-1.5 pb-1 bg-slate-950 flex items-center justify-between text-[9px] font-semibold text-slate-300 shrink-0">
+                        <span className="font-mono text-[9px]">9:41</span>
+                        <div className="w-14 h-3 rounded-full bg-black border border-slate-800/90 flex items-center justify-end pr-1.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-indigo-950 border border-indigo-500/40" />
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span className="inline-block w-2 h-1.5 rounded-[1px] bg-slate-300" />
+                          <span className="inline-block w-3 h-1.5 rounded-[2px] border border-slate-300 p-[0.5px]">
+                            <span className="block w-full h-full bg-emerald-400" />
+                          </span>
+                        </div>
+                      </div>
+                    )}
 
                     {/* 2. CLEAR SCREEN IDENTITY BANNER (Always legible even when zoomed out!) */}
                     <div className="px-3 py-2 bg-gradient-to-b from-slate-950 to-slate-900 border-b border-slate-800/90 shrink-0">

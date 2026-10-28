@@ -538,6 +538,31 @@ export function WorkflowSimulator({
     }
   }, [currentJobViewport, currentAction?.viewportWidth, currentAction?.viewportHeight, viewportWidth, viewportHeight])
 
+  // Auto-adapt viewport when active workflow specifies device dimensions in its title (e.g. 1440×900)
+  useEffect(() => {
+    if (currentWorkflow?.title) {
+      const match = currentWorkflow.title.match(/\b(\d{3,4})\s*[×x]\s*(\d{3,4})\b/)
+      if (match) {
+        const w = parseInt(match[1], 10)
+        const h = parseInt(match[2], 10)
+        if (w && h && (w !== viewportWidth || h !== viewportHeight)) {
+          setViewportWidth(w)
+          setViewportHeight(h)
+          const matched = EXTENDED_DEVICE_PRESETS.find(
+            (p) => Math.abs(p.width - w) < 15 && Math.abs(p.height - h) < 15
+          )
+          if (matched) {
+            setSelectedPresetId(matched.id)
+            setIsCustomPreset(false)
+          } else {
+            setSelectedPresetId(w >= 1024 ? "d-studio-27" : w >= 600 ? "t-ipad-classic" : "m-iphone-16-pro")
+            setIsCustomPreset(false)
+          }
+        }
+      }
+    }
+  }, [currentWorkflow?.id, currentWorkflow?.title])
+
   const onViewportChangeRef = useRef(onViewportChange)
   useEffect(() => {
     onViewportChangeRef.current = onViewportChange

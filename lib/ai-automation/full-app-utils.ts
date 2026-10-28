@@ -213,10 +213,12 @@ export function buildFigmaWorkflowMap(plan: FullAppTestPlan): FlowGraph {
     const stepShot = (plan.steps || []).find((st) => st.screenId === s.id && st.screenshotUrl)?.screenshotUrl
     return {
       id: s.id,
-      title: `${s.id} ${s.name}`,
+      title: s.name.startsWith(s.id) ? s.name : `${s.id} ${s.name}`,
       url: s.url,
       screenshotUrl: s.screenshotUrl || stepShot,
       componentLocation: s.componentLocation || s.sourceFile,
+      deviceType: (s as any).deviceType || (s.name.includes("Desktop") ? "desktop" : s.name.includes("Tablet") ? "tablet" : "mobile"),
+      viewport: (s as any).viewport,
     }
   })
 
@@ -473,7 +475,32 @@ export function synthesizeFullAppPlanFromJob(job: AutomationJob | null): FullApp
 
   // If the job already has a fully formed fullAppTestPlan, ensure all action screens are present
   if (job.fullAppTestPlan && job.fullAppTestPlan.screens && job.fullAppTestPlan.screens.length > 0) {
-    return ensureEveryActionHasScreen(job.fullAppTestPlan)
+    const plan = ensureEveryActionHasScreen(job.fullAppTestPlan);
+    if (job.responsiveResults && job.responsiveResults.length > 1) {
+      const rootScreen = plan.screens[0];
+      const hasDevScreens = plan.screens.some((s) => job.responsiveResults?.some((r) => s.id.includes(r.name.toLowerCase())));
+      if (!hasDevScreens && rootScreen) {
+        const devScreens = job.responsiveResults.map((r) => {
+          const devType: "desktop" | "tablet" | "mobile" = r.width >= 1024 ? "desktop" : r.width >= 600 ? "tablet" : "mobile";
+          return {
+            id: `${rootScreen.id}-${r.name.toLowerCase()}`,
+            name: `${rootScreen.name.replace(/\s*\([^)]*\)$/, "")} (${r.name} ${r.width}×${r.height})`,
+            url: rootScreen.url,
+            path: `/#${r.name.toLowerCase()}`,
+            screenshotUrl: r.screenshotUrl || rootScreen.screenshotUrl,
+            componentLocation: rootScreen.componentLocation,
+            sourceFile: rootScreen.sourceFile,
+            deviceType: devType,
+            viewport: { name: r.name, width: r.width, height: r.height },
+            actionableElements: rootScreen.actionableElements || [],
+            forms: rootScreen.forms || [],
+            discoveredAt: new Date().toISOString(),
+          };
+        });
+        plan.screens = [...devScreens, ...plan.screens.slice(1)];
+      }
+    }
+    return plan;
   }
 
   // Try DOM Discovery Graph first (Full App Testing mode)

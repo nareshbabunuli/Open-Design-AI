@@ -141,6 +141,8 @@ export type FlowGraphNode = {
   screenshotUrl?: string
   scenarioId?: string
   componentLocation?: string
+  deviceType?: "desktop" | "tablet" | "mobile"
+  viewport?: { name?: string; width: number; height: number }
 }
 
 export type FlowGraphEdge = {
@@ -436,6 +438,9 @@ export type AppScreenNode = {
   path: string
   archetype?: ScreenArchetype
   componentLocation?: string // e.g. "app/settings/page.tsx" or "src/components/Checkout.tsx"
+  deviceType?: "desktop" | "tablet" | "mobile"
+  viewport?: { name?: string; width: number; height: number }
+  screenshots?: Record<string, string>
   sourceFile?: string // alias for componentLocation
   screenshotUrl?: string
   actionableElements: ActionableElement[]
@@ -569,6 +574,8 @@ export type TestPlanStep = {
   screenName: string
   url?: string
   componentLocation?: string
+  deviceType?: "desktop" | "tablet" | "mobile"
+  viewport?: { name?: string; width: number; height: number }
   stepIndex: number
   actionType:
     | "fill"

@@ -945,6 +945,100 @@ export async function runMultiDeviceResponsiveAudit(
     job.report.responsiveScore = score
   }
 
+  // Multi-Device Workflows: Create 1 workflow and 1 screen card per audited device dimension
+  if (job.fullAppTestPlan && results.length > 0) {
+    if (!job.fullAppTestPlan.workflows) {
+      job.fullAppTestPlan.workflows = []
+    }
+    const rootScreen = job.fullAppTestPlan.screens?.[0] || { id: "S001", name: "Home / Dashboard" }
+
+    const deviceWorkflows: WorkflowRun[] = results.map((r) => {
+      const v: AutomationVerdict = r.status === "passed" ? "passed" : r.status === "warning" ? "passed" : "failed";
+      return {
+        id: `WF-${r.name.toUpperCase()}`,
+        name: `${r.name} Workflow (${r.width}×${r.height})`,
+        entryScreenId: `${rootScreen.id}-${r.name.toLowerCase()}`,
+        entryUrl: page.url() || job.fullAppTestPlan?.targetUrl || "",
+        verdict: v,
+        summary: `${r.name} (${r.width}×${r.height}): ${(r.observations || []).join("; ")}`,
+        steps: [
+          {
+            stepIndex: 1,
+            screenId: `${rootScreen.id}-${r.name.toLowerCase()}`,
+            screenName: `${rootScreen.name ? rootScreen.name.replace(/\s*\([^)]*\)$/, "") : "Home"} (${r.name})`,
+            action: `resize_viewport (${r.width}×${r.height})`,
+            targetName: `${r.width}×${r.height}`,
+            expectedOutcome: `Render layout responsively across ${r.name} (${r.width}×${r.height}) with 0 horizontal overflow`,
+            observedOutcome: (r.observations && r.observations[0]) || `${r.name} responsive audit completed`,
+            verdict: v,
+            afterScreenshotUrl: r.screenshotUrl,
+            durationMs: 600,
+          },
+        ],
+      };
+    });
+
+    const nonDeviceWfs = (job.fullAppTestPlan.workflows || []).filter(
+      (w) => !results.some((r) => w.id === `WF-${r.name.toUpperCase()}`)
+    )
+    job.fullAppTestPlan.workflows = [...deviceWorkflows, ...nonDeviceWfs]
+
+    // ALSO update testPlan.screens and flowGraph so the 3 device screens appear directly on the Flow Map canvas!
+    if (results.length > 1) {
+      const deviceScreenNodes: AppScreenNode[] = results.map((r) => {
+        const devType = r.width >= 1024 ? "desktop" : r.width >= 600 ? "tablet" : "mobile"
+        return {
+          id: `${rootScreen.id}-${r.name.toLowerCase()}`,
+          name: `${rootScreen.name ? rootScreen.name.replace(/\s*\([^)]*\)$/, "") : "Home"} (${r.name} ${r.width}×${r.height})`,
+          url: page.url() || job.fullAppTestPlan?.targetUrl || "",
+          path: `/#${r.name.toLowerCase()}`,
+          screenshotUrl: r.screenshotUrl || rootScreen.screenshotUrl,
+          componentLocation: rootScreen.componentLocation,
+          sourceFile: rootScreen.sourceFile,
+          deviceType: devType,
+          viewport: { name: r.name, width: r.width, height: r.height },
+          actionableElements: rootScreen.actionableElements || [],
+          forms: rootScreen.forms || [],
+          discoveredAt: new Date().toISOString(),
+        }
+      })
+
+      const otherScreens = (job.fullAppTestPlan.screens || []).filter(
+        (s) => !results.some((r) => s.id === `${rootScreen.id}-${r.name.toLowerCase()}`) && s.id !== rootScreen.id
+      )
+      job.fullAppTestPlan.screens = [...deviceScreenNodes, ...otherScreens]
+
+      const flowNodes = job.fullAppTestPlan.screens.map((s) => ({
+        id: s.id,
+        title: s.name,
+        url: s.url,
+        screenshotUrl: s.screenshotUrl,
+        componentLocation: s.componentLocation,
+        deviceType: (s as any).deviceType || (s.name.includes("Desktop") ? "desktop" : s.name.includes("Tablet") ? "tablet" : "mobile"),
+        viewport: (s as any).viewport,
+      }))
+
+      const flowEdges: { from: string; to: string; label: string }[] = (job.fullAppTestPlan.transitions || []).map((t: any) => ({
+        from: t.from || t.fromScreenId,
+        to: t.to || t.toScreenId,
+        label: t.label || t.action || "Transition",
+      }));
+      for (let d = 0; d < results.length - 1; d++) {
+        const fromId = `${rootScreen.id}-${results[d].name.toLowerCase()}`;
+        const toId = `${rootScreen.id}-${results[d + 1].name.toLowerCase()}`;
+        if (!flowEdges.some((e) => e.from === fromId && e.to === toId)) {
+          flowEdges.push({
+            from: fromId,
+            to: toId,
+            label: `Responsive Reflow (${results[d].name} → ${results[d + 1].name})`,
+          });
+        }
+      }
+
+      job.flowGraph = { nodes: flowNodes, edges: flowEdges };
+    }
+  }
+
   saveJob(job)
   return results
 }
