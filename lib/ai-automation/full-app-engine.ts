@@ -19,6 +19,8 @@ import {
   AutomationVerdict,
   ActionLedgerEntry,
   AgentAction,
+  DeviceResponsiveResult,
+  AutomationViewport,
 } from "./types"
 import { saveJob, getJob, appendLog, emitSessionEvent } from "./job-store"
 import { discoverLocalProjectRoutes, matchRouteForPath } from "./discover-routes"
@@ -693,6 +695,251 @@ export {
   generateStructuredTestPlan,
 } from "./full-app-planner"
 
+export const STANDARD_RESPONSIVE_VIEWPORTS: AutomationViewport[] = [
+  { name: "Desktop", width: 1440, height: 900 },
+  { name: "Tablet", width: 768, height: 1024 },
+  { name: "Mobile", width: 393, height: 852 },
+]
+
+/**
+ * Systematically audits responsive layouts across multiple device viewports.
+ * Checks for horizontal overflow, element clipping, touch target sizes (< 32px),
+ * and broken images. Captures full-device screenshots into screen snapshots.
+ */
+export async function runMultiDeviceResponsiveAudit(
+  job: AutomationJob,
+  page: Page,
+  targetViewports?: AutomationViewport[],
+  screens?: DiscoveredScreen[] | AppScreenNode[]
+): Promise<DeviceResponsiveResult[]> {
+  const viewports =
+    targetViewports && targetViewports.length > 0
+      ? targetViewports
+      : STANDARD_RESPONSIVE_VIEWPORTS
+
+  appendLog(
+    job,
+    "info",
+    `📱 [RESPONSIVE TESTING] Auditing ${viewports.length} device dimensions: ${viewports.map((v) => `${v.name} (${v.width}×${v.height})`).join(", ")}`
+  )
+
+  const results: DeviceResponsiveResult[] = []
+  const initialVp = page.viewport() || { width: 1440, height: 900 }
+
+  for (let i = 0; i < viewports.length; i++) {
+    const vp = viewports[i]
+    if (page.isClosed()) break
+
+    const isMobile = vp.width <= 768
+    job.currentStep = `Responsive audit: testing on ${vp.name} (${vp.width}×${vp.height})...`
+    saveJob(job)
+
+    emitSessionEvent(job, "progress", {
+      message: `Auditing responsive layout for ${vp.name} (${vp.width}×${vp.height})`,
+      payload: { phase: "responsive", viewport: vp.name, width: vp.width, height: vp.height },
+    })
+
+    try {
+      await page.setViewport({
+        width: vp.width,
+        height: vp.height,
+        deviceScaleFactor: 1,
+        isMobile,
+        hasTouch: isMobile,
+      })
+
+      await showActionBanner(page, `📱 Viewport: ${vp.name} (${vp.width}×${vp.height})`)
+
+      // Allow CSS media queries and flex/grid reflows to settle
+      await new Promise((r) => setTimeout(r, 600))
+
+      // Trigger smooth scroll down & up to trigger any sticky headers, lazy images or reflows
+      await page.evaluate(async () => {
+        window.scrollBy({ top: 350, behavior: "smooth" })
+        await new Promise((r) => setTimeout(r, 200))
+        window.scrollTo({ top: 0, behavior: "smooth" })
+      }).catch(() => {})
+      await new Promise((r) => setTimeout(r, 300))
+
+      // Audit DOM layout & overflow
+      const layoutData = await page.evaluate(() => {
+        const docEl = document.documentElement
+        const scrollWidth = Math.max(docEl.scrollWidth, document.body ? document.body.scrollWidth : 0)
+        const innerWidth = window.innerWidth
+        const overflowPixels = Math.max(0, scrollWidth - innerWidth)
+        const hasHorizontalOverflow = overflowPixels > 4
+
+        const overflowingElements: string[] = []
+        if (hasHorizontalOverflow) {
+          const allEls = document.querySelectorAll("body *")
+          for (let idx = 0; idx < allEls.length && overflowingElements.length < 5; idx++) {
+            const el = allEls[idx] as HTMLElement
+            const rect = el.getBoundingClientRect()
+            if (rect.right > innerWidth + 4 && rect.width > 0 && rect.height > 0) {
+              const tag = el.tagName.toLowerCase()
+              const id = el.id ? `#${el.id}` : ""
+              const cls = el.className && typeof el.className === "string" ? `.${el.className.trim().split(/\s+/).slice(0, 2).join(".")}` : ""
+              overflowingElements.push(`${tag}${id}${cls} (overflow: ${Math.round(rect.right - innerWidth)}px)`)
+            }
+          }
+        }
+
+        // Touch target sizing (minimum 32x32px recommended on mobile)
+        let touchTargetViolations = 0
+        const smallTouchTargets: string[] = []
+        const clickables = document.querySelectorAll("button, a, input[type='button'], input[type='submit'], [role='button']") 
+        clickables.forEach((el) => {
+          const rect = (el as HTMLElement).getBoundingClientRect()
+          if (rect.width > 0 && rect.height > 0 && (rect.width < 32 || rect.height < 32)) {
+            touchTargetViolations++
+            if (smallTouchTargets.length < 4) {
+              smallTouchTargets.push(`${el.tagName.toLowerCase()}${el.id ? `#${el.id}` : ""} (${Math.round(rect.width)}×${Math.round(rect.height)}px)`)
+            }
+          }
+        })
+
+        // Check broken images
+        let brokenImages = 0
+        const imgs = document.querySelectorAll("img")
+        imgs.forEach((img) => {
+          if (!img.complete || (img.naturalWidth === 0 && img.src && !img.src.startsWith("data:"))) {
+            brokenImages++
+          }
+        })
+
+        return {
+          scrollWidth,
+          innerWidth,
+          overflowPixels,
+          hasHorizontalOverflow,
+          overflowingElements,
+          touchTargetViolations,
+          smallTouchTargets,
+          brokenImages,
+        }
+      }).catch(() => ({
+        scrollWidth: vp.width,
+        innerWidth: vp.width,
+        overflowPixels: 0,
+        hasHorizontalOverflow: false,
+        overflowingElements: [],
+        touchTargetViolations: 0,
+        smallTouchTargets: [],
+        brokenImages: 0,
+      }))
+
+      // Capture screenshot for this device dimension
+      let screenshotUrl = ""
+      try {
+        const buf = await page.screenshot({ type: "jpeg", quality: 65, fullPage: false })
+        screenshotUrl = `data:image/jpeg;base64,${Buffer.from(buf).toString("base64")}`
+        job.currentScreenshotUrl = screenshotUrl
+      } catch {}
+
+      // Update screen snapshots in job.screens
+      if (job.screens && job.screens.length > 0 && screenshotUrl) {
+        for (const sc of job.screens) {
+          if (!sc.screenshots) sc.screenshots = {}
+          sc.screenshots[vp.name] = screenshotUrl
+        }
+      }
+
+      // Determine status & observations
+      const observations: string[] = []
+      let status: "passed" | "warning" | "failed" = "passed"
+
+      if (layoutData.hasHorizontalOverflow) {
+        status = "failed"
+        observations.push(
+          `Horizontal layout overflow: document width (${layoutData.scrollWidth}px) exceeds viewport width (${layoutData.innerWidth}px) by ${layoutData.overflowPixels}px.`
+        )
+        if (layoutData.overflowingElements.length > 0) {
+          observations.push(`Overflowing elements: ${layoutData.overflowingElements.join(", ")}`)
+        }
+      }
+
+      if (isMobile && layoutData.touchTargetViolations > 0) {
+        if (status !== "failed") status = "warning"
+        observations.push(
+          `${layoutData.touchTargetViolations} interactive element(s) under recommended minimum 32px touch target: ${layoutData.smallTouchTargets.join(", ")}`
+        )
+      }
+
+      if (layoutData.brokenImages > 0) {
+        if (status !== "failed") status = "warning"
+        observations.push(`${layoutData.brokenImages} broken image(s) detected.`)
+      }
+
+      if (observations.length === 0) {
+        observations.push(`Layout is fully responsive with zero horizontal overflow and proper touch scaling.`)
+      }
+
+      if (layoutData.hasHorizontalOverflow) {
+        const issue: AutomationIssue = {
+          id: `resp-overflow-${vp.name.toLowerCase()}-${Date.now()}`,
+          screenUrl: page.url(),
+          screenTitle: `${vp.name} Responsive Viewport`,
+          type: "responsive_overflow",
+          severity: layoutData.overflowPixels > 30 ? "high" : "medium",
+          description: `Horizontal layout overflow on ${vp.name} (${vp.width}×${vp.height}): page content is ${layoutData.scrollWidth}px exceeding viewport by ${layoutData.overflowPixels}px.${layoutData.overflowingElements.length > 0 ? ` Elements: ${layoutData.overflowingElements.slice(0, 2).join(", ")}` : ""}`,
+          screenshotUrl: screenshotUrl || undefined,
+          timestamp: new Date().toISOString(),
+        }
+        job.issues.push(issue)
+      }
+
+      const res: DeviceResponsiveResult = {
+        name: vp.name,
+        width: vp.width,
+        height: vp.height,
+        status,
+        overflowDetected: layoutData.hasHorizontalOverflow,
+        overflowPixels: layoutData.overflowPixels,
+        brokenImages: layoutData.brokenImages,
+        touchTargetViolations: layoutData.touchTargetViolations,
+        screenshotUrl,
+        observations,
+      }
+      results.push(res)
+
+      appendLog(
+        job,
+        status === "passed" ? "success" : status === "warning" ? "warn" : "error",
+        `📱 ${vp.name} (${vp.width}×${vp.height}): ${status.toUpperCase()} — ${observations[0]}`
+      )
+    } catch (err: any) {
+      appendLog(job, "warn", `⚠️ Responsive check for ${vp.name} encountered error: ${err?.message || err}`)
+    }
+  }
+
+  // Restore initial viewport
+  try {
+    await page.setViewport({
+      width: initialVp.width,
+      height: initialVp.height,
+      deviceScaleFactor: 1,
+      isMobile: initialVp.width <= 768,
+      hasTouch: initialVp.width <= 768,
+    })
+  } catch {}
+
+  job.responsiveResults = results
+
+  // Calculate responsiveScore: 100 max, -30 for each failed device, -10 for each warning
+  const failedDevices = results.filter((r) => r.status === "failed").length
+  const warningDevices = results.filter((r) => r.status === "warning").length
+  const score = Math.max(0, 100 - failedDevices * 30 - warningDevices * 10)
+
+  if (job.report) {
+    job.report.responsiveBreakdown = results
+    job.report.responsiveScore = score
+  }
+
+  saveJob(job)
+  return results
+}
+
+
 
 
 /**
@@ -716,6 +963,7 @@ export async function executeStructuredTestPlan(
     uploadFilesDir?: string
     uploadInventory?: UploadFolderInventory | null
     projectDir?: string
+    viewports?: AutomationViewport[]
   }
 ): Promise<void> {
   appendLog(job, "info", `Starting Phase 3: Outcome-Verified Test Plan Execution (${testPlan.steps.length} steps)...`)
@@ -2609,6 +2857,14 @@ export async function executeStructuredTestPlan(
     appendLog(job, "warn", `UX Intelligence scoring encountered error: ${uxErr?.message}`)
   }
 
+  // PHASE 5.5: Multi-Device Responsive Testing
+  try {
+    const targetVps = options?.viewports && options.viewports.length > 0 ? options.viewports : STANDARD_RESPONSIVE_VIEWPORTS
+    await runMultiDeviceResponsiveAudit(job, page, targetVps, testPlan.screens)
+  } catch (respErr: any) {
+    appendLog(job, "warn", `Multi-device responsive testing encountered error: ${respErr?.message}`)
+  }
+
   // PHASE 6: Comprehensive Evidence Reporting & Markdown Artifact
   appendLog(job, "info", `Generating Phase 6: Evidence-Based Failure Report & Markdown Artifact...`)
   try {
@@ -3037,6 +3293,7 @@ export async function executeFullAppTestingJob(
       uploadFilesDir: uploadFilesDir || undefined,
       uploadInventory,
       projectDir: params.projectDir,
+      viewports: params.viewports,
     })
 
     // Finalize session video recording

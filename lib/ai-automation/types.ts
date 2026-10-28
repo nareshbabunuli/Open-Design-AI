@@ -35,6 +35,7 @@ export type AutomationIssue = {
     networkFailures?: Array<{ url: string; status?: number; errorText?: string; resourceType?: string }>
     emptyDataSurfaces?: string[]
   }
+  screenshotUrl?: string
   timestamp: string
 }
 
@@ -182,6 +183,19 @@ export type AutomationLog = {
   message: string
 }
 
+export type DeviceResponsiveResult = {
+  name: string
+  width: number
+  height: number
+  status: "passed" | "warning" | "failed"
+  overflowDetected: boolean
+  overflowPixels?: number
+  brokenImages?: number
+  touchTargetViolations?: number
+  screenshotUrl?: string
+  observations?: string[]
+}
+
 export type AutomationReport = {
   totalScreensTested: number
   passedScreens: number
@@ -189,6 +203,7 @@ export type AutomationReport = {
   totalIssues: number
   backNavigationScore: number // 0-100 percentage
   responsiveScore: number // 0-100 percentage
+  responsiveBreakdown?: DeviceResponsiveResult[]
   summary: string
   recommendations: string[]
   issues?: AutomationIssue[]
@@ -748,6 +763,7 @@ export type AutomationJob = {
   }>
   pendingSettingsCredentials?: Record<string, string> & { skip?: boolean }
   /** UX Intelligence audit score with dimensional breakdown and evidence bundles */
+  responsiveResults?: DeviceResponsiveResult[]
   uxAuditScore?: {
     overall: number // 0-100
     grade: "A" | "B" | "C" | "D" | "F"

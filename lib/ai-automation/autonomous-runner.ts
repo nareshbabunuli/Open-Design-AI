@@ -32,6 +32,7 @@ import type {
   FullAppTestPlan,
 } from "./types"
 import { buildFigmaWorkflowMap } from "./full-app-utils"
+import { runMultiDeviceResponsiveAudit, STANDARD_RESPONSIVE_VIEWPORTS } from "./full-app-engine"
 import { saveJob, getJob, appendLog, jobDir } from "./job-store"
 import { planScenarios } from "./scenario-planner"
 import { discoverLocalProjectRoutes } from "./discover-routes"
@@ -957,6 +958,16 @@ export async function executeAutonomousJob(
     }
     job.flowGraph = flowGraph
 
+    // ---- Multi-Device Responsive Audit ----
+    if (params.checkResponsive !== false) {
+      try {
+        const respVps = params.viewports && params.viewports.length > 0 ? params.viewports : STANDARD_RESPONSIVE_VIEWPORTS
+        await runMultiDeviceResponsiveAudit(job, page, respVps)
+      } catch (respErr: any) {
+        appendLog(job, "warn", `Responsive audit encountered: ${respErr?.message}`)
+      }
+    }
+
     // ---- Report ----
     job.testCases = testCases
     const passed = testCases.filter((t) => t.status === "passed").length
@@ -975,7 +986,8 @@ export async function executeAutonomousJob(
       failedScreens: failed + blocked,
       totalIssues: job.issues.length,
       backNavigationScore: passRate,
-      responsiveScore: passRate,
+      responsiveScore: typeof job.report?.responsiveScore === "number" ? job.report.responsiveScore : passRate,
+      responsiveBreakdown: job.responsiveResults,
       summary: `Autonomous run: ${passed}/${testCases.length} scenarios passed${failed ? `, ${failed} failed` : ""}${blocked ? `, ${blocked} blocked` : ""}. ${flowGraph.nodes.length} screens visited, ${job.issues.length} issues flagged.${recordingUrl ? " Session video attached." : ""}${job.actionLedger ? ` Action Ledger: ${job.actionLedger.tested} tested, ${job.actionLedger.blocked} blocked, ${job.actionLedger.untested} untested.` : ""}${job.error?.startsWith("[DOMDiscovery]") ? " DOM-first discovery failed; coverage is incomplete." : (job.actionLedger?.untested || 0) > 0 || job.domDiscoveryGraph?.truncated ? ` DOM-first discovery is incomplete${(job.actionLedger?.untested || 0) > 0 ? `: ${job.actionLedger?.untested || 0} inventory item(s) remain unresolved` : ""}${job.domDiscoveryGraph?.truncated ? "; route/state graph limit reached" : ""}; see the Action Ledger and discovery graph.` : ""}`,
       recommendations: [...recommendations, ...((job.error?.startsWith("[DOMDiscovery]")) ? ["DOM-first discovery failed; do not treat this run as full application coverage."] : (job.actionLedger?.untested || 0) > 0 ? [`${job.actionLedger?.untested || 0} DOM inventory item(s) remain untested or unresolved.`] : [])],
       issues: job.issues,

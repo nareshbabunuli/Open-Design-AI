@@ -165,7 +165,8 @@ export function buildAutomationReport(
     failedScreens,
     totalIssues,
     backNavigationScore: 100,
-    responsiveScore: 100,
+    responsiveScore: typeof job.report?.responsiveScore === "number" ? job.report.responsiveScore : (job.responsiveResults && job.responsiveResults.length > 0 ? Math.max(0, 100 - job.responsiveResults.filter((r) => r.status === "failed").length * 30 - job.responsiveResults.filter((r) => r.status === "warning").length * 10) : 100),
+    responsiveBreakdown: job.responsiveResults,
     summary,
     recommendations,
     issues: job.issues,
@@ -317,6 +318,26 @@ function generateMarkdownReportText(params: {
       for (const field of postmanCoverage.postmanFieldsNotFoundInUi) sections.push(`- **${field.endpointName}** → \`${field.apiFieldName}\``)
       sections.push("")
     }
+  }
+
+  // Multi-Device Responsive Testing Section
+  if (job.responsiveResults && job.responsiveResults.length > 0) {
+    sections.push(`## 📱 Multi-Device Responsive Breakdown\n`)
+    sections.push(`| Device | Viewport | Status | Overflow | Touch Target Violations | Broken Images |`)
+    sections.push(`| :--- | :--- | :--- | :--- | :--- | :--- |`)
+    for (const r of job.responsiveResults) {
+      const statusIcon = r.status === "passed" ? "✅ Passed" : r.status === "warning" ? "⚠️ Warning" : "❌ Failed"
+      const overflowText = r.overflowDetected ? `⚠️ +${r.overflowPixels}px` : "None (0px)"
+      sections.push(`| **${r.name}** | \`${r.width}×${r.height}\` | ${statusIcon} | ${overflowText} | ${r.touchTargetViolations || 0} | ${r.brokenImages || 0} |`)
+    }
+    sections.push("")
+    sections.push(`### Responsive Observations`)
+    for (const r of job.responsiveResults) {
+      if (r.observations && r.observations.length > 0) {
+        sections.push(`- **${r.name}**: ${r.observations.join(" ")}`)
+      }
+    }
+    sections.push("")
   }
 
   // Workflows Section ("write down whole workflow so that user gets idea where it failed")

@@ -55,6 +55,7 @@ import {
   FileBarChart,
   X,
   Video,
+  Smartphone,
 } from "lucide-react"
 
 interface FullAppTestingViewProps {
@@ -1634,6 +1635,122 @@ export default function FullAppTestingView({
                     </ul>
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* Multi-Device Responsive Testing Section */}
+            {(Boolean(job?.responsiveResults?.length) || Boolean(job?.report?.responsiveBreakdown?.length)) && (
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                    <Smartphone className="h-3.5 w-3.5 text-cyan-400" />
+                    Multi-Device Responsive Breakdown
+                  </h4>
+                  {typeof job?.report?.responsiveScore === "number" && (
+                    <span
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono ${
+                        job.report.responsiveScore >= 90
+                          ? "bg-emerald-950 text-emerald-300 border border-emerald-800"
+                          : job.report.responsiveScore >= 70
+                          ? "bg-amber-950 text-amber-300 border border-amber-800"
+                          : "bg-rose-950 text-rose-300 border border-rose-800"
+                      }`}
+                    >
+                      Responsive Score: {job.report.responsiveScore}%
+                    </span>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {(job?.responsiveResults || job?.report?.responsiveBreakdown || []).map((device) => {
+                    const isPassed = device.status === "passed"
+                    const isWarning = device.status === "warning"
+                    return (
+                      <div
+                        key={device.name}
+                        className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 flex flex-col justify-between space-y-2.5"
+                      >
+                        <div>
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-white text-xs flex items-center gap-1.5">
+                              <span>{device.name}</span>
+                              <span className="text-[10px] text-slate-400 font-mono font-normal">
+                                {device.width}×{device.height}
+                              </span>
+                            </span>
+                            <span
+                              className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase font-mono ${
+                                isPassed
+                                  ? "bg-emerald-950 text-emerald-300 border border-emerald-800"
+                                  : isWarning
+                                  ? "bg-amber-950 text-amber-300 border border-amber-800"
+                                  : "bg-rose-950 text-rose-300 border border-rose-800"
+                              }`}
+                            >
+                              {device.status}
+                            </span>
+                          </div>
+
+                          {device.screenshotUrl && (
+                            <div
+                              onClick={() => setScreenshotModal(device.screenshotUrl!)}
+                              className="mt-2 aspect-video rounded-lg overflow-hidden bg-slate-950 border border-slate-800 relative cursor-pointer hover:border-cyan-500/60 transition group"
+                              title="Click to view full screenshot"
+                            >
+                              <img
+                                src={device.screenshotUrl}
+                                alt={`${device.name} layout screenshot`}
+                                className="w-full h-full object-cover object-top"
+                              />
+                              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition text-xs text-white font-medium">
+                                View Full Size ↗
+                              </div>
+                            </div>
+                          )}
+
+                          <div className="mt-2 space-y-1 text-[11px]">
+                            <div className="flex items-center justify-between text-slate-400">
+                              <span>Horizontal Overflow:</span>
+                              <span
+                                className={`font-mono font-bold ${
+                                  device.overflowDetected ? "text-rose-400" : "text-emerald-400"
+                                }`}
+                              >
+                                {device.overflowDetected ? `+${device.overflowPixels || 0}px` : "None (0px)"}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between text-slate-400">
+                              <span>Touch Target Violations:</span>
+                              <span
+                                className={`font-mono font-bold ${
+                                  (device.touchTargetViolations || 0) > 0 ? "text-amber-400" : "text-slate-300"
+                                }`}
+                              >
+                                {device.touchTargetViolations || 0}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between text-slate-400">
+                              <span>Broken Images:</span>
+                              <span
+                                className={`font-mono font-bold ${
+                                  (device.brokenImages || 0) > 0 ? "text-rose-400" : "text-slate-300"
+                                }`}
+                              >
+                                {device.brokenImages || 0}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {device.observations && device.observations.length > 0 && (
+                          <div className="pt-2 border-t border-slate-800 text-[10px] text-slate-400 leading-relaxed">
+                            {device.observations.join(" ")}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
               </div>
             )}
 

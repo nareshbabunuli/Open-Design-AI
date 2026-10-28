@@ -90,6 +90,7 @@ import type {
   AIThinkingModel,
   ChecklistTestItem,
   FullAppTestPlan,
+  AutomationViewport,
   FeatureWorkflowSpec,
 } from "@/lib/ai-automation/types"
 
@@ -415,6 +416,31 @@ export default function AISimulatorPage() {
     window.addEventListener("dummy-test-status", handleStatus)
     return () => window.removeEventListener("dummy-test-status", handleStatus)
   }, [])
+  // Simulator device viewport state
+  const [simulatorViewport, setSimulatorViewport] = useState<{ width: number; height: number }>({ width: 393, height: 852 })
+  const handleSimulatorViewportChange = useCallback((vp: { width: number; height: number }) => {
+    setSimulatorViewport((prev) => {
+      if (prev.width === vp.width && prev.height === vp.height) return prev
+      return { width: vp.width, height: vp.height }
+    })
+  }, [])
+  const STANDARD_DEVICES = useMemo(() => [
+    { id: "desktop", name: "Desktop", width: 1440, height: 900, description: "1440 × 900 (Large Screens)" },
+    { id: "tablet", name: "Tablet", width: 768, height: 1024, description: "768 × 1024 (iPad / Tablet)" },
+    { id: "mobile", name: "Mobile", width: 393, height: 852, description: "393 × 852 (iPhone / Modern Mobile)" },
+    { id: "compact", name: "Compact Mobile", width: 360, height: 780, description: "360 × 780 (Android Compact)" },
+  ], [])
+  const [selectedDeviceIds, setSelectedDeviceIds] = useState<string[]>(["desktop", "tablet", "mobile"])
+  const selectedViewports: AutomationViewport[] = useMemo(() => {
+    const chosen = STANDARD_DEVICES.filter((d) => selectedDeviceIds.includes(d.id)).map((d) => ({
+      name: d.name,
+      width: d.width,
+      height: d.height,
+    }))
+    return chosen.length > 0
+      ? chosen
+      : [{ name: "Active Simulator Viewport", width: simulatorViewport.width, height: simulatorViewport.height }]
+  }, [selectedDeviceIds, simulatorViewport, STANDARD_DEVICES])
   const [verificationCodeInput, setVerificationCodeInput] = useState("")
   const [isSubmittingVerification, setIsSubmittingVerification] = useState(false)
   const [settingsFormValues, setSettingsFormValues] = useState<Record<string, string>>({})
@@ -684,14 +710,6 @@ export default function AISimulatorPage() {
     [activePlan, currentJob]
   )
 
-  // Simulator device viewport state
-  const [simulatorViewport, setSimulatorViewport] = useState<{ width: number; height: number }>({ width: 393, height: 852 })
-  const handleSimulatorViewportChange = useCallback((vp: { width: number; height: number }) => {
-    setSimulatorViewport((prev) => {
-      if (prev.width === vp.width && prev.height === vp.height) return prev
-      return { width: vp.width, height: vp.height }
-    })
-  }, [])
 
   // Local Project Route Scanner State
   const actionLedgerLive = activePlan?.steps?.filter((s) => s.status === "running").map((s) => ({ id: s.id, title: s.targetName || "Running action", detail: s.expectedResult, status: "running" as const })) || []
@@ -2121,13 +2139,7 @@ export default function AISimulatorPage() {
           projectId: activeProject.id,
           projectDir: selectedProjectDir,
           mode: "full_app",
-          viewports: [
-            {
-              name: "Active Simulator Viewport",
-              width: simulatorViewport.width,
-              height: simulatorViewport.height,
-            },
-          ],
+          viewports: selectedViewports,
           dummyTestFiles,
           uploadFilesDir: uploadFilesDir.trim() || undefined,
           postmanCollection: postmanObj,
@@ -2223,13 +2235,7 @@ export default function AISimulatorPage() {
           projectDir: selectedProjectDir,
           mode: "feature_workflow",
           workflowPrompt: promptText,
-          viewports: [
-            {
-              name: "Active Simulator Viewport",
-              width: simulatorViewport.width,
-              height: simulatorViewport.height,
-            },
-          ],
+          viewports: selectedViewports,
           uploadFilesDir: uploadFilesDir.trim() || undefined,
           postmanCollection: postmanObj,
           allowTestPayments,
@@ -2761,15 +2767,26 @@ export default function AISimulatorPage() {
                       </button>
                     </div>
                   ) : (
-                    <button
-                      type="button"
-                      onClick={() => handleStartFullAppTesting()}
-                      className="px-2.5 py-1 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
-                      title="Discover and test the full application automatically"
-                    >
-                      <Play className="h-3 w-3 fill-current" />
-                      <span>{activePlan ? "Re-Run App Test" : "Full App Test"}</span>
-                    </button>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => openPreFlightModal("full_app")}
+                        className="px-2 py-1 rounded-md bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700 text-slate-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                        title="Configure multi-device responsive dimensions & settings"
+                      >
+                        <Smartphone className="h-3 w-3 text-cyan-400" />
+                        <span>{selectedDeviceIds.length} Devices</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleStartFullAppTesting()}
+                        className="px-2.5 py-1 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                        title="Discover and test the full application automatically"
+                      >
+                        <Play className="h-3 w-3 fill-current" />
+                        <span>{activePlan ? "Re-Run App Test" : "Full App Test"}</span>
+                      </button>
+                    </div>
                   )}
 
                   {currentJob?.id && (
@@ -3323,6 +3340,61 @@ export default function AISimulatorPage() {
 
             {/* Modal Body */}
             <div className="p-5 space-y-4 max-h-[75vh] overflow-y-auto custom-scrollbar text-xs">
+              {/* Multi-Device Responsive Testing Matrix */}
+              <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="font-semibold text-slate-200 flex items-center gap-1.5">
+                    <Smartphone className="h-3.5 w-3.5 text-cyan-400" />
+                    <span>Multi-Device Responsive Matrix ({selectedDeviceIds.length} Selected)</span>
+                  </label>
+                  <span className="text-[10px] text-cyan-400/80 font-mono">Sequential Testing</span>
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  Select the device dimensions to audit. The runner will execute across each dimension sequentially to check for horizontal overflow, touch target sizing, and capture screenshots.
+                </p>
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  {STANDARD_DEVICES.map((dev) => {
+                    const isChecked = selectedDeviceIds.includes(dev.id)
+                    return (
+                      <button
+                        key={dev.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedDeviceIds((prev) =>
+                            isChecked
+                              ? prev.length > 1
+                                ? prev.filter((id) => id !== dev.id)
+                                : prev
+                              : [...prev, dev.id]
+                          )
+                        }}
+                        className={`p-2.5 rounded-lg border text-left transition flex items-start gap-2.5 cursor-pointer ${
+                          isChecked
+                            ? "bg-indigo-950/40 border-indigo-500/60 text-white"
+                            : "bg-slate-900/60 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700"
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          readOnly
+                          className="mt-0.5 rounded border-slate-700 text-indigo-600 pointer-events-none"
+                        />
+                        <div className="min-w-0">
+                          <div className="text-xs font-bold truncate flex items-center gap-1.5">
+                            <span>{dev.name}</span>
+                            <span className="text-[10px] font-mono text-cyan-400 font-normal">
+                              {dev.width}×{dev.height}
+                            </span>
+                          </div>
+                          <div className="text-[10px] text-slate-400 truncate">{dev.description}</div>
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+
               {/* Optional browser session video recording */}
               <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 flex items-start gap-3">
                 <Video className="h-4 w-4 mt-0.5 text-indigo-400 shrink-0" />
