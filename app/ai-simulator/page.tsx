@@ -1841,7 +1841,7 @@ export default function AISimulatorPage() {
       } catch (err) {
         console.warn("Polling error:", err)
       }
-    }, 1500)
+    }, 600)
 
     return () => clearInterval(interval)
   }, [currentJob?.id, currentJob?.status, loadWorkspace])
@@ -1917,7 +1917,7 @@ export default function AISimulatorPage() {
       if (nextIdx === chronologicalActions.length - 1) {
         setIsPlayingReplay(false)
       }
-    }, 1500)
+    }, 600)
 
     return () => clearTimeout(timer)
   }, [isPlayingReplay, activeActionIndex, chronologicalActions])

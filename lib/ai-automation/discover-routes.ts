@@ -134,7 +134,7 @@ export function listAvailableLocalProjects(): LocalProjectInfo[] {
  * Prioritizes explicitly passed customDir, then heuristics based on baseUrl port,
  * falling back to process.cwd().
  */
-export function resolveProjectDirectory(baseUrl = "http://localhost:3000", customDir?: string): string {
+export function resolveProjectDirectory(baseUrl = "http://localhost:3000", customDir?: string): string | null {
   const cwd = process.cwd()
 
   // 1. Explicit directory provided
@@ -170,9 +170,12 @@ export function resolveProjectDirectory(baseUrl = "http://localhost:3000", custo
       const hhParent = path.resolve(cwd, "..", "hh")
       if (fs.existsSync(hhParent)) return hhParent
     }
+    if (urlObj.port === "3000") {
+      return cwd
+    }
   } catch {}
 
-  return cwd
+  return null
 }
 
 /**
@@ -184,6 +187,7 @@ export function discoverLocalProjectRoutes(
   customProjectDir?: string
 ): DiscoveredProjectRoute[] {
   const projectDir = resolveProjectDirectory(baseUrl, customProjectDir)
+  if (!projectDir) return []
   const results: DiscoveredProjectRoute[] = []
   const seenPaths = new Set<string>()
 

@@ -143,7 +143,7 @@ export function resolveUploadFolder(opts?: {
   }
 
   // 2. Fall back to standard project conventions if they exist and contain test files
-  const conventionDirs = ["test-files", "test_files", "tests/fixtures", "fixtures", "scripts/fixtures"]
+  const conventionDirs = ["tests/test-files", "test-files", "test_files", "tests/fixtures", "fixtures", "scripts/fixtures"]
   for (const base of baseDirs) {
     for (const sub of conventionDirs) {
       try {
@@ -391,6 +391,56 @@ export function pickUploadFile(
 /**
  * Generates realistic dummy file buffers (PNG, PDF, CSV, TXT) when no user files are provided.
  */
+export function pickUploadFiles(
+  inventory: UploadFolderInventory | null,
+  criteria: {
+    fileTypeRequired?: TestFileType
+    acceptAttr?: string
+    targetName?: string
+    count?: number
+  }
+): Array<{
+  filePath: string
+  fileName: string
+  isFromFolder: boolean
+}> {
+  const maxCount = Math.max(1, criteria.count ?? 2)
+  if (!inventory || inventory.files.length === 0) {
+    const single = pickUploadFile(null, criteria)
+    return [{ filePath: single.filePath, fileName: single.fileName, isFromFolder: single.isFromFolder }]
+  }
+  const acceptTokens = (criteria.acceptAttr || "")
+    .split(",")
+    .map((t) => t.trim().toLowerCase())
+    .filter(Boolean)
+  const matchesAccept = (f: TestFileEntry) => {
+    if (acceptTokens.length === 0) return true
+    return acceptTokens.some(
+      (token) =>
+        (token.endsWith("/*") && f.mimeType.toLowerCase().startsWith(token.slice(0, -2))) ||
+        (token.startsWith(".") && f.extension.toLowerCase() === token) ||
+        f.mimeType.toLowerCase() === token
+    )
+  }
+  const pool = inventory.files.filter(matchesAccept)
+  if (pool.length >= maxCount) {
+    return pool.slice(0, maxCount).map((f) => ({
+      filePath: f.filePath,
+      fileName: f.fileName,
+      isFromFolder: true,
+    }))
+  }
+  if (pool.length > 0) {
+    return pool.map((f) => ({
+      filePath: f.filePath,
+      fileName: f.fileName,
+      isFromFolder: true,
+    }))
+  }
+  const single = pickUploadFile(inventory, criteria)
+  return [{ filePath: single.filePath, fileName: single.fileName, isFromFolder: single.isFromFolder }]
+}
+
 export function createDummyFileBuffer(type: TestFileType): {
   buffer: Buffer
   fileName: string

@@ -332,17 +332,19 @@ export async function detectSettingsCredentialsRequirement(page: Page): Promise<
 
         const combined = `${name} ${placeholder} ${labelText}`
 
-        const isApiKey = /api[_-]?key|secret[_-]?key|access[_-]?token|private[_-]?key|webhook[_-]?secret|stripe_?key|openai_?key|auth[_-]?token/i.test(
+        const isApiKey = /api[_-]?key|secret[_-]?key|access[_-]?token|private[_-]?key|webhook[_-]?secret|stripe_?key|openai_?key|auth[_-]?token|client[_-]?secret/i.test(
           combined
         )
-        const isPassword = input.type === "password" || /password|client_?secret/i.test(combined)
 
-        if ((isApiKey || isPassword) && !input.value.trim()) {
+        // Only prompt for actual API keys/tokens/secrets.
+        // Login credentials (username + password) are handled by authenticateIfNeeded.
+        // Ordinary passwords on non-login forms must never trigger settings secrets prompts.
+        if (isApiKey && !input.value.trim()) {
           const selector = input.id ? `#${input.id}` : input.name ? `input[name="${input.name}"]` : ""
           if (selector) {
             fields.push({
               key: input.name || input.id,
-              label: labelEl ? labelEl.textContent?.trim() || input.name : input.name || "API Key / Credential",
+              label: labelEl ? labelEl.textContent?.trim() || input.name : input.name || "API Key",
               selector,
               isSecret: true,
               placeholder: input.placeholder || "Enter secret key or token",

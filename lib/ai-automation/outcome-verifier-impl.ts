@@ -389,7 +389,7 @@ export async function settle(
   let previousHash = ""
 
   while (Date.now() - start < maxTimeoutMs) {
-    await new Promise((r) => setTimeout(r, 250))
+    await new Promise((r) => setTimeout(r, 80))
 
     // Early exit if condition is already satisfied
     if (isExpectedMet && isExpectedMet()) {

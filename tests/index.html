@@ -1,17 +1,765 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Open Design AI | Visual QA Target</title>
-<style>
-:root{font-family:system-ui,Arial,sans-serif;color:#182338;background:#f4f7fb}*{box-sizing:border-box}body{margin:0}header{background:#17233c;color:white;padding:20px 5%}header h1{margin:0;font-size:24px}header p{margin:5px 0;color:#bcd0f5}nav{display:flex;gap:12px;flex-wrap:wrap;padding:12px 5%;background:white;border-bottom:1px solid #dce3ef}nav a{color:#174ea6}main{max-width:1200px;margin:auto;padding:24px}section{background:white;border:1px solid #dce3ef;border-radius:14px;padding:22px;margin-bottom:20px;box-shadow:0 3px 12px #1627470a}h2{margin-top:0}button,select,input,textarea{font:inherit;padding:10px;border:1px solid #aebbd0;border-radius:7px}button{cursor:pointer;background:#1859c9;color:white;border:0}button:focus-visible,a:focus-visible{outline:3px solid orange}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.card{border:1px solid #dce3ef;border-radius:10px;padding:20px;background:#f8faff;min-height:120px}.controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.status{font-weight:700;color:#137347}.visual{width:100%;height:160px;border-radius:12px;background:linear-gradient(130deg,#d4e6ff 0 35%,#5f9ae6 35% 62%,#142e64 62%);position:relative;overflow:hidden}.visual:after{content:"VISION TARGET";position:absolute;left:25px;top:65px;color:white;font-weight:800;letter-spacing:2px}label{display:block;margin:12px 0}input,textarea{max-width:100%;width:320px}#canvas{max-width:100%;border:1px solid #ddd}.small{color:#52617b;font-size:14px}.badge{display:inline-block;background:#e7efff;border-radius:50px;padding:5px 12px}.fault .card:nth-child(2){transform:translateX(18px);background:#ffe3e3}.fault .visual{filter:grayscale(1);height:135px}.fault #missingTarget{visibility:hidden}.fault #overlapTarget{margin-top:-45px;position:relative;z-index:2}.fault #shiftTarget{padding-left:55px}.fault .colorTarget{color:#f7f7f7;background:#f7f7f7}.mobile-only{display:none}table{border-collapse:collapse;width:100%}td,th{padding:9px;border:1px solid #dce3ef;text-align:left}@media(max-width:800px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:500px){main{padding:12px}.grid{grid-template-columns:1fr}.mobile-only{display:block}header h1{font-size:20px}.fault .grid{width:110vw}.fault #shiftTarget{padding-left:85px}}
-</style></head><body><header><h1>Open Design AI — Visual Regression Test Site</h1><p>Controlled target website for screenshot, responsive, and OpenCV-based comparison</p></header>
-<nav><a href="#dashboard">Dashboard</a><a href="#visual">Visual targets</a><a href="#form">Forms</a><a href="#table">Table</a><a href="#report">Expected results</a></nav>
-<main><section id="dashboard"><h2>Test controls</h2><p>Start with the clean baseline, capture screenshots in Open Design AI, then enable defects and capture again at the same viewport.</p><div class="controls"><button id="baseline">Baseline (clean)</button><button id="defects">Inject visual defects</button><button id="toggle">Toggle dynamic message</button><span id="mode" class="status" aria-live="polite">BASELINE</span></div><p id="dynamic" hidden>Dynamic message: this content appeared after a click.</p><p class="small">Use the same browser zoom, viewport, and scroll position for comparisons. The site itself does not run OpenCV; your application should do that.</p></section>
-<section id="visual"><h2>Visual comparison targets</h2><div class="grid"><div class="card"><h3>Card A</h3><p>Stable reference element</p><span class="badge">Active</span></div><div class="card"><h3>Card B</h3><p>Changes position and background when defects are enabled.</p></div><div class="card" id="missingTarget"><h3>Card C</h3><p>Disappears in defect mode.</p></div></div><h3>Image-region target</h3><div class="visual" role="img" aria-label="Geometric image target"></div><div class="grid" style="margin-top:16px"><div class="card" id="shiftTarget"><h3>Alignment</h3><p>Padding shifts in defect mode.</p></div><div class="card"><h3>Overlap</h3><p>Following element overlaps this card.</p></div><div class="card" id="overlapTarget"><h3>Overlap target</h3><p>Moves upward in defect mode.</p></div></div><p class="colorTarget">Contrast target: becomes unreadable in defect mode.</p></section>
-<section id="form"><h2>Interaction test form</h2><form id="testForm"><label>Full name <input name="name" placeholder="Enter full name" required></label><label>Email <input type="email" name="email" placeholder="name@example.com" required></label><label>Role <select name="role"><option>Developer</option><option>Tester</option><option>Designer</option></select></label><label>Notes <textarea name="notes" placeholder="Enter notes"></textarea></label><label><input type="checkbox" name="agree" required style="width:auto"> I agree to test</label><button type="submit">Submit test form</button></form><p id="formResult" aria-live="polite"></p></section>
-<section><h2>Canvas / pixel-difference target</h2><p>Canvas contains deterministic shapes and text for screenshot matching.</p><canvas id="canvas" width="680" height="220"></canvas></section>
-<section id="table"><h2>Data table</h2><table><thead><tr><th>Test</th><th>Baseline</th><th>Defect mode</th></tr></thead><tbody><tr><td>Card layout</td><td>Aligned</td><td>Shifted</td></tr><tr><td>Image</td><td>Colour</td><td>Grayscale and resized</td></tr><tr><td>Missing element</td><td>Visible</td><td>Hidden</td></tr><tr><td>Responsive</td><td>No overflow</td><td>Mobile overflow</td></tr></tbody></table><p class="mobile-only">Mobile-only marker: visible below 500px.</p></section>
-<section id="report"><h2>Demo checklist</h2><p>Capture at 1440×900 desktop, 768×1024 tablet, and 390×844 mobile. Compare baseline against defect mode at each viewport. Check image-region differences, missing elements, layout shifts, overlap, colour changes, and mobile horizontal overflow. Run navigation, dynamic message, and form submission tests separately.</p><p class="small">Note: the page intentionally introduces known faults. Whether Open Design AI detects them depends on your implementation; no pass/fail claim is made here.</p></section></main>
-<script>
-const body=document.body,mode=document.getElementById('mode'),canvas=document.getElementById('canvas'),ctx=canvas.getContext('2d');
-function draw(fault){ctx.clearRect(0,0,680,220);ctx.fillStyle='#e5efff';ctx.fillRect(0,0,680,220);ctx.fillStyle=fault?'#dc4040':'#2162b8';ctx.fillRect(fault?70:45,35,160,125);ctx.beginPath();ctx.arc(355,100,fault?50:65,0,Math.PI*2);ctx.fillStyle='#f4b942';ctx.fill();ctx.fillStyle='#182338';ctx.font='bold 24px Arial';ctx.fillText(fault?'CHANGED TARGET':'BASELINE TARGET',440,110)}
-function setFault(on){body.classList.toggle('fault',on);mode.textContent=on?'DEFECTS ENABLED':'BASELINE';mode.style.color=on?'#c22b2b':'#137347';draw(on)}
-document.getElementById('baseline').onclick=()=>setFault(false);document.getElementById('defects').onclick=()=>setFault(true);document.getElementById('toggle').onclick=()=>{let el=document.getElementById('dynamic');el.hidden=!el.hidden};document.getElementById('testForm').onsubmit=e=>{e.preventDefault();document.getElementById('formResult').textContent='SUCCESS: form submitted locally (no data sent).'};setFault(false);
-</script></body></html>
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Comprehensive HTML Inputs & Controls Test Suite</title>
+    <style>
+        :root {
+            color-scheme: dark;
+            --page: #0f172a;
+            --panel: #1e293b;
+            --field: #0b1222;
+            --border: #475569;
+            --muted: #94a3b8;
+            --accent: #6366f1;
+            --text: #f8fafc;
+            --success: #10b981;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: var(--page);
+            color: var(--text);
+            padding: 24px;
+            margin: 0;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: var(--panel);
+            padding: 24px;
+            border-radius: 12px;
+            border: 1px solid #334155;
+        }
+
+        h1 {
+            margin-top: 0;
+            font-size: 22px;
+            color: #818cf8;
+        }
+
+        h2 {
+            font-size: 13px;
+            margin: 26px 0 12px;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: .06em;
+            border-bottom: 1px solid #334155;
+            padding-bottom: 8px;
+        }
+
+        p.intro {
+            font-size: 13px;
+            line-height: 1.6;
+            color: var(--muted);
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 7px;
+            min-width: 0;
+        }
+
+        label {
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+        }
+
+        input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):not([type="image"]):not([type="hidden"]),
+        select,
+        textarea {
+            width: 100%;
+            background: var(--field);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 9px 11px;
+            border-radius: 6px;
+            font: inherit;
+            font-size: 13px;
+        }
+
+        input[type="file"] {
+            width: 100%;
+            background: var(--field);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 8px;
+            border-radius: 6px;
+            font-size: 13px;
+        }
+
+        input[type="checkbox"],
+        input[type="radio"] {
+            accent-color: var(--accent);
+        }
+
+        input[type="range"] {
+            width: 100%;
+            accent-color: var(--accent);
+        }
+
+        input[type="color"] {
+            width: 56px;
+            height: 38px;
+            padding: 3px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--field);
+        }
+
+        input:focus-visible,
+        select:focus-visible,
+        textarea:focus-visible,
+        button:focus-visible {
+            outline: 2px solid #a5b4fc;
+            outline-offset: 2px;
+        }
+
+        input:disabled,
+        select:disabled,
+        textarea:disabled {
+            opacity: .5;
+            cursor: not-allowed;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+        }
+
+        .row {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 14px;
+        }
+
+        .inline-option {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .custom-checkbox-wrapper {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .custom-checkbox-wrapper input.sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+
+        .custom-box {
+            width: 18px;
+            height: 18px;
+            flex: 0 0 18px;
+            border: 2px solid #64748b;
+            border-radius: 4px;
+            background: var(--field);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            transition: all .15s ease;
+        }
+
+        .custom-checkbox-wrapper input:checked+.custom-box {
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+
+        .custom-checkbox-wrapper input:checked+.custom-box::after {
+            content: "✔";
+            color: white;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .custom-checkbox-wrapper input:focus-visible+.custom-box {
+            outline: 2px solid #a5b4fc;
+            outline-offset: 3px;
+        }
+
+        .switch-btn {
+            width: 42px;
+            height: 24px;
+            background: #334155;
+            border-radius: 12px;
+            position: relative;
+            border: none;
+            cursor: pointer;
+            padding: 3px;
+            transition: background .2s;
+        }
+
+        .switch-btn[aria-checked="true"] {
+            background: var(--accent);
+        }
+
+        .switch-thumb {
+            width: 18px;
+            height: 18px;
+            background: white;
+            border-radius: 50%;
+            display: block;
+            transition: transform .2s;
+        }
+
+        .switch-btn[aria-checked="true"] .switch-thumb {
+            transform: translateX(18px);
+        }
+
+        button,
+        .button-like {
+            background: #334155;
+            color: var(--text);
+            border: 1px solid #475569;
+            padding: 9px 14px;
+            border-radius: 6px;
+            font: inherit;
+            font-size: 13px;
+            cursor: pointer;
+        }
+
+        button.primary {
+            background: var(--accent);
+            border-color: var(--accent);
+            font-weight: 650;
+        }
+
+        button:disabled {
+            opacity: .5;
+            cursor: not-allowed;
+        }
+
+        .help {
+            color: var(--muted);
+            font-size: 12px;
+            line-height: 1.5;
+        }
+
+        .drop-zone {
+            border: 2px dashed #64748b;
+            border-radius: 8px;
+            padding: 22px;
+            text-align: center;
+            background: #0f172a;
+            color: var(--muted);
+        }
+
+        .drop-zone.dragover {
+            border-color: var(--accent);
+            background: #20234b;
+        }
+
+        .log {
+            margin-top: 24px;
+            padding: 12px;
+            background: #020617;
+            border: 1px solid #1e293b;
+            border-radius: 8px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 11px;
+            max-height: 220px;
+            overflow: auto;
+            color: var(--success);
+            white-space: normal;
+            overflow-wrap: anywhere;
+        }
+
+        .log-entry {
+            padding: 3px 0;
+            border-bottom: 1px solid #172033;
+        }
+
+        .log-entry:last-child {
+            border-bottom: 0;
+        }
+
+        .status {
+            color: #cbd5e1;
+            font-size: 12px;
+        }
+
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+
+        @media (max-width: 640px) {
+            body {
+                padding: 12px;
+            }
+
+            .container {
+                padding: 16px;
+            }
+
+            .grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <main class="container">
+        <h1>All Input Types & Controls Verification Fixture</h1>
+        <p class="intro">Interactive browser test suite for native HTML inputs, custom checkboxes, switches, file
+            pickers,
+            validation, keyboard interactions, and form submission. File selection is tested locally; this page does not
+            upload files to a server.</p>
+
+        <form id="test-form">
+            <h2>1. Checkboxes & Toggles</h2>
+            <div class="form-group">
+                <label class="inline-option" for="std-checkbox">
+                    <input type="checkbox" id="std-checkbox" name="standard_checkbox" required>
+                    Standard checkbox (required agreement)
+                </label>
+            </div>
+            <div class="form-group">
+                <label class="inline-option">
+                    <input type="checkbox" name="kensington_flat_nested">
+                    Nested input inside label
+                </label>
+            </div>
+            <div class="form-group">
+                <label class="custom-checkbox-wrapper">
+                    <input type="checkbox" class="sr-only" name="kensington_flat_custom" id="custom-kensington">
+                    <span class="custom-box" aria-hidden="true"></span>
+                    <span>Custom styled checkbox with visually hidden input</span>
+                </label>
+            </div>
+            <div class="form-group">
+                <div class="row">
+                    <button type="button" role="switch" id="toggle-notifications" aria-checked="false"
+                        class="switch-btn" aria-label="Enable notifications">
+                        <span class="switch-thumb" aria-hidden="true"></span>
+                    </button>
+                    <span>Enable notifications (ARIA switch)</span>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="inline-option"><input type="checkbox" id="indeterminate-parent"> Select all
+                    (indeterminate-state
+                    demo)</label>
+                <div class="row" style="padding-left: 24px">
+                    <label class="inline-option"><input type="checkbox" class="child-option" name="features"
+                            value="email">
+                        Email</label>
+                    <label class="inline-option"><input type="checkbox" class="child-option" name="features"
+                            value="sms">
+                        SMS</label>
+                    <label class="inline-option"><input type="checkbox" class="child-option" name="features"
+                            value="push">
+                        Push</label>
+                </div>
+            </div>
+
+            <h2>2. Radio Options</h2>
+            <div class="form-group row">
+                <label class="inline-option"><input type="radio" name="property_type" value="flat" checked> Flat /
+                    Apartment</label>
+                <label class="inline-option"><input type="radio" name="property_type" value="house"> Detached
+                    house</label>
+                <label class="inline-option"><input type="radio" name="property_type" value="commercial"> Commercial
+                    unit</label>
+            </div>
+
+            <h2>3. Text & Identity Fields</h2>
+            <div class="form-group">
+                <label for="plain-text">Plain text</label>
+                <input type="text" id="plain-text" name="plain_text" placeholder="Enter text">
+            </div>
+            <div class="grid">
+                <div class="form-group">
+                    <label for="username">Email</label>
+                    <input type="email" id="username" name="username" placeholder="name@example.com">
+                </div>
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" name="password" placeholder="Enter password">
+                </div>
+                <div class="form-group">
+                    <label for="phone">Telephone</label>
+                    <input type="tel" id="phone" name="phone" placeholder="+44 7700 900000">
+                </div>
+                <div class="form-group">
+                    <label for="website">Website URL</label>
+                    <input type="url" id="website" name="website" placeholder="https://example.com">
+                </div>
+                <div class="form-group">
+                    <label for="search">Search</label>
+                    <input type="search" id="search" name="search" placeholder="Search">
+                </div>
+                <div class="form-group">
+                    <label for="username-hint">Autocomplete / datalist</label>
+                    <input type="text" id="username-hint" name="username_hint" list="username-suggestions"
+                        placeholder="Choose or type a browser">
+                    <datalist id="username-suggestions">
+                        <option value="Chrome"></option>
+                        <option value="Firefox"></option>
+                        <option value="Safari"></option>
+                        <option value="Edge"></option>
+                    </datalist>
+                </div>
+            </div>
+
+            <h2>4. Numbers, Dates & Time</h2>
+            <div class="grid">
+                <div class="form-group">
+                    <label for="monthly-rent">Number (monthly rent)</label>
+                    <input type="number" id="monthly-rent" name="monthly_rent" min="0" max="10000" step="50"
+                        placeholder="1250">
+                </div>
+                <div class="form-group">
+                    <label for="lease-start">Date</label>
+                    <input type="date" id="lease-start" name="lease_start">
+                </div>
+                <div class="form-group">
+                    <label for="appointment-time">Time</label>
+                    <input type="time" id="appointment-time" name="appointment_time">
+                </div>
+                <div class="form-group">
+                    <label for="appointment-datetime">Date and time (local)</label>
+                    <input type="datetime-local" id="appointment-datetime" name="appointment_datetime">
+                </div>
+                <div class="form-group">
+                    <label for="billing-month">Month</label>
+                    <input type="month" id="billing-month" name="billing_month">
+                </div>
+                <div class="form-group">
+                    <label for="report-week">Week</label>
+                    <input type="week" id="report-week" name="report_week">
+                </div>
+            </div>
+
+            <h2>5. Selects, Range & Color</h2>
+            <div class="form-group">
+                <label for="property-category">Category (single select)</label>
+                <select id="property-category" name="category">
+                    <option value="">-- Choose category --</option>
+                    <option value="residential">Residential</option>
+                    <option value="hmo">HMO (House in Multiple Occupation)</option>
+                    <option value="commercial">Commercial</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="multi-category">Categories (multiple select)</label>
+                <select id="multi-category" name="multi_category" multiple size="4">
+                    <option value="residential">Residential</option>
+                    <option value="hmo">HMO</option>
+                    <option value="commercial">Commercial</option>
+                    <option value="industrial">Industrial</option>
+                </select>
+                <span class="help">Use Ctrl (Windows) or Command (macOS) to select multiple options.</span>
+            </div>
+            <div class="form-group">
+                <label for="volume">Range slider: <output id="volume-output" for="volume">50</output></label>
+                <input type="range" id="volume" name="volume" min="0" max="100" value="50">
+            </div>
+            <div class="form-group">
+                <label for="theme-color">Color picker</label>
+                <input type="color" id="theme-color" name="theme_color" value="#6366f1">
+            </div>
+
+            <h2>6. File Uploads & File Picker Behaviors</h2>
+            <div class="form-group">
+                <label for="single-file">Single file upload</label>
+                <input type="file" id="single-file" name="single_file">
+            </div>
+            <div class="form-group">
+                <label for="multiple-files">Multiple files</label>
+                <input type="file" id="multiple-files" name="multiple_files" multiple>
+            </div>
+            <div class="form-group">
+                <label for="image-files">Images only</label>
+                <input type="file" id="image-files" name="image_files" accept="image/*" multiple>
+            </div>
+            <div class="form-group">
+                <label for="document-files">Documents (PDF, Word, text)</label>
+                <input type="file" id="document-files" name="document_files" accept=".pdf,.doc,.docx,.txt" multiple>
+            </div>
+            <div class="form-group">
+                <label for="camera-capture">Camera capture (mobile-supported browsers)</label>
+                <input type="file" id="camera-capture" name="camera_capture" accept="image/*" capture="environment">
+            </div>
+            <div class="form-group">
+                <label for="inspection-files">Inspection photos & documents</label>
+                <input type="file" id="inspection-files" name="inspection_files" accept="image/*,.pdf,.doc,.docx"
+                    multiple>
+            </div>
+            <div class="form-group">
+                <label for="hidden-file">Hidden file input trigger</label>
+                <div class="row">
+                    <button type="button" id="open-file-picker">Choose file</button>
+                    <span class="status" id="hidden-file-status">No file selected</span>
+                </div>
+                <input type="file" id="hidden-file" name="hidden_file" hidden>
+            </div>
+            <div class="form-group">
+                <label for="drop-file-input">Drag-and-drop file test</label>
+                <div id="drop-zone" class="drop-zone" tabindex="0" role="button" aria-describedby="drop-help">
+                    Drop files here, or press Enter / Space to choose files
+                </div>
+                <span id="drop-help" class="help">This demo logs dropped file names; it does not upload them.</span>
+                <input type="file" id="drop-file-input" name="drop_files" multiple hidden>
+            </div>
+
+            <h2>7. Textarea & Disabled / Read-only States</h2>
+            <div class="form-group">
+                <label for="notes">Inspection notes</label>
+                <textarea id="notes" name="notes" rows="3" placeholder="Enter notes"></textarea>
+            </div>
+            <div class="grid">
+                <div class="form-group">
+                    <label for="readonly-field">Read-only field</label>
+                    <input type="text" id="readonly-field" name="readonly_field" value="Cannot edit this value"
+                        readonly>
+                </div>
+                <div class="form-group">
+                    <label for="disabled-field">Disabled field</label>
+                    <input type="text" id="disabled-field" name="disabled_field" value="Disabled value" disabled>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="inline-option"><input type="checkbox" id="enable-disabled"> Enable / disable the test
+                    field</label>
+            </div>
+
+            <h2>8. Hidden & Image Submit Inputs</h2>
+            <p class="help">The hidden input value is included in the form data. The image input acts as a submit
+                button.</p>
+            <input type="hidden" name="test_token" value="test-123">
+            <div class="form-group">
+                <label for="image-submit">Image submit button</label>
+                <input type="image" id="image-submit" name="image_submit" alt="Submit using image button" width="120"
+                    height="36"
+                    src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='36'%3E%3Crect width='120' height='36' rx='6' fill='%236366f1'/%3E%3Ctext x='60' y='23' font-size='13' text-anchor='middle' fill='white'%3ESubmit%3C/text%3E%3C/svg%3E">
+            </div>
+
+            <div class="row" style="margin-top: 20px">
+                <button type="submit" class="primary">Save & Submit</button>
+                <button type="reset" id="reset-form">Reset</button>
+            </div>
+        </form>
+
+        <h2>Interaction Log</h2>
+        <div id="log" class="log" aria-live="polite">Interaction log will appear here...</div>
+    </main>
+
+    <script>
+        const form = document.getElementById("test-form");
+        const logElement = document.getElementById("log");
+
+        function recordLog(message) {
+            const entry = document.createElement("div");
+            entry.className = "log-entry";
+            const time = new Date().toLocaleTimeString();
+            entry.textContent = `[${time}] ${message}`;
+            logElement.prepend(entry);
+        }
+
+        function toggleSwitch(button) {
+            const next = button.getAttribute("aria-checked") !== "true";
+            button.setAttribute("aria-checked", String(next));
+            recordLog(`Switch "${button.id}" toggled to ${next ? "ON" : "OFF"}`);
+        }
+
+        document.getElementById("toggle-notifications").addEventListener("click", event => {
+            toggleSwitch(event.currentTarget);
+        });
+
+        // Log user changes and clicks. Avoid logging passwords or other sensitive field values.
+        form.querySelectorAll("input, select, textarea").forEach(input => {
+            input.addEventListener("change", event => {
+                const target = event.currentTarget;
+                if (target.type === "password") {
+                    recordLog(`Changed [${target.name}]: [value hidden]`);
+                } else if (target.type === "file") {
+                    const files = Array.from(target.files || []);
+                    if (!files.length) {
+                        recordLog(`File selection cleared or empty: ${target.name || target.id}`);
+                    } else {
+                        files.forEach(file => {
+                            recordLog(`File selected [${target.name || target.id}]: ${file.name}, ${(file.size / 1024).toFixed(2)} KB, type=${file.type || "unknown"}`);
+                        });
+                    }
+                    if (target.id === "hidden-file") {
+                        document.getElementById("hidden-file-status").textContent =
+                            files.length ? files.map(file => file.name).join(", ") : "No file selected";
+                    }
+                } else if (target.type === "checkbox" || target.type === "radio") {
+                    recordLog(`Changed [${target.name || target.id}]: checked=${target.checked}${target.type === "radio" ? `, value=${target.value}` : ""}`);
+                } else {
+                    recordLog(`Changed [${target.name || target.id}]: ${target.value}`);
+                }
+            });
+
+            input.addEventListener("click", event => {
+                const target = event.currentTarget;
+                if (target.type === "checkbox") {
+                    recordLog(`Clicked checkbox [${target.name || target.id}]`);
+                } else if (target.type === "radio") {
+                    recordLog(`Clicked radio [${target.name || target.id}]`);
+                } else if (target.type === "file") {
+                    recordLog(`Clicked file input [${target.name || target.id}]`);
+                }
+            });
+        });
+
+        // Range slider output.
+        const volume = document.getElementById("volume");
+        const volumeOutput = document.getElementById("volume-output");
+        volume.addEventListener("input", () => {
+            volumeOutput.value = volume.value;
+            recordLog(`Range changed: ${volume.value}`);
+        });
+
+        // Indeterminate checkbox state.
+        const parentCheckbox = document.getElementById("indeterminate-parent");
+        const childCheckboxes = Array.from(document.querySelectorAll(".child-option"));
+
+        function updateParentCheckbox() {
+            const checkedCount = childCheckboxes.filter(item => item.checked).length;
+            parentCheckbox.checked = checkedCount === childCheckboxes.length;
+            parentCheckbox.indeterminate = checkedCount > 0 && checkedCount < childCheckboxes.length;
+            parentCheckbox.setAttribute("aria-checked",
+                parentCheckbox.indeterminate ? "mixed" : String(parentCheckbox.checked));
+        }
+
+        parentCheckbox.addEventListener("change", () => {
+            childCheckboxes.forEach(item => { item.checked = parentCheckbox.checked; });
+            updateParentCheckbox();
+            recordLog(`Select all changed: ${parentCheckbox.checked}`);
+        });
+
+        childCheckboxes.forEach(item => item.addEventListener("change", updateParentCheckbox));
+
+        // Hidden file picker: open synchronously from a direct user click.
+        document.getElementById("open-file-picker").addEventListener("click", () => {
+            recordLog("Opening hidden file picker");
+            document.getElementById("hidden-file").click();
+        });
+
+        // Accessible drop zone; dropped files are logged locally.
+        const dropZone = document.getElementById("drop-zone");
+        const dropInput = document.getElementById("drop-file-input");
+
+        function openDropPicker() {
+            recordLog("Opening drag-and-drop test file picker");
+            dropInput.click();
+        }
+
+        dropZone.addEventListener("click", openDropPicker);
+        dropZone.addEventListener("keydown", event => {
+            if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                openDropPicker();
+            }
+        });
+
+        ["dragenter", "dragover"].forEach(type => {
+            dropZone.addEventListener(type, event => {
+                event.preventDefault();
+                dropZone.classList.add("dragover");
+            });
+        });
+
+        ["dragleave", "drop"].forEach(type => {
+            dropZone.addEventListener(type, event => {
+                event.preventDefault();
+                dropZone.classList.remove("dragover");
+            });
+        });
+
+        dropZone.addEventListener("drop", event => {
+            const files = Array.from(event.dataTransfer?.files || []);
+            if (!files.length) {
+                recordLog("Drop zone: no files detected");
+                return;
+            }
+            files.forEach(file => {
+                recordLog(`File dropped: ${file.name}, ${(file.size / 1024).toFixed(2)} KB, type=${file.type || "unknown"}`);
+            });
+        });
+
+        dropInput.addEventListener("change", () => {
+            Array.from(dropInput.files || []).forEach(file => recordLog(`File chosen via drop-zone picker: ${file.name}`));
+        });
+
+        // Disabled-state toggle.
+        document.getElementById("enable-disabled").addEventListener("change", event => {
+            document.getElementById("disabled-field").disabled = !event.currentTarget.checked;
+            recordLog(`Disabled field is now ${event.currentTarget.checked ? "enabled" : "disabled"}`);
+        });
+
+        // Submission uses native constraint validation and logs successful form data.
+        // No data is sent to a server.
+        form.addEventListener("submit", event => {
+            event.preventDefault();
+            if (!form.reportValidity()) {
+                recordLog("Form validation failed");
+                return;
+            }
+
+            const formData = new FormData(form);
+            const summary = [];
+            for (const [key, value] of formData.entries()) {
+                if (value instanceof File) {
+                    summary.push(`${key}=${value.name || "(no file)"}`);
+                } else if (key.toLowerCase().includes("password")) {
+                    summary.push(`${key}=[value hidden]`);
+                } else {
+                    summary.push(`${key}=${value}`);
+                }
+            }
+            recordLog(`Form submitted locally. Fields: ${summary.join(" | ") || "(none)"}`);
+        });
+
+        form.addEventListener("reset", () => {
+            // Reset event fires before controls have completed resetting.
+            setTimeout(() => {
+                volumeOutput.value = volume.value;
+                document.getElementById("hidden-file-status").textContent = "No file selected";
+                document.getElementById("disabled-field").disabled = true;
+                updateParentCheckbox();
+                recordLog("Form reset");
+            }, 0);
+        });
+
+        updateParentCheckbox();
+    </script>
+</body>
+
+</html>

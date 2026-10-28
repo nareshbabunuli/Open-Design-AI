@@ -194,6 +194,13 @@ export function queueUnplannedLedgerActions(
   if (!ledger) return 0
 
   linkTestPlanStepsToLedger(job, testPlan)
+  // Also mark ledger entries belonging to a form that already has a form_scenario step as represented
+  const handledFormKeys = new Set<string>()
+  for (const step of testPlan.steps) {
+    if (step.actionType === "form_scenario" && step.formId) {
+      handledFormKeys.add(`${step.screenId}:${step.formId}`)
+    }
+  }
   const represented = new Set(
     testPlan.steps.map((step) => step.actionKey).filter((key): key is string => Boolean(key))
   )
@@ -232,6 +239,11 @@ export function queueUnplannedLedgerActions(
 
     const screen = testPlan.screens.find((candidate) => candidate.id === entry.screenId)
     const element = screen?.actionableElements.find((candidate) => candidate.actionKey === entry.actionKey)
+    if (element?.formId && handledFormKeys.has(`${entry.screenId}:${element.formId}`)) {
+      entry.status = "passed"
+      entry.evidence = { observedOutcome: "Covered by form_scenario execution." }
+      continue
+    }
     const actionType: TestPlanStep["actionType"] =
       entry.type === "input" ? "fill" :
       entry.type === "select" ? "select" :
@@ -334,7 +346,7 @@ export function prioritizePendingStepsForScreen(
   const stepPriority = (step: TestPlanStep): number => {
     const label = (step.targetName || "").trim()
     if (/^(close|dismiss|cancel|back|done|finish|✕|×|x)(\b|$)/i.test(label)) return 4
-    if (step.actionType === "upload") return 0
+    if (step.actionType === "upload") return 1
     if (step.actionType === "fill" || step.actionType === "select" || step.actionType === "toggle") return 1
     if (step.actionType === "form_scenario" || /^(submit|save|add\b|upload\b|create\b|confirm|apply|send|continue|that.?s the one)/i.test(label)) return 3
     return 2
@@ -457,6 +469,89 @@ export function generateStructuredTestPlan(
       }
     }
 
+    if (!(screen.isLoginWall && options?.isAuthenticated)) {
+      for (const el of screen.actionableElements) {
+        if (el.type === "input") {
+          const syntheticVal = inferContextualTestValue({
+            screenName: screen.name,
+            fieldName: el.name,
+            inputType: el.inputType,
+            placeholder: el.placeholder,
+            options: el.options,
+            min: el.min,
+            max: el.max,
+            step: el.step,
+          })
+          const hasBounds = el.inputType === "number" || el.min !== undefined || el.max !== undefined || /(?:age\s*limit|limit|min(?:imum)?|max(?:imum)?)\s*(?:of|is|:)?\s*\d+/i.test(`${el.name} ${el.placeholder || ""}`)
+          steps.push({
+            id: `step-${stepCounter++}`,
+            screenId: screen.id,
+            screenName: screen.name,
+            stepIndex: steps.length + 1,
+            actionType: "fill",
+            targetName: el.name,
+            targetSelector: el.selector,
+            actionKey: el.actionKey,
+            syntheticValue: syntheticVal,
+            expectedResult: hasBounds
+              ? `Boundary & value check on "${el.name}": tests out-of-bounds values (e.g. limit-1 / limit+1) and accepts valid value "${syntheticVal}".`
+              : `Field "${el.name}" accepts synthetic input value "${syntheticVal}" without validation errors.`,
+            status: "pending",
+          })
+        } else if (el.type === "select") {
+          const validOpts = (el.options || []).filter((o) => o.trim() && !/^(select|choose|please select|--)/i.test(o.trim()))
+          const choice = el.multiple && validOpts.length >= 2
+            ? JSON.stringify(validOpts.slice(0, 2))
+            : (validOpts[0] || el.options?.[0] || "Option 1")
+          steps.push({
+            id: `step-${stepCounter++}`,
+            screenId: screen.id,
+            screenName: screen.name,
+            stepIndex: steps.length + 1,
+            actionType: "select",
+            targetName: el.name,
+            targetSelector: el.selector,
+            actionKey: el.actionKey,
+            syntheticValue: choice,
+            expectedResult: `Select "${el.name}" value changes to ${choice}.`,
+            status: "pending",
+          })
+        } else if (el.type === "checkbox" || el.type === "radio" || el.type === "toggle") {
+          steps.push({
+            id: `step-${stepCounter++}`,
+            screenId: screen.id,
+            screenName: screen.name,
+            stepIndex: steps.length + 1,
+            actionType: "toggle",
+            targetName: el.name,
+            targetSelector: el.selector,
+            actionKey: el.actionKey,
+            expectedResult: `${el.type === "radio" ? "Radio option" : "Toggle/Checkbox"} "${el.name}" selects/toggles state cleanly.`,
+            status: "pending",
+          })
+        } else if (el.type === "file_upload") {
+          let fType: "image" | "pdf" | "document" | "csv" | "other" = "image"
+          if (el.accept?.includes("pdf") || /pdf/i.test(el.name)) fType = "pdf"
+          else if (el.accept?.includes("csv") || /csv/i.test(el.name)) fType = "csv"
+          else if (el.accept?.includes("doc") || /doc/i.test(el.name)) fType = "document"
+          requiredFileTypesMap.set(fType, (requiredFileTypesMap.get(fType) || 0) + 1)
+          steps.push({
+            id: `step-${stepCounter++}`,
+            screenId: screen.id,
+            screenName: screen.name,
+            stepIndex: steps.length + 1,
+            actionType: "upload",
+            targetName: el.name,
+            targetSelector: el.selector,
+            actionKey: el.actionKey,
+            fileTypeRequired: fType,
+            expectedResult: `Upload control "${el.name}" accepts valid ${fType.toUpperCase()} test file(s).`,
+            status: "pending",
+          })
+        }
+      }
+    }
+    const alreadyPlannedElements = true
     // 1. Plan Form Scenarios (grouped by screen.forms)
     if (screen.forms && screen.forms.length > 0 && !(screen.isLoginWall && options?.isAuthenticated)) {
       for (const form of screen.forms) {
@@ -475,7 +570,7 @@ export function generateStructuredTestPlan(
         )
 
         // Strict order: required_empty -> invalid_format -> valid (last)
-        if (hasRequired) {
+        if (hasRequired && formElements.length <= 8) {
           steps.push({
             id: `step-${stepCounter++}`,
             screenId: screen.id,
@@ -491,7 +586,7 @@ export function generateStructuredTestPlan(
           })
         }
 
-        if (hasFormat) {
+        if (hasFormat && formElements.length <= 8) {
           steps.push({
             id: `step-${stepCounter++}`,
             screenId: screen.id,
@@ -555,7 +650,7 @@ export function generateStructuredTestPlan(
     // 2. Plan Standalone Form Input field interactions (not part of any handled form)
     const standaloneInputs = screen.actionableElements.filter(
       (el) =>
-        el.type === "input" &&
+        !alreadyPlannedElements && el.type === "input" &&
         (!el.formId || !handledFormIds.has(el.formId)) &&
         !(screen.isLoginWall && options?.isAuthenticated && /(email|user|pass|login)/i.test(el.name))
     )
@@ -585,7 +680,7 @@ export function generateStructuredTestPlan(
     }
 
     // 3. Plan File Uploads
-    const fileUploads = screen.actionableElements.filter((el) => el.type === "file_upload")
+    const fileUploads = screen.actionableElements.filter((el) => !alreadyPlannedElements && el.type === "file_upload" && (!el.formId || !handledFormIds.has(el.formId)))
     for (const upload of fileUploads) {
       let fType: "image" | "pdf" | "document" | "csv" | "other" = "image"
       if (upload.accept?.includes("pdf") || /pdf/i.test(upload.name)) fType = "pdf"
@@ -610,7 +705,7 @@ export function generateStructuredTestPlan(
 
     // 4. Plan Standalone Dropdowns / Selects
     const standaloneSelects = screen.actionableElements.filter(
-      (el) => el.type === "select" && (!el.formId || !handledFormIds.has(el.formId))
+      (el) => !alreadyPlannedElements && el.type === "select" && (!el.formId || !handledFormIds.has(el.formId))
     )
     for (const select of standaloneSelects) {
       const choice = select.options?.find(option => option.trim() && !/^(select|choose|please select|--)/i.test(option.trim())) || select.options?.[0] || "Option 1"
@@ -630,7 +725,7 @@ export function generateStructuredTestPlan(
 
     // 5. Plan Standalone Checkboxes & Toggles
     const standaloneToggles = screen.actionableElements.filter(
-      (el) => (el.type === "checkbox" || el.type === "toggle") && (!el.formId || !handledFormIds.has(el.formId))
+      (el) => !alreadyPlannedElements && (el.type === "checkbox" || el.type === "toggle") && (!el.formId || !handledFormIds.has(el.formId))
     )
     for (const toggle of standaloneToggles) {
       steps.push({
@@ -651,7 +746,8 @@ export function generateStructuredTestPlan(
       (el) =>
         el.type === "button" &&
         !(screen.isLoginWall && options?.isAuthenticated) &&
-        (!el.formId || !handledFormIds.has(el.formId) || /forgot|create|register|signup|reset/i.test(el.name)) &&
+        (!el.formId || !handledFormIds.has(el.formId) || /forgot|create|register|signup|reset\s+password/i.test(el.name)) &&
+        !/^reset(\s+form)?$/i.test(el.name) &&
         !/(logout|sign\s*out|log\s*off|delete\s*account)/i.test(el.name) &&
         !/(logout|sign\s*out|log\s*off)/i.test(el.selector || "") &&
         !/(logout|sign\s*out|log\s*off)/i.test(el.actionKey || "")

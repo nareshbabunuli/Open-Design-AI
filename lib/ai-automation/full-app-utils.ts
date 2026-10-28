@@ -33,6 +33,9 @@ export function inferContextualTestValue(input: {
   inputType?: string
   placeholder?: string
   options?: string[]
+  min?: string
+  max?: string
+  step?: string
 }): string {
   const screen = input.screenName || ""
   const name = input.fieldName || ""
@@ -41,13 +44,28 @@ export function inferContextualTestValue(input: {
   const context = `${screen} ${name} ${placeholder}`.toLowerCase()
 
   // Native input types take precedence over words elsewhere on the screen.
-  if (type === "number" || type === "range") return "10"
+  if (type === "range") return "85"
+  if (type === "number" || input.min !== undefined || input.max !== undefined || /(?:age\s*limit|limit|min|max)\s*(?:of|is|:)?\s*\d+/i.test(context)) {
+    const phNum = Number(placeholder.trim())
+    const minN = input.min !== undefined && input.min !== "" ? Number(input.min) : undefined
+    const maxN = input.max !== undefined && input.max !== "" ? Number(input.max) : undefined
+    const stepN = input.step !== undefined && input.step !== "" && Number(input.step) > 0 ? Number(input.step) : 1
+    if (!Number.isNaN(phNum) && placeholder.trim() !== "" && (minN === undefined || phNum >= minN) && (maxN === undefined || phNum <= maxN)) {
+      return String(phNum)
+    }
+    const limMatch = context.match(/(?:age\s*limit|limit|min(?:imum)?|max(?:imum)?)\s*(?:of|is|:)?\s*(\d+)/i)
+    if (limMatch) return limMatch[1]
+    const base = minN !== undefined ? minN : 0
+    const candidate = base + stepN * 2
+    if (maxN !== undefined && candidate > maxN) return String(minN !== undefined ? minN : maxN)
+    return String(candidate || 10)
+  }
   if (type === "date") return new Date().toISOString().slice(0, 10)
   if (type === "time") return "13:15"
   if (type === "datetime-local") return new Date().toISOString().slice(0, 16)
   if (type === "month") return new Date().toISOString().slice(0, 7)
   if (type === "week") return `${new Date().getUTCFullYear()}-W01`
-  if (type === "color") return "#336699"
+  if (type === "color") return "#10b981"
 
   if (type === "email" || /e-?mail/.test(context)) return SYNTHETIC_TEST_DATA.email
   if (type === "password" || /password|passcode/.test(context)) return SYNTHETIC_TEST_DATA.password

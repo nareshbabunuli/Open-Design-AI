@@ -22,6 +22,7 @@ import {
   isSameOriginUrl,
   deriveScreenName,
   buildFigmaWorkflowMap,
+  inferContextualTestValue,
 } from "./full-app-utils"
 import { collectScreenEvidence, collectWorkflowEvidence, type ScreenEvidenceBundle } from "./ux-evidence-collector"
 import { applyAllScoringChecks } from "./ux-scoring-checks"
@@ -34,12 +35,18 @@ import {
   pickUploadFile,
   authenticateIfNeeded,
   completeJourneyReturnAndLogout,
+  pickUploadFiles,
+  fillFormVisibly,
+  executeInputWithBoundaryCheck,
+  takeSecureScreenshot,
 } from "./full-app-engine"
 import { classifyPage, DEFAULT_LAYA_URL } from "@/lib/journey/laya-client"
 import { tryLayaReflexPlan } from "./laya-reflex"
 import { discoverLocalProjectRoutes } from "./discover-routes"
 import { postChatCompletionSafe, resolveModel, resolveBaseUrl, resolveAiApiKey } from "./ai-gateway"
-import { SessionVideoRecorder } from "./visual-recorder"
+import { SessionVideoRecorder, installVisualOverlay, showActionBanner } from "./visual-recorder"
+import { humanClick, humanType, humanMouseMove } from "./human-actions"
+import { attachControlFiles, resolveExecutionTarget, selectControlOptions, setCheckedState } from "./control-execution"
 
 /**
  * Checks if a user prompt is requesting Feature / Workflow Testing
@@ -516,6 +523,30 @@ export function buildWorkflowTestPlan(
     discoveredAt: new Date().toISOString(),
   }
 
+  for (const el of startScreen.actionableElements) {
+    if (el.type === "input" || el.type === "select" || el.type === "checkbox" || el.type === "radio" || el.type === "toggle" || el.type === "file_upload") {
+      const actionType: TestPlanStep["actionType"] = el.type === "input" ? "fill" : el.type === "select" ? "select" : el.type === "file_upload" ? "upload" : "toggle"
+      const validOpts = (el.options || []).filter((o) => o.trim() && !/^(select|choose|please select|--)/i.test(o.trim()))
+      const syntheticVal = el.type === "input"
+        ? inferContextualTestValue({ screenName: startScreen.name, fieldName: el.name, inputType: el.inputType, placeholder: el.placeholder, options: el.options, min: el.min, max: el.max, step: el.step })
+        : el.type === "select"
+          ? (el.multiple && validOpts.length >= 2 ? JSON.stringify(validOpts.slice(0, 2)) : (validOpts[0] || el.options?.[0] || "Option 1"))
+          : undefined
+      steps.push({
+        id: `TEST-${String(stepIdx++).padStart(3, "0")}`,
+        screenId: startScreen.id,
+        screenName: startScreen.name,
+        url: startScreen.url,
+        stepIndex: steps.length + 1,
+        actionType,
+        targetName: el.name,
+        targetSelector: el.selector,
+        syntheticValue: syntheticVal,
+        expectedResult: actionType === "fill" ? `Field "${el.name}" validates boundaries and accepts "${syntheticVal}".` : `Control "${el.name}" updates cleanly.`,
+        status: "pending",
+      })
+    }
+  }
   // Build sequential steps from spec actions
   spec.requiredActions.forEach((act, i) => {
     const isFirst = i === 0
@@ -677,6 +708,7 @@ export async function executeFeatureWorkflowJob(
     appendLog(job, "info", "Navigating to entry point and discovering workflow path (no full app crawl)...")
 
     await page.goto(job.targetUrl, { waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => null)
+    await installVisualOverlay(page).catch(() => {})
     await new Promise((r) => setTimeout(r, 800))
 
     // Handle login wall if encountered before workflow test
@@ -878,7 +910,27 @@ export async function executeFeatureWorkflowJob(
         saveJob(job)
 
         // 1. FILL / TYPE ACTION
-        if (step.actionType === "fill") {
+        if (step.actionType === "fill" && step.targetSelector) {
+          const fld = await page.$(step.targetSelector).catch(() => null)
+          if (fld) {
+            const bva = await executeInputWithBoundaryCheck(job, page, fld, step.targetName, step.syntheticValue || "10", /password/i.test(step.targetName))
+            actionSuccess = bva.ok
+            step.actualResult = bva.observation
+          }
+        } else if ((step.actionType === "select" || step.actionType === "toggle") && step.targetSelector) {
+          const fld = await page.$(step.targetSelector).catch(() => null)
+          if (fld) {
+            if (step.actionType === "select") {
+              let v: string | string[] = step.syntheticValue || ""
+              if (v.startsWith("[")) { try { v = JSON.parse(v) } catch {} }
+              const r = await selectControlOptions(page, fld, v)
+              actionSuccess = r.ok; step.actualResult = r.reason
+            } else {
+              const r = await setCheckedState(page, fld, true)
+              actionSuccess = r.ok; step.actualResult = r.reason
+            }
+          }
+        } else if (step.actionType === "fill") {
           const valToType = step.syntheticValue || "Synthetic Test Value"
           actionSuccess = await page.evaluate((val) => {
             const inputs = Array.from(document.querySelectorAll('input:not([type="hidden"]), textarea')) as HTMLInputElement[]
@@ -896,6 +948,18 @@ export async function executeFeatureWorkflowJob(
             return true
           }, valToType)
 
+          const uploadDir = resolveUploadFolder({ uploadFilesDir: job.uploadFilesDir, projectDir: job.projectDir, prompt: step.targetName })
+          const inv = uploadDir ? scanUploadFolder(uploadDir) : null
+          const formSel = await page.evaluate(() => {
+            const f = document.querySelector("form")
+            if (!f) return ""
+            if (!f.id) f.id = "qa-feature-form"
+            return `#${CSS.escape(f.id)}`
+          }).catch(() => "")
+          if (formSel) {
+            const res = await fillFormVisibly(job, page, formSel, SYNTHETIC_TEST_DATA, null, null, false, inv)
+            if (res.attempted > 0) actionSuccess = res.failed < res.attempted
+          }
           step.actualResult = actionSuccess
             ? `Successfully populated field with synthetic value: "${valToType}"`
             : "No active input field found on screen"
@@ -919,12 +983,20 @@ export async function executeFeatureWorkflowJob(
               targetName: step.targetName,
             })
             await (targetInput as any).uploadFile(picked.filePath)
+            for (const fInput of fileInputs) {
+              const fAccept = await fInput.evaluate((el) => el.getAttribute("accept") || "").catch(() => "")
+              const fMultiple = await fInput.evaluate((el) => (el as HTMLInputElement).multiple).catch(() => false)
+              const fPaths = fMultiple
+                ? pickUploadFiles(inv, { fileTypeRequired: step.fileTypeRequired || "image", acceptAttr: fAccept, targetName: step.targetName, count: 2 }).map((f) => f.filePath)
+                : [pickUploadFile(inv, { fileTypeRequired: step.fileTypeRequired || "image", acceptAttr: fAccept, targetName: step.targetName }).filePath]
+              await attachControlFiles(page, fInput, fPaths)
+            }
             await targetInput.evaluate((el) => {
               el.dispatchEvent(new Event("input", { bubbles: true }))
               el.dispatchEvent(new Event("change", { bubbles: true }))
             }).catch(() => {})
             actionSuccess = await targetInput.evaluate((el) => ((el as HTMLInputElement).files?.length || 0) > 0).catch(() => true)
-            step.actualResult = actionSuccess
+          step.actualResult = actionSuccess
               ? `Uploaded test file: ${picked.fileName}`
               : `Failed to attach file to ${step.targetName}`
           } else {
@@ -1024,8 +1096,9 @@ export async function executeFeatureWorkflowJob(
             }, targetText)
           }
 
+          if (stepCoords) await humanMouseMove(page, stepCoords.x, stepCoords.y, step.targetName).catch(() => {})
           // Wait for DOM transition / modal / page load
-          await new Promise((r) => setTimeout(r, 1000))
+          await new Promise((r) => setTimeout(r, 250))
           step.actualResult = actionSuccess ? `Clicked action element for: "${step.targetName}"` : "Action element not found"
         }
 
@@ -1041,6 +1114,7 @@ export async function executeFeatureWorkflowJob(
             try {
               document.getElementById("__antigravity_overlay_root__")?.remove()
               const root = document.createElement("div")
+              if (document.getElementById("qa-visual-cursor")) return
               root.id = "__antigravity_overlay_root__"
               root.style.cssText = "position:fixed;inset:0;pointer-events:none;z-index:99999999;"
               root.innerHTML = `
@@ -1062,7 +1136,7 @@ export async function executeFeatureWorkflowJob(
         // OBSERVE & RECORD
         let shot = ""
         try {
-          const buf = await page.screenshot({ type: "jpeg", quality: 75 })
+          const buf = await takeSecureScreenshot(page, { type: "jpeg", quality: 75 })
           shot = `data:image/jpeg;base64,${Buffer.from(buf).toString("base64")}`
           step.screenshotUrl = shot
           job.currentScreenshotUrl = shot

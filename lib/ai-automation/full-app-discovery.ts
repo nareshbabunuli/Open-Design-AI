@@ -20,7 +20,11 @@ import { mergeScreenActionsIntoLedger } from "./full-app-planner"
 export async function takeSecureScreenshot(page: Page, options: { type: "jpeg"; quality: number }): Promise<Buffer> {
   const unmask = await maskPageSecretsBeforeScreenshot(page)
   try {
-    return (await page.screenshot(options)) as Buffer
+    const ids = ["qa-visual-banner", "__antigravity_overlay_root__"]
+    const prev = await page.evaluate((list) => list.map((id) => { const el = document.getElementById(id); if (!el) return null; const v = el.style.visibility; el.style.visibility = "hidden"; return { id, v }; }).filter(Boolean), ids).catch(() => [])
+    const shot = (await page.screenshot(options)) as Buffer
+    await page.evaluate((states: any) => states.forEach((s: any) => { const el = document.getElementById(s.id); if (el) el.style.visibility = s.v; }), prev).catch(() => {})
+    return shot
   } finally {
     await unmask()
   }
@@ -79,7 +83,7 @@ export async function publishLiveFrame(job: AutomationJob, page: Page): Promise<
     // The UI draws its own smoothly animated cursor above the screenshot mirror.
     // Hide the recording-only DOM cursor while capturing this frame to avoid double cursors.
     overlayState = await page.evaluate(() => {
-      const ids = ["qa-visual-cursor", "qa-visual-ripple", "qa-visual-banner", "qa-visual-typing"]
+      const ids = ["qa-visual-banner"]
       return ids.flatMap((id) => {
         const el = document.getElementById(id)
         if (!el) return []

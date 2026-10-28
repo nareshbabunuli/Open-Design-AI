@@ -1,6 +1,7 @@
 import type { ElementHandle, Page } from "puppeteer"
 import { basename } from "node:path"
-import { humanClick } from "./human-actions"
+import { humanClick, humanMouseMove, getCenter, highlightActiveControl } from "./human-actions"
+import { triggerClickAnimation } from "./visual-recorder"
 
 export type ControlResult = { ok: boolean; reason: string }
 
@@ -34,6 +35,27 @@ export async function observeFileSelection(page: Page) {
 /** Verifies attachment only; server-side upload is a separate outcome. */
 export async function attachControlFiles(page: Page, target: ElementHandle<Element>, paths: string[]): Promise<ControlResult> {
   const native = await target.evaluate(node => node.matches('input[type="file"]'))
+  const fileNames = paths.map(file => basename(file))
+  const renderPreviewBadges = async (el: ElementHandle<Element>) => {
+    await el.evaluate((node, names) => {
+      const container = node.parentElement
+      if (!container) return
+      let preview = container.querySelector(".demo-file-preview") as HTMLElement | null
+      if (names.length === 0) {
+        preview?.remove()
+        return
+      }
+      if (!preview) {
+        preview = node.ownerDocument.createElement("div")
+        preview.className = "demo-file-preview"
+        preview.style.cssText = "margin-top:6px;display:flex;flex-wrap:wrap;gap:6px;"
+        container.appendChild(preview)
+      }
+      preview.innerHTML = names.map((f: string) =>
+        `<span style="background:#064e3b;color:#34d399;border:1px solid #10b981;padding:3px 9px;border-radius:6px;font-size:11px;font-weight:600;display:inline-flex;align-items:center;gap:5px;">📎 Selected: ${f}</span>`
+      ).join("")
+    }, fileNames).catch(() => {})
+  }
   const observer = await observeFileSelection(page)
   try {
     if (await target.evaluate(node => node.matches(":disabled") || node.getAttribute("aria-disabled") === "true")) {
@@ -43,20 +65,38 @@ export async function attachControlFiles(page: Page, target: ElementHandle<Eleme
       if (paths.length > 1 && !await target.evaluate(node => (node as HTMLInputElement).multiple)) {
         return { ok: false, reason: "File control does not allow multiple files." }
       }
+      await target.evaluate(node => {
+        try {
+          const el = (node as HTMLElement).offsetWidth > 2 ? (node as HTMLElement) : (node.parentElement as HTMLElement)
+          el?.scrollIntoView({ block: "center", inline: "center", behavior: "instant" as ScrollBehavior })
+        } catch {}
+      }).catch(() => {})
+      await highlightActiveControl(target)
+      const pt = await getCenter(target)
+      if (pt) {
+        await humanMouseMove(page, pt.x, pt.y, "attach files")
+        await triggerClickAnimation(page, pt.x, pt.y).catch(() => {})
+      }
       await (target as ElementHandle<HTMLInputElement>).uploadFile(...paths)
+      await target.evaluate(node => {
+        node.dispatchEvent(new Event("input", { bubbles: true }))
+        node.dispatchEvent(new Event("change", { bubbles: true }))
+      }).catch(() => {})
       await page.waitForFunction((node, names) => JSON.stringify(Array.from((node as HTMLInputElement).files || []).map(file => file.name).sort()) === JSON.stringify([...names].sort()),
-        { timeout: 1500 }, target, paths.map(file => basename(file)))
-      return { ok: true, reason: "Exact attached file names/count verified; server processing was not tested." }
+        { timeout: 1500 }, target, fileNames)
+      await renderPreviewBadges(target)
+      return { ok: true, reason: `Exact attached file names/count verified (${fileNames.join(", ")}); server processing was not tested.` }
     }
     const chooserPromise = page.waitForFileChooser({ timeout: 2000 })
-    const [chooser, clicked] = await Promise.all([chooserPromise, humanClick(page, target)])
+    const [chooser, clicked] = await Promise.all([chooserPromise, humanClick(page, target, { label: "open chooser" })])
     if (!clicked || (paths.length > 1 && !chooser.isMultiple())) {
       await chooser.cancel()
       return { ok: false, reason: "File chooser was not actionable or does not allow multiple files." }
     }
     await chooser.accept(paths)
     const ok = await observer.verify(paths)
-    return { ok, reason: ok ? "Chooser attachment verified on its changed file input." : "Chooser acceptance did not produce verified attached files." }
+    if (ok) await renderPreviewBadges(target)
+    return { ok, reason: ok ? `Chooser attachment verified on its changed file input (${fileNames.join(", ")}).` : "Chooser acceptance did not produce verified attached files." }
   } catch { return { ok: false, reason: "Could not attach the requested files to this control." } }
   finally { await observer.dispose() }
 }
@@ -200,7 +240,20 @@ export async function selectControlOptions(
     }, values)
     if (!resolved) return { ok: false, reason: "Requested option is missing, ambiguous, disabled, or incompatible with this select." }
     try {
+      await target.evaluate(node => {
+        try { (node as HTMLElement).scrollIntoView({ block: "center", inline: "center", behavior: "instant" as ScrollBehavior }) } catch {}
+      }).catch(() => {})
+      await highlightActiveControl(target)
+      const pt = await getCenter(target)
+      if (pt) {
+        await humanMouseMove(page, pt.x, pt.y, "select option")
+        await triggerClickAnimation(page, pt.x, pt.y).catch(() => {})
+      }
       await target.select(...resolved)
+      await target.evaluate(node => {
+        node.dispatchEvent(new Event("input", { bubbles: true }))
+        node.dispatchEvent(new Event("change", { bubbles: true }))
+      }).catch(() => {})
       await page.waitForFunction((node, wanted) => {
         const selected = Array.from((node as HTMLSelectElement).selectedOptions).map(option => option.value).sort()
         return JSON.stringify(selected) === JSON.stringify([...wanted].sort())

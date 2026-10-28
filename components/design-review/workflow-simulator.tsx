@@ -2635,7 +2635,7 @@ export function WorkflowSimulator({
                     viewportWidth={viewportWidth}
                     viewportHeight={viewportHeight}
                     bannerText={dummyBanner}
-                    hideCursor={Boolean(isDummyTestRunning && dummyLiveScreenshot)}
+                    hideCursor={Boolean((isDummyTestRunning && dummyLiveScreenshot) || (isRunningTest && liveSessionScreenshotUrl))}
                   />
                 </DeviceFrame>
               </div>

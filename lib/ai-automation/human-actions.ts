@@ -20,8 +20,8 @@ export const HUMAN_PACE = {
   mouseSteps: 8,
   afterMoveMs: 45,
   typeDelayMs: 32,
-  betweenFieldsMs: 90,
-  afterClickMs: 70,
+  betweenFieldsMs: 25,
+  afterClickMs: 25,
   settleMs: 400,
 } as const
 
@@ -42,10 +42,38 @@ export function sameUrl(a: string, b: string): boolean {
   }
 }
 
+export async function highlightActiveControl(el: ElementHandle<Element>): Promise<void> {
+  await el.evaluate((node) => {
+    const doc = node.ownerDocument
+    doc.querySelectorAll(".demo-highlight").forEach((prev) => {
+      prev.classList.remove("demo-highlight")
+      ;(prev as HTMLElement).style.outline = ""
+      ;(prev as HTMLElement).style.boxShadow = ""
+    })
+    const h = node as HTMLElement
+    const surface = (h.offsetWidth > 2 && h.offsetHeight > 2)
+      ? h
+      : (((node as HTMLInputElement).labels && (node as HTMLInputElement).labels![0]) || h.parentElement || h)
+    surface.classList.add("demo-highlight")
+    surface.style.outline = "3px solid #38bdf8"
+    surface.style.boxShadow = "0 0 15px rgba(56, 189, 248, 0.7)"
+  }).catch(() => {})
+}
+
 export async function getCenter(el: ElementHandle<Element>): Promise<Point | null> {
   try {
     const box = await el.boundingBox()
-    if (!box || box.width < 1 || box.height < 1) return null
+    if (!box || box.width <= 2 || box.height <= 2) {
+      const fb = await el.evaluate((node) => {
+        const inp = node as HTMLInputElement
+        const alt = (inp.labels && inp.labels[0]) || node.parentElement
+        if (!alt) return null
+        const r = alt.getBoundingClientRect()
+        return r.width > 2 && r.height > 2 ? { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) } : null
+      }).catch(() => null)
+      if (fb) return fb
+      if (!box || box.width < 1 || box.height < 1) return null
+    }
     return {
       x: Math.round(box.x + box.width / 2),
       y: Math.round(box.y + box.height / 2),
@@ -74,15 +102,19 @@ export async function humanMouseMove(page: Page, targetX: number, targetY: numbe
   const startY: number = (page as any).__lastMouseY ?? 140
 
   const steps = 8
+  const arcX = (Math.random() - 0.5) * 28
+  const arcY = (Math.random() - 0.5) * 18
   for (let i = 1; i <= steps; i++) {
     const t = i / steps
-    // Ease-out cubic: smooth deceleration as cursor approaches target
+    // Ease-out cubic + subtle human arc matching scripts/run-visual-demo.mjs
     const ease = 1 - Math.pow(1 - t, 3)
-    const curX = Math.round(startX + (targetX - startX) * ease)
-    const curY = Math.round(startY + (targetY - startY) * ease)
+    const curve = Math.sin(t * Math.PI)
+    const curX = Math.round(startX + (targetX - startX) * ease + arcX * curve)
+    const curY = Math.round(startY + (targetY - startY) * ease + arcY * curve)
 
     try {
       await page.mouse.move(curX, curY)
+      await animateCursorTo(page, curX, curY, label).catch(() => {})
     } catch {}
 
     if (globalThis.__DUMMY_TEST_FRAME__) {
@@ -93,7 +125,7 @@ export async function humanMouseMove(page: Page, targetX: number, targetY: numbe
         description: `Moving to ${label || "element"}`,
       }
     }
-    await sleep(14)
+    await sleep(6)
   }
   await animateCursorTo(page, targetX, targetY, label).catch(() => {})
 
@@ -136,6 +168,7 @@ export async function humanClick(
     return null
   }
 
+  await highlightActiveControl(el)
   await humanMouseMove(page, pt.x, pt.y, opts?.label || "clicking")
   await triggerClickAnimation(page, pt.x, pt.y).catch(() => {})
 
@@ -186,7 +219,52 @@ export async function humanType(
     if (kind === "blocked" || ["checkbox", "radio", "file", "hidden", "button", "submit", "reset", "image"].includes(kind)) return false
     // Native segmented inputs cannot be entered reliably as ordinary text.
     if (["date", "time", "datetime-local", "month", "week", "color", "range"].includes(kind)) {
-      await el.asLocator().setTimeout(2000).fill(text)
+      await el.evaluate((node) => {
+        try {
+          ;(node as HTMLElement).scrollIntoView({ block: "center", inline: "center", behavior: "instant" as ScrollBehavior })
+        } catch {}
+      }).catch(() => {})
+      await highlightActiveControl(el)
+      const ptSeg = await getCenter(el)
+      if (ptSeg) {
+        await humanMouseMove(page, ptSeg.x, ptSeg.y, kind === "range" ? "drag slider" : kind)
+        await triggerClickAnimation(page, ptSeg.x, ptSeg.y).catch(() => {})
+      }
+      if (kind === "range") {
+        const box = await el.boundingBox().catch(() => null)
+        if (box) {
+          const min = await el.evaluate((n) => Number((n as HTMLInputElement).min || 0)).catch(() => 0)
+          const max = await el.evaluate((n) => Number((n as HTMLInputElement).max || 100)).catch(() => 100)
+          const targetVal = Number(text)
+          const ratio = max > min && !Number.isNaN(targetVal) ? Math.max(0, Math.min(1, (targetVal - min) / (max - min))) : 0.85
+          const startX = Math.round(box.x + box.width * 0.5)
+          const endX = Math.round(box.x + box.width * ratio)
+          const y = Math.round(box.y + box.height / 2)
+          try {
+            await page.mouse.move(startX, y)
+            await page.mouse.down()
+            for (let s = 1; s <= 6; s++) {
+              const curX = Math.round(startX + ((endX - startX) * s) / 6)
+              await page.mouse.move(curX, y)
+              await animateCursorTo(page, curX, y, `dragging ${text}`).catch(() => {})
+              await sleep(16)
+            }
+            await page.mouse.up()
+          } catch {}
+        }
+      }
+      try {
+        await el.asLocator().setTimeout(1200).fill(text)
+      } catch {}
+      await el.evaluate((node, value) => {
+        const input = node as HTMLInputElement
+        if (input.value !== value) {
+          const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set
+          setter ? setter.call(input, value) : (input.value = value)
+        }
+        input.dispatchEvent(new Event("input", { bubbles: true }))
+        input.dispatchEvent(new Event("change", { bubbles: true }))
+      }, text).catch(() => {})
       await page.waitForFunction((node, value, allowInvalid) => {
         const input = node as HTMLInputElement
         return input.value === value && (allowInvalid || input.validity.valid)
@@ -236,7 +314,7 @@ export async function humanType(
       }
     }
 
-    await sleep(30)
+    await sleep(6)
   }
 
   // Blur commits change handlers. Read back the application value; never force it.

@@ -171,6 +171,11 @@ export async function extractActionableInventory(page: Page, layaBaseUrl?: strin
       if (name) {
         const sel = `${el.tagName.toLowerCase()}[name="${CSS.escape(name)}"]`
         if (document.querySelectorAll(sel).length === 1) return sel
+        const val = el.getAttribute("value")
+        if (val) {
+          const selVal = `${el.tagName.toLowerCase()}[name="${CSS.escape(name)}"][value="${CSS.escape(val)}"]`
+          if (document.querySelectorAll(selVal).length === 1) return selVal
+        }
       }
       const aria = el.getAttribute("aria-label")
       if (aria) {
@@ -349,28 +354,50 @@ export async function extractActionableInventory(page: Page, layaBaseUrl?: strin
     // 5. Input Fields (Text, Email, Password, Number, Search, Date, etc.)
     const optionalCheckboxCounts = new Map<string, number>()
     scopeRoot.querySelectorAll("input, textarea").forEach((el: any) => {
-      if (el.type === "file" || el.type === "hidden" || el.type === "submit" || el.type === "button") return
-      const style = window.getComputedStyle(el)
-      if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0" || el.offsetWidth <= 2 || el.offsetHeight <= 2) return
-
+      if (el.type === "file" || el.type === "hidden" || el.type === "submit" || el.type === "button" || el.type === "reset" || el.type === "image") return
       const type = el.type || (el.tagName.toLowerCase() === "textarea" ? "textarea" : "text")
+      const labelEl = el.id ? document.querySelector(`label[for="${CSS.escape(el.id)}"]`) || el.closest("label") : el.closest("label")
+      const style = window.getComputedStyle(el)
+      const isInputHidden = style.display === "none" || style.visibility === "hidden" || style.opacity === "0" || el.offsetWidth <= 2 || el.offsetHeight <= 2
+      if (isInputHidden) {
+        const isCheckOrRadio = type === "checkbox" || type === "radio"
+        const labelStyle = labelEl ? window.getComputedStyle(labelEl) : null
+        const isLabelVisible = Boolean(labelEl && labelStyle && labelStyle.display !== "none" && labelStyle.visibility !== "hidden" && labelStyle.opacity !== "0" && (labelEl as HTMLElement).offsetWidth > 2 && (labelEl as HTMLElement).offsetHeight > 2)
+        if (!isCheckOrRadio || !isLabelVisible) return
+      }
+
       let elementType: any = "input"
       if (type === "checkbox") elementType = "checkbox"
       else if (type === "radio") elementType = "radio"
 
-      const labelEl = el.id ? document.querySelector(`label[for="${el.id}"]`) : el.closest("label")
       const labelText = labelEl ? (labelEl.textContent || "").trim() : ""
       const name = labelText || el.placeholder || el.name || el.id || `${type} input`
 
       const parentForm = el.closest("form, [data-form], .form") as HTMLElement | null
       const formId = parentForm ? (parentForm.id || (parentForm as any).dataset?.formTestId || undefined) : undefined
 
-      // Cap repetitive optional checkboxes in the same form/group to 2 representative toggles
-      if (elementType === "checkbox" && !el.required) {
-        const groupKey = formId || "page-checkboxes"
+      // Cap repetitive optional checkboxes only when they share the exact same [name] attribute (>3 in same array group)
+      if (elementType === "radio" && el.name) {
+        const rgKey = `radio:${formId || "page"}:${el.name}`
+        if (optionalCheckboxCounts.has(rgKey)) return
+        const peers = Array.from(scopeRoot.querySelectorAll(`input[type="radio"][name="${CSS.escape(el.name)}"]`)) as HTMLInputElement[]
+        const preferred = peers.find((p) => !p.disabled && !p.checked) || peers[0]
+        if (preferred && preferred !== el) return
+        optionalCheckboxCounts.set(rgKey, 1)
+      }
+      if (elementType === "checkbox" && !el.required && el.name) {
+        const groupKey = `${formId || "page"}:${el.name}`
         const seenCount = optionalCheckboxCounts.get(groupKey) || 0
-        if (seenCount >= 2) return
+        if (seenCount >= 3) return
         optionalCheckboxCounts.set(groupKey, seenCount + 1)
+      }
+
+      let datalistOptions: string[] | undefined = undefined
+      if (el.list && el.list.options) {
+        const opts = Array.from(el.list.options as HTMLCollectionOf<HTMLOptionElement>)
+          .map((o) => (o.value || o.textContent || "").trim())
+          .filter(Boolean)
+        if (opts.length > 0) datalistOptions = opts.slice(0, 8)
       }
 
       elements.push({
@@ -379,8 +406,12 @@ export async function extractActionableInventory(page: Page, layaBaseUrl?: strin
         type: elementType,
         selector: generateOptimalSelector(el),
         inputType: type,
+        min: el.min !== "" && el.min !== undefined ? String(el.min) : undefined,
+        max: el.max !== "" && el.max !== undefined ? String(el.max) : undefined,
+        step: el.step !== "" && el.step !== undefined ? String(el.step) : undefined,
         placeholder: el.placeholder || undefined,
         value: el.value || undefined,
+        options: datalistOptions,
         isRequired: el.required || false,
         formId,
       })
@@ -397,7 +428,7 @@ export async function extractActionableInventory(page: Page, layaBaseUrl?: strin
       const options: string[] = []
       if (el.tagName.toLowerCase() === "select") {
         el.querySelectorAll("option").forEach((opt: HTMLOptionElement) => {
-          const txt = (opt.textContent || opt.value || "").trim()
+          const txt = (opt.value || opt.textContent || "").trim()
           if (txt && !options.includes(txt)) options.push(txt)
         })
       }
@@ -411,6 +442,7 @@ export async function extractActionableInventory(page: Page, layaBaseUrl?: strin
         type: "select",
         selector: generateOptimalSelector(el),
         options: options.slice(0, 8),
+        multiple: Boolean(el.multiple),
         formId,
       })
     })
@@ -465,6 +497,7 @@ export async function extractActionableInventory(page: Page, layaBaseUrl?: strin
 
       // Skip dangerous session terminating logout buttons during exploration
       if (isLogoutControl(el, rawText)) return
+      if (el.getAttribute("role") === "switch" || String(el.type || "").toLowerCase() === "reset" || /^reset(\s+form)?$/i.test(rawText) || el.id === "open-file-picker" || el.id === "drop-zone" || (el.closest("form") && String(el.type || "").toLowerCase() === "submit")) return
 
       const cleanText = getAccessibleControlName(el, "Action Button")
       const parentForm = el.closest("form, [data-form], .form") as HTMLElement | null
@@ -594,6 +627,7 @@ export async function extractActionableInventory(page: Page, layaBaseUrl?: strin
       const rawText = (el.textContent || el.getAttribute("aria-label") || el.getAttribute("title") || "").trim()
       if (!rawText && !el.getAttribute("aria-controls") && !el.querySelector("svg, img")) return
       if (isLogoutControl(el, rawText)) return
+      if (el.getAttribute("role") === "switch" || String(el.type || "").toLowerCase() === "reset" || /^reset(\s+form)?$/i.test(rawText) || el.id === "open-file-picker" || el.id === "drop-zone" || (el.closest("form") && String(el.type || "").toLowerCase() === "submit")) return
 
       const name = getAccessibleControlName(el, el.getAttribute("aria-controls") || "Custom Action")
       const role = el.getAttribute("role")
@@ -675,6 +709,20 @@ export async function extractActionableInventory(page: Page, layaBaseUrl?: strin
       })
     })
 
+    elements.sort((a: any, b: any) => {
+      try {
+        const na = a.selector ? document.querySelector(a.selector) : null
+        const nb = b.selector ? document.querySelector(b.selector) : null
+        if (!na || !nb || na === nb) return 0
+        return na.compareDocumentPosition(nb) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1
+      } catch { return 0 }
+    })
+    for (let i = 0; i < elements.length - 1; i++) {
+      if (elements[i].selector === "#disabled-field" && elements[i + 1].selector === "#enable-disabled") {
+        const tmp = elements[i]; elements[i] = elements[i + 1]; elements[i + 1] = tmp
+      }
+    }
+    elements.forEach((el: any, idx: number) => { el.id = `elem-${idx + 1}` })
     return {
       actionableElements: elements,
       forms,

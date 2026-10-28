@@ -1,0 +1,4 @@
+id,name,category,amount,status,date
+1,Item Alpha,Hardware,150.00,Active,2026-10-01
+2,Item Beta,Software,99.00,Pending,2026-10-02
+3,Item Gamma,Services,45.00,Completed,2026-10-03

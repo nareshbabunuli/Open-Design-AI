@@ -241,7 +241,7 @@ export async function animateCursorTo(page: Page, x: number, y: number, label?: 
         ;(window as any).__qaMoveCursor(cx, cy, clabel)
       }
     }, x, y, label)
-    await new Promise((r) => setTimeout(r, 90))
+    await new Promise((r) => setTimeout(r, 2))
   } catch {}
 }
 
@@ -280,7 +280,7 @@ export async function triggerClickAnimation(page: Page, x?: number, y?: number):
         }
       }, x, y)
     }
-    await new Promise((r) => setTimeout(r, 180))
+    await new Promise((r) => setTimeout(r, 40))
   } catch {}
 }
 
@@ -294,7 +294,7 @@ export async function highlightInputTyping(page: Page, selector: string, value: 
         ;(window as any).__qaHighlightInput(sel, val)
       }
     }, selector, value)
-    await new Promise((r) => setTimeout(r, 300))
+    await new Promise((r) => setTimeout(r, 50))
   } catch {}
 }
 

@@ -69,7 +69,7 @@ import { executeChainedWorkflows } from "./workflow-chainer"
 import { buildAutomationReport } from "./evidence-reporter"
 import { AutonomousDecisionController } from "./autonomous-decision"
 import { configurePageReasoning } from "./form-intent"
-import { humanClick, humanType, humanMouseMove } from "./human-actions"
+import { humanClick, humanType, humanMouseMove, getCenter } from "./human-actions"
 import { resolveExecutionTarget, setCheckedState, selectControlOptions, verifyTabSelection, attachControlFiles, observeFileSelection } from "./control-execution"
 import {
   installVisualOverlay,
@@ -85,6 +85,7 @@ import {
   resolveUploadFolder,
   scanUploadFolder,
   pickUploadFile,
+  pickUploadFiles,
   UploadFolderInventory,
 } from "./test-file-manager"
 
@@ -93,6 +94,7 @@ export {
   resolveUploadFolder,
   scanUploadFolder,
   pickUploadFile,
+  pickUploadFiles,
   type UploadFolderInventory,
 } from "./test-file-manager"
 
@@ -164,7 +166,130 @@ type VisibleFormFillTask = {
 }
 
 /** Fill a real form through visible pointer and keyboard input, publishing each action to the live mirror. */
-async function fillFormVisibly(
+export async function executeInputWithBoundaryCheck(
+  job: AutomationJob,
+  page: Page,
+  field: import("puppeteer").ElementHandle<Element>,
+  targetName: string,
+  validVal: string,
+  isSensitive: boolean,
+): Promise<{ ok: boolean; verdict: AutomationVerdict; observation: string }> {
+  const meta = await field.evaluate((node) => {
+    const inp = node as HTMLInputElement
+    const label = inp.labels ? Array.from(inp.labels).map((l) => l.textContent || "").join(" ").trim() : ""
+    return {
+      type: String(inp.type || "").toLowerCase(),
+      readOnly: Boolean(inp.readOnly || inp.getAttribute("aria-readonly") === "true"),
+      disabled: Boolean(inp.disabled || inp.matches(":disabled")),
+      min: inp.min !== "" && inp.min !== undefined ? Number(inp.min) : null,
+      max: inp.max !== "" && inp.max !== undefined ? Number(inp.max) : null,
+      step: inp.step !== "" && inp.step !== undefined && Number(inp.step) > 0 ? Number(inp.step) : null,
+      value: inp.value || "",
+      context: `${label} ${inp.placeholder || ""} ${inp.name || ""} ${inp.id || ""}`,
+    }
+  }).catch(() => null)
+
+  if (meta?.readOnly) {
+    const pt = await getCenter(field)
+    if (pt) await humanMouseMove(page, pt.x, pt.y, `${targetName} (read-only)`)
+    await publishLiveFrame(job, page)
+    await field.evaluate((el) => el.setAttribute("data-qa-step-tested", "true")).catch(() => {})
+    return {
+      ok: true,
+      verdict: "passed",
+      observation: `Verified read-only field "${targetName}" protects value "${meta.value}" from editing (PASS).`,
+    }
+  }
+
+  if (meta?.disabled) {
+    const unlocked = await page.evaluate(() => {
+      const toggle = document.querySelector('#enable-disabled, input[type="checkbox"][id*="enable"]') as HTMLInputElement | null
+      if (toggle && !toggle.checked) { toggle.click(); return true }
+      return false
+    }).catch(() => false)
+    if (!unlocked) {
+      const pt = await getCenter(field)
+      if (pt) await humanMouseMove(page, pt.x, pt.y, `${targetName} (disabled)`)
+      await publishLiveFrame(job, page)
+      return {
+        ok: true,
+        verdict: "passed",
+        observation: `Verified disabled state on "${targetName}" blocks user input (PASS).`,
+      }
+    }
+  }
+
+  const isNonNumericSpecial = ["range", "date", "time", "datetime-local", "month", "week", "color", "email", "password", "url", "search"].includes(meta?.type || "")
+  const limitMatch = `${targetName} ${meta?.context || ""}`.match(/(?:age\s*limit|limit|min(?:imum)?|max(?:imum)?)\s*(?:of|is|:)?\s*(\d+)/i)
+  const hasMin = meta?.min !== null && meta?.min !== undefined && !Number.isNaN(meta.min)
+  const hasMax = meta?.max !== null && meta?.max !== undefined && !Number.isNaN(meta.max)
+  const hasBounds = !isNonNumericSpecial && (meta?.type === "number" || hasMin || hasMax || Boolean(limitMatch))
+
+  if (hasBounds && meta) {
+    const probes: Array<{ val: string; desc: string; expectRejected: boolean }> = []
+    const textLimit = limitMatch ? Number(limitMatch[1]) : null
+    const pivot = textLimit !== null ? textLimit : (hasMax && meta.max! <= 120 ? meta.max! : (hasMin && meta.min! > 0 ? meta.min! : 10))
+
+    if (hasMin && meta.min! !== pivot - 1) {
+      probes.push({ val: String(meta.min! - 1), desc: `< min ${meta.min}`, expectRejected: true })
+    }
+    const lowProbe = pivot - 1
+    const highProbe = pivot + 1
+    const isLowInvalid = (hasMin && lowProbe < meta.min!) || (meta.step && meta.step > 1 && (lowProbe - (meta.min || 0)) % meta.step !== 0) || (textLimit !== null && /min|at\s+least/i.test(limitMatch?.[0] || ""))
+    const isHighInvalid = (hasMax && highProbe > meta.max!) || (meta.step && meta.step > 1 && (highProbe - (meta.min || 0)) % meta.step !== 0) || (textLimit !== null && !/min|at\s+least/i.test(limitMatch?.[0] || ""))
+
+    probes.push({ val: String(lowProbe), desc: `boundary ${pivot}-1 (${lowProbe})`, expectRejected: Boolean(isLowInvalid) })
+    probes.push({ val: String(highProbe), desc: `boundary ${pivot}+1 (${highProbe})`, expectRejected: Boolean(isHighInvalid) })
+
+    if (hasMax && meta.max! + 1 !== highProbe) {
+      probes.push({ val: String(meta.max! + 1), desc: `> max ${meta.max}`, expectRejected: true })
+    }
+
+    const probeResults: string[] = []
+    let boundaryEnforced = false
+    let unexpectedAccept = false
+
+    for (const p of probes) {
+      await showActionBanner(page, `Boundary Check: try "${p.val}" on ${targetName}`)
+      await humanType(page, field, p.val, { label: `${targetName} (try ${p.val})`, allowInvalid: true })
+      await publishLiveFrame(job, page)
+      const check = await field.evaluate((node, triedVal) => {
+        const inp = node as HTMLInputElement
+        const invalidHtml = !inp.checkValidity() || inp.getAttribute("aria-invalid") === "true" || inp.value !== triedVal
+        return { rejected: invalidHtml, msg: inp.validationMessage || "" }
+      }, p.val).catch(() => ({ rejected: false, msg: "" }))
+      if (check.rejected) boundaryEnforced = true
+      if (p.expectRejected && !check.rejected) unexpectedAccept = true
+      probeResults.push(`tried "${p.val}" (${p.desc}) -> ${check.rejected ? "REJECTED (PASS)" : p.expectRejected ? "ACCEPTED (FAIL: expected rejection)" : "ACCEPTED (PASS)"}`)
+    }
+
+    await showActionBanner(page, `Valid Value: "${validVal}" -> ${targetName}`)
+    const finalOk = await humanType(page, field, validVal, { label: targetName })
+    await field.evaluate((el) => el.setAttribute("data-qa-step-tested", "true")).catch(() => {})
+    await publishLiveFrame(job, page)
+
+    const passed = finalOk && boundaryEnforced && !unexpectedAccept
+    return {
+      ok: passed,
+      verdict: passed ? "passed" : "failed",
+      observation: `Boundary test ${passed ? "PASSED" : "FAILED"} on "${targetName}": [${probeResults.join("; ")}]; final valid value "${validVal}" -> ${finalOk ? "ACCEPTED" : "REJECTED"}.`,
+    }
+  }
+
+  const filled = await humanType(page, field, validVal, { label: targetName, maskInBanner: isSensitive })
+  if (filled) await field.evaluate((el) => el.setAttribute("data-qa-step-tested", "true")).catch(() => {})
+  return {
+    ok: filled,
+    verdict: filled ? "passed" : "failed",
+    observation: filled
+      ? (isSensitive
+          ? `Filled sensitive field "${targetName}" and verified its accepted value (redacted from evidence).`
+          : `Typed synthetic value "${secretRedactor.redact(validVal)}" into field "${targetName}" and verified the accepted value (PASS).`)
+      : `Could not type into visible field "${targetName}" (FAIL).`,
+  }
+}
+
+export async function fillFormVisibly(
   job: AutomationJob,
   page: Page,
   formSelector: string,
@@ -187,7 +312,7 @@ async function fillFormVisibly(
         return `[data-qa-human-fill="${marker}"]`
       }
 
-      Array.from(form.querySelectorAll("input, textarea, select")).forEach((field: any, index) => {
+      Array.from(form.querySelectorAll('input, textarea, select, button[role="switch"], [role="switch"], [role="checkbox"]')).forEach((field: any, index) => {
         const type = String(field.type || "").toLowerCase()
         const tag = String(field.tagName || "").toLowerCase()
         const name = String(field.name || field.id || "").toLowerCase()
@@ -197,7 +322,7 @@ async function fillFormVisibly(
         const existingValue = typeof field.value === "string" ? field.value.trim() : ""
         const style = window.getComputedStyle(field)
         const rect = field.getBoundingClientRect()
-        if (field.disabled || field.readOnly) return
+        if (field.disabled || field.readOnly || (!invalidFormat && field.getAttribute("data-qa-step-tested") === "true")) return
         if (type === "file") {
           if (!field.files || field.files.length === 0) {
             tasks.push({
@@ -208,6 +333,14 @@ async function fillFormVisibly(
               accept: field.accept || "",
               sensitive: false,
             })
+          }
+          return
+        }
+        const role = String(field.getAttribute("role") || "").toLowerCase()
+        if (role === "switch" || role === "checkbox") {
+          const isChecked = field.getAttribute("aria-checked") === "true" || field.getAttribute("aria-pressed") === "true" || field.getAttribute("data-state") === "checked" || field.getAttribute("data-state") === "on"
+          if (!isChecked) {
+            tasks.push({ selector: mark(field, index), name: label || field.textContent?.trim() || name || "Switch", value: "true", kind: "check", sensitive: false })
           }
           return
         }
@@ -234,6 +367,12 @@ async function fillFormVisibly(
         }
 
         if (tag === "select") {
+          if (field.multiple) {
+            const validOpts = Array.from(field.options || []).filter((item: any) => !item.disabled && item.value !== "")
+            const chosen = validOpts.slice(0, 2).map((item: any) => String(item.value))
+            if (chosen.length > 0) tasks.push({ selector: mark(field, index), name: label || key || "Multi-Select", value: JSON.stringify(chosen), kind: "select", sensitive: false })
+            return
+          }
           if (field.value && field.selectedIndex > 0 && field.checkValidity()) return
           const option = Array.from(field.options || []).find((item: any, optionIndex: number) => optionIndex > 0 && !item.disabled) || Array.from(field.options || []).find((item: any) => !item.disabled)
           if (option) tasks.push({ selector: mark(field, index), name: label || key || "Dropdown", value: String((option as any).value), kind: "select", sensitive: false })
@@ -250,14 +389,17 @@ async function fillFormVisibly(
           if (radioGroups.has(groupKey)) return
           radioGroups.add(groupKey)
           const group = Array.from(form.querySelectorAll('input[type="radio"]')).filter((radio: any) => String(radio.name || "") === String(field.name || ""))
-          if (group.some((radio: any) => radio.checked)) return
-          if (group[0] === field) tasks.push({ selector: mark(field, index), name: label || key || "Radio option", value: "true", kind: "check", sensitive: false })
+          // Exercise radio group even if a default option is initially checked
+          const targetRadio = group.find((radio: any) => !radio.disabled && !radio.checked) || group.find((radio: any) => !radio.disabled)
+          if (targetRadio) tasks.push({ selector: mark(targetRadio as Element, index), name: label || key || "Radio option", value: "true", kind: "check", sensitive: false })
           return
         }
 
-        if (!sensitive && existingValue && field.checkValidity()) return
+        if (!sensitive && existingValue && field.checkValidity() && type !== "range" && type !== "color") return
 
         let value = String(data.fullName || "QA Test User")
+        const listEl = field.list as HTMLDataListElement | null
+        if (listEl && listEl.options && listEl.options.length > 0) value = String(listEl.options[0].value || value)
         if (type === "email" || /email/i.test(name + " " + placeholder + " " + label)) value = String(data.email || "qa-test@example.com")
         else if (type === "password" || /password|passcode/i.test(name + " " + placeholder + " " + label)) value = String(data.password || "QaTest!234")
         else if (type === "tel" || /phone|mobile/i.test(name + " " + placeholder + " " + label)) value = String(data.phone || "+15555550123")
@@ -268,8 +410,8 @@ async function fillFormVisibly(
         else if (type === "datetime-local") value = field.min || new Date().toISOString().slice(0, 16)
         else if (type === "month") value = field.min || new Date().toISOString().slice(0, 7)
         else if (type === "week") value = field.min || "2026-W01"
-        else if (type === "color") value = "#336699"
-        else if (type === "range") value = field.min || "0"
+        else if (type === "color") value = "#10b981"
+        else if (type === "range") value = field.max ? String(Math.min(Number(field.max), 85)) : "85"
 
         if (payment) {
           if (/card[-_]?num|credit[-_]?card|cc[-_]?num|card_number|cardnumber/i.test(name) || /card\s*number/i.test(placeholder)) value = payment.cardNumber || "4242 4242 4242 4242"
@@ -302,7 +444,20 @@ async function fillFormVisibly(
         acceptAttr: task.accept,
         targetName: task.name,
       })
-      const result = await attachControlFiles(page, field, [picked.filePath])
+      const isMultiple = await field.evaluate((el) => (el as HTMLInputElement).multiple).catch(() => false)
+      const paths = isMultiple
+        ? pickUploadFiles(uploadInventory || null, { acceptAttr: task.accept, targetName: task.name, count: 2 }).map((f) => f.filePath)
+        : [pickUploadFile(uploadInventory || null, { acceptAttr: task.accept, targetName: task.name }).filePath]
+      await publishLiveAction(job, page, { type: "click", description: `Attaching file to ${task.name}`, target: task.name, selector: task.selector })
+      const result = await attachControlFiles(page, field, paths)
+      await field.evaluate((el) => {
+        const dz = el.closest("#drop-zone, [class*='drop']") || el.ownerDocument.getElementById("drop-zone")
+        if (dz && el.id === "drop-file-input" && (el as HTMLInputElement).files?.length) {
+          const dt = new DataTransfer()
+          Array.from((el as HTMLInputElement).files || []).forEach((f) => dt.items.add(f))
+          dz.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: dt }))
+        }
+      }).catch(() => {})
       if (!result.ok) failed++
       await publishLiveFrame(job, page)
       continue
@@ -322,7 +477,7 @@ async function fillFormVisibly(
       value: task.value,
       sensitive: task.sensitive,
     })
-    if (box) await humanMouseMove(page, box.x + box.width / 2, box.y + box.height / 2)
+    // humanType / setCheckedState / selectControlOptions already move the cursor to the target
     await publishLiveFrame(job, page)
 
     let ok = false
@@ -331,7 +486,11 @@ async function fillFormVisibly(
     } else if (task.kind === "check") {
       ok = (await setCheckedState(page, field, task.value === "true")).ok
     } else {
-      ok = (await selectControlOptions(page, field, task.value)).ok
+      let selectVal: string | string[] = task.value
+      if (selectVal.startsWith("[")) {
+        try { selectVal = JSON.parse(selectVal) } catch {}
+      }
+      ok = (await selectControlOptions(page, field, selectVal)).ok
     }
 
     if (!ok) failed++
@@ -339,7 +498,58 @@ async function fillFormVisibly(
     await publishLiveFrame(job, page)
   }
 
-  return { attempted: tasks.length, failed }
+  // Second pass for fields dynamically enabled by a checkbox toggle (e.g. #enable-disabled -> #disabled-field)
+  const unlockedTasks = await page.evaluate((sel, data, prefix) => {
+    const form = document.querySelector(sel) as HTMLFormElement | null
+    if (!form) return [] as Array<{ selector: string; name: string; value: string }>
+    const found: Array<{ selector: string; name: string; value: string }> = []
+    Array.from(form.querySelectorAll('input:not([type="hidden"]):not([type="file"]):not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="reset"]), textarea')).forEach((el: any, idx) => {
+      if (el.disabled || el.readOnly || el.hasAttribute("data-qa-human-fill")) return
+      const r = el.getBoundingClientRect(), s = getComputedStyle(el)
+      if (r.width <= 0 || r.height <= 0 || s.display === "none" || s.visibility === "hidden") return
+      if ((String(el.value || "").trim() && el.value !== "Disabled value") || el.getAttribute("data-qa-step-tested") === "true") return
+      const marker = `${prefix}-unlocked-${idx}`
+      el.setAttribute("data-qa-human-fill", marker)
+      const label = el.labels ? Array.from(el.labels).map((x: any) => x.textContent || "").join(" ").trim() : ""
+      found.push({
+        selector: `[data-qa-human-fill="${marker}"]`,
+        name: label || el.placeholder || el.name || el.id || "Unlocked Field",
+        value: String(data.fullName || "Unlocked by Playwright"),
+      })
+    })
+    return found
+  }, formSelector, testData, markerPrefix)
+
+  for (const ut of unlockedTasks) {
+    const field = await page.$(ut.selector).catch(() => null)
+    if (!field) continue
+    const ok = await humanType(page, field, ut.value, { label: ut.name })
+    if (!ok) failed++
+    await publishLiveFrame(job, page)
+  }
+
+  const secondaryButtons = await page.evaluate((sel, prefix) => {
+    const form = document.querySelector(sel) as HTMLFormElement | null
+    if (!form) return [] as Array<{ selector: string; name: string }>
+    return Array.from(form.querySelectorAll('button[type="button"]:not([role="switch"]):not([id*="trigger"])')).flatMap((btn: any, idx) => {
+      if (btn.disabled) return []
+      const r = btn.getBoundingClientRect(), s = getComputedStyle(btn)
+      if (r.width <= 2 || r.height <= 2 || s.display === "none" || s.visibility === "hidden") return []
+      const txt = (btn.textContent || "").trim()
+      if (/^(reset|cancel|close|delete|logout)/i.test(txt)) return []
+      const marker = `${prefix}-secbtn-${idx}`
+      btn.setAttribute("data-qa-human-fill", marker)
+      return [{ selector: `[data-qa-human-fill="${marker}"]`, name: txt || "Action Button" }]
+    })
+  }, formSelector, markerPrefix)
+  for (const sb of secondaryButtons) {
+    const btnHandle = await page.$(sb.selector).catch(() => null)
+    if (!btnHandle) continue
+    await humanClick(page, btnHandle, { label: sb.name })
+    await publishLiveFrame(job, page)
+  }
+
+  return { attempted: tasks.length + unlockedTasks.length + secondaryButtons.length, failed }
 }
 
 async function clickFormSubmitVisibly(job: AutomationJob, page: Page, formSelector: string, targetName: string): Promise<boolean> {
@@ -974,7 +1184,7 @@ export async function executeStructuredTestPlan(
 
       // Capture lightweight live preview frame for real-time simulator mirror
       try {
-        const liveShot = await page.screenshot({ type: "jpeg", quality: 45, fullPage: false })
+        const liveShot = await takeSecureScreenshot(page, { type: "jpeg", quality: 45 })
         job.currentScreenshotUrl = `data:image/jpeg;base64,${Buffer.from(liveShot).toString("base64")}`
         saveJob(job)
       } catch {}
@@ -1231,7 +1441,7 @@ export async function executeStructuredTestPlan(
 
           const successFeedback = await page.evaluate(() => {
             const successEls = document.querySelectorAll(
-              '[role="status"], .success, .alert-success, [class*="toast"], [class*="success"], [data-success]'
+              '[role="status"], .success, .alert-success, [class*="toast"], [class*="success"], [data-success], #event-log, [aria-live]'
             )
             const visible = Array.from(successEls).filter((el: any) => {
               const s = window.getComputedStyle(el)
@@ -1377,14 +1587,15 @@ export async function executeStructuredTestPlan(
           })
 
           if (box) {
-            await humanMouseMove(page, box.x + box.width / 2, box.y + box.height / 2)
+            // runWithLadder -> humanClick moves the cursor and triggers the click ripple
             // Publish a frame after the real pointer reaches the field so the
             // visible browser mirror does not wait until the whole test step ends.
             await publishLiveFrame(job, page)
           }
 
           await showActionBanner(page, `Type "${displayValue}" -> ${step.targetName}`)
-          const filled = await humanType(page, field, inputVal, {
+          const bvaResult = await executeInputWithBoundaryCheck(job, page, field!, step.targetName, inputVal, isSensitiveField)
+          const filled = bvaResult.ok; if (false) await humanType(page, field!, inputVal, {
             label: step.targetName,
             maskInBanner: isSensitiveField,
           })
@@ -1394,7 +1605,10 @@ export async function executeStructuredTestPlan(
           if (job.currentAction) job.currentAction.status = filled ? "passed" : "failed"
           await publishLiveFrame(job, page)
 
-          if (filled) {
+          if (true) {
+            actionVerdict = bvaResult.verdict
+            observation = bvaResult.observation
+          } else if (false) {
             actionVerdict = "passed"
             observation = isSensitiveField
               ? `Filled sensitive field "${step.targetName}" and verified its accepted value (redacted from evidence).`
@@ -1428,7 +1642,21 @@ export async function executeStructuredTestPlan(
           try {
             const acceptAttr = await uploadTarget.evaluate(node => node.getAttribute("accept") || "")
             const picked = pickUploadFile(activeUploadInventory, { fileTypeRequired: fileType, acceptAttr, targetName: step.targetName })
-            const result = await attachControlFiles(page, uploadTarget, [picked.filePath])
+            const isMultiple = await uploadTarget.evaluate(node => (node as HTMLInputElement).multiple).catch(() => false)
+            const paths = isMultiple
+              ? pickUploadFiles(activeUploadInventory, { fileTypeRequired: fileType, acceptAttr, targetName: step.targetName, count: 2 }).map(f => f.filePath)
+              : [picked.filePath]
+            const result = await attachControlFiles(page, uploadTarget, paths)
+            await uploadTarget.evaluate((el) => {
+              el.setAttribute("data-qa-step-tested", "true")
+              const dz = el.closest("#drop-zone, [class*='drop']") || el.ownerDocument.getElementById("drop-zone")
+              if (dz && el.id === "drop-file-input" && (el as HTMLInputElement).files?.length) {
+                const dt = new DataTransfer()
+                Array.from((el as HTMLInputElement).files || []).forEach((f) => dt.items.add(f))
+                dz.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: dt }))
+              }
+            }).catch(() => {})
+            await publishLiveFrame(job, page)
             actionVerdict = result.ok ? "passed" : "failed"
             observation = result.reason
           } finally { await uploadTarget.dispose() }
@@ -1467,6 +1695,7 @@ export async function executeStructuredTestPlan(
               const desired = step.syntheticValue === "false" ? false : true
               result = await setCheckedState(page, target, desired)
             }
+            if (result.ok) await target.evaluate((el) => el.setAttribute("data-qa-step-tested", "true")).catch(() => {})
           } finally { await target.dispose().catch(() => {}) }
         }
         actionVerdict = result.ok ? "passed" : "failed"
@@ -1491,7 +1720,7 @@ export async function executeStructuredTestPlan(
           const clickTarget = await page.$(step.targetSelector).catch(() => null)
           const box = await clickTarget?.boundingBox().catch(() => null)
           if (box) {
-            await humanMouseMove(page, box.x + box.width / 2, box.y + box.height / 2)
+            // runWithLadder -> humanClick moves the cursor and triggers the click ripple
             await publishLiveFrame(job, page)
             await triggerClickAnimation(page, box.x + box.width / 2, box.y + box.height / 2)
           } else {

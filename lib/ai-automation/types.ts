@@ -383,6 +383,10 @@ export type ActionableElement = {
   /** Why the semantic detector considered this object actionable. */
   discoveryReason?: string[]
   inputType?: string
+  min?: string
+  max?: string
+  step?: string
+  multiple?: boolean
   accept?: string
   placeholder?: string
   value?: string
