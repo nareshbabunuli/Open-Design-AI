@@ -72,7 +72,7 @@ function countFilesInDir(dirPath: string): number {
 }
 
 export function listAvailableTestFolders(projectDir?: string, baseUrl?: string): AvailableTestFolderInfo[] {
-  const resolvedDir = resolveProjectDirectory(baseUrl, projectDir)
+  const resolvedDir = resolveProjectDirectory(baseUrl, projectDir) || process.cwd()
   const resolvedProjectName = path.basename(resolvedDir)
   const parentRoot = path.dirname(process.cwd())
   const seen = new Set<string>()
@@ -141,7 +141,7 @@ export function verifyTargetTestData(
   baseUrl?: string,
   customFolderPath?: string
 ): TestDataStatus {
-  const resolvedDir = resolveProjectDirectory(baseUrl, projectDir)
+  const resolvedDir = resolveProjectDirectory(baseUrl, projectDir) || process.cwd()
   const testFilesDir = resolveRequestedTestFolder(resolvedDir, customFolderPath)
   const availableFolders = listAvailableTestFolders(projectDir, baseUrl)
 
@@ -195,7 +195,7 @@ export function verifyTargetTestData(
 }
 
 export function generateTargetTestData(projectDir?: string, baseUrl?: string): TestDataStatus {
-  const resolvedDir = resolveProjectDirectory(baseUrl, projectDir)
+  const resolvedDir = resolveProjectDirectory(baseUrl, projectDir) || process.cwd()
   const testFilesDir = path.join(resolvedDir, "test-files")
 
   if (!fs.existsSync(testFilesDir)) {
@@ -251,7 +251,7 @@ export function saveUploadedTargetTestFiles(
   projectDir?: string,
   baseUrl?: string
 ): TestDataStatus {
-  const resolvedDir = resolveProjectDirectory(baseUrl, projectDir)
+  const resolvedDir = resolveProjectDirectory(baseUrl, projectDir) || process.cwd()
   const testFilesDir = path.join(resolvedDir, "test-files")
 
   if (!fs.existsSync(testFilesDir)) {

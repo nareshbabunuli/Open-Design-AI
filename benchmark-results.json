@@ -1,0 +1,483 @@
+{
+  "playwright": {
+    "tool": "Playwright",
+    "passed": 33,
+    "failed": 0,
+    "total": 33,
+    "duration": 2252,
+    "results": [
+      {
+        "id": "op-01",
+        "name": "Checkbox: Standard required (#std-checkbox)",
+        "status": "PASS",
+        "duration": 660,
+        "error": null
+      },
+      {
+        "id": "op-02",
+        "name": "Checkbox: Nested label (kensington_flat_nested)",
+        "status": "PASS",
+        "duration": 40,
+        "error": null
+      },
+      {
+        "id": "op-03",
+        "name": "Checkbox: Custom styled hidden input (#custom-kensington)",
+        "status": "PASS",
+        "duration": 67,
+        "error": null
+      },
+      {
+        "id": "op-04",
+        "name": "Toggle: ARIA switch (#toggle-notifications)",
+        "status": "PASS",
+        "duration": 46,
+        "error": null
+      },
+      {
+        "id": "op-05",
+        "name": "Checkbox: Indeterminate Select-All demo",
+        "status": "PASS",
+        "duration": 57,
+        "error": null
+      },
+      {
+        "id": "op-06",
+        "name": "Radio: Option selection (house)",
+        "status": "PASS",
+        "duration": 46,
+        "error": null
+      },
+      {
+        "id": "op-07",
+        "name": "Text: Plain text (#plain-text)",
+        "status": "PASS",
+        "duration": 16,
+        "error": null
+      },
+      {
+        "id": "op-08",
+        "name": "Text: Email (#username)",
+        "status": "PASS",
+        "duration": 15,
+        "error": null
+      },
+      {
+        "id": "op-09",
+        "name": "Text: Password (#password)",
+        "status": "PASS",
+        "duration": 17,
+        "error": null
+      },
+      {
+        "id": "op-10",
+        "name": "Text: Telephone (#phone)",
+        "status": "PASS",
+        "duration": 16,
+        "error": null
+      },
+      {
+        "id": "op-11",
+        "name": "Text: Website URL (#website)",
+        "status": "PASS",
+        "duration": 17,
+        "error": null
+      },
+      {
+        "id": "op-12",
+        "name": "Text: Search (#search)",
+        "status": "PASS",
+        "duration": 19,
+        "error": null
+      },
+      {
+        "id": "op-13",
+        "name": "Text: Datalist Autocomplete (#username-hint)",
+        "status": "PASS",
+        "duration": 16,
+        "error": null
+      },
+      {
+        "id": "op-14",
+        "name": "Number: Monthly rent (#monthly-rent)",
+        "status": "PASS",
+        "duration": 15,
+        "error": null
+      },
+      {
+        "id": "op-15",
+        "name": "Date: Lease start (#lease-start)",
+        "status": "PASS",
+        "duration": 16,
+        "error": null
+      },
+      {
+        "id": "op-16",
+        "name": "Time: Appointment time (#appointment-time)",
+        "status": "PASS",
+        "duration": 15,
+        "error": null
+      },
+      {
+        "id": "op-17",
+        "name": "Datetime: Local (#appointment-datetime)",
+        "status": "PASS",
+        "duration": 14,
+        "error": null
+      },
+      {
+        "id": "op-18",
+        "name": "Month: Billing month (#billing-month)",
+        "status": "PASS",
+        "duration": 15,
+        "error": null
+      },
+      {
+        "id": "op-19",
+        "name": "Week: Report week (#report-week)",
+        "status": "PASS",
+        "duration": 15,
+        "error": null
+      },
+      {
+        "id": "op-20",
+        "name": "Select: Single option (#property-category)",
+        "status": "PASS",
+        "duration": 15,
+        "error": null
+      },
+      {
+        "id": "op-21",
+        "name": "Select: Multi-option (#multi-category)",
+        "status": "PASS",
+        "duration": 15,
+        "error": null
+      },
+      {
+        "id": "op-22",
+        "name": "Range: Slider & output (#volume)",
+        "status": "PASS",
+        "duration": 21,
+        "error": null
+      },
+      {
+        "id": "op-23",
+        "name": "Color: Picker (#theme-color)",
+        "status": "PASS",
+        "duration": 12,
+        "error": null
+      },
+      {
+        "id": "op-24",
+        "name": "File: Single upload (#single-file)",
+        "status": "PASS",
+        "duration": 20,
+        "error": null
+      },
+      {
+        "id": "op-25",
+        "name": "File: Multiple upload (#multiple-files)",
+        "status": "PASS",
+        "duration": 16,
+        "error": null
+      },
+      {
+        "id": "op-26",
+        "name": "File: Filtered documents (#document-files)",
+        "status": "PASS",
+        "duration": 16,
+        "error": null
+      },
+      {
+        "id": "op-27",
+        "name": "File: Hidden file picker trigger (#open-file-picker)",
+        "status": "PASS",
+        "duration": 55,
+        "error": null
+      },
+      {
+        "id": "op-28",
+        "name": "File: Drag and Drop zone (#drop-zone)",
+        "status": "PASS",
+        "duration": 13,
+        "error": null
+      },
+      {
+        "id": "op-29",
+        "name": "Textarea: Inspection notes (#notes)",
+        "status": "PASS",
+        "duration": 16,
+        "error": null
+      },
+      {
+        "id": "op-30",
+        "name": "Field: Read-only protection (#readonly-field)",
+        "status": "PASS",
+        "duration": 40,
+        "error": null
+      },
+      {
+        "id": "op-31",
+        "name": "Field: Disabled toggle & input (#enable-disabled -> #disabled-field)",
+        "status": "PASS",
+        "duration": 281,
+        "error": null
+      },
+      {
+        "id": "op-32",
+        "name": "Form: Submission & Validation (Save & Submit)",
+        "status": "PASS",
+        "duration": 169,
+        "error": null
+      },
+      {
+        "id": "op-33",
+        "name": "Form: Reset (#reset-form)",
+        "status": "PASS",
+        "duration": 154,
+        "error": null
+      }
+    ]
+  },
+  "stagehand": {
+    "tool": "Stagehand",
+    "passed": 31,
+    "failed": 2,
+    "total": 33,
+    "duration": 3385,
+    "results": [
+      {
+        "id": "op-01",
+        "name": "Checkbox: Standard required (#std-checkbox)",
+        "status": "PASS",
+        "duration": 235,
+        "error": null
+      },
+      {
+        "id": "op-02",
+        "name": "Checkbox: Nested label (kensington_flat_nested)",
+        "status": "PASS",
+        "duration": 188,
+        "error": null
+      },
+      {
+        "id": "op-03",
+        "name": "Checkbox: Custom styled hidden input (#custom-kensington)",
+        "status": "PASS",
+        "duration": 202,
+        "error": null
+      },
+      {
+        "id": "op-04",
+        "name": "Toggle: ARIA switch (#toggle-notifications)",
+        "status": "PASS",
+        "duration": 190,
+        "error": null
+      },
+      {
+        "id": "op-05",
+        "name": "Checkbox: Indeterminate Select-All demo",
+        "status": "PASS",
+        "duration": 201,
+        "error": null
+      },
+      {
+        "id": "op-06",
+        "name": "Radio: Option selection (house)",
+        "status": "PASS",
+        "duration": 187,
+        "error": null
+      },
+      {
+        "id": "op-07",
+        "name": "Text: Plain text (#plain-text)",
+        "status": "PASS",
+        "duration": 71,
+        "error": null
+      },
+      {
+        "id": "op-08",
+        "name": "Text: Email (#username)",
+        "status": "PASS",
+        "duration": 65,
+        "error": null
+      },
+      {
+        "id": "op-09",
+        "name": "Text: Password (#password)",
+        "status": "PASS",
+        "duration": 57,
+        "error": null
+      },
+      {
+        "id": "op-10",
+        "name": "Text: Telephone (#phone)",
+        "status": "PASS",
+        "duration": 53,
+        "error": null
+      },
+      {
+        "id": "op-11",
+        "name": "Text: Website URL (#website)",
+        "status": "PASS",
+        "duration": 55,
+        "error": null
+      },
+      {
+        "id": "op-12",
+        "name": "Text: Search (#search)",
+        "status": "PASS",
+        "duration": 48,
+        "error": null
+      },
+      {
+        "id": "op-13",
+        "name": "Text: Datalist Autocomplete (#username-hint)",
+        "status": "PASS",
+        "duration": 45,
+        "error": null
+      },
+      {
+        "id": "op-14",
+        "name": "Number: Monthly rent (#monthly-rent)",
+        "status": "PASS",
+        "duration": 47,
+        "error": null
+      },
+      {
+        "id": "op-15",
+        "name": "Date: Lease start (#lease-start)",
+        "status": "PASS",
+        "duration": 31,
+        "error": null
+      },
+      {
+        "id": "op-16",
+        "name": "Time: Appointment time (#appointment-time)",
+        "status": "PASS",
+        "duration": 28,
+        "error": null
+      },
+      {
+        "id": "op-17",
+        "name": "Datetime: Local (#appointment-datetime)",
+        "status": "PASS",
+        "duration": 31,
+        "error": null
+      },
+      {
+        "id": "op-18",
+        "name": "Month: Billing month (#billing-month)",
+        "status": "PASS",
+        "duration": 30,
+        "error": null
+      },
+      {
+        "id": "op-19",
+        "name": "Week: Report week (#report-week)",
+        "status": "PASS",
+        "duration": 31,
+        "error": null
+      },
+      {
+        "id": "op-20",
+        "name": "Select: Single option (#property-category)",
+        "status": "PASS",
+        "duration": 20,
+        "error": null
+      },
+      {
+        "id": "op-21",
+        "name": "Select: Multi-option (#multi-category)",
+        "status": "PASS",
+        "duration": 16,
+        "error": null
+      },
+      {
+        "id": "op-22",
+        "name": "Range: Slider & output (#volume)",
+        "status": "FAIL",
+        "duration": 101,
+        "error": "Range value 50, output 50"
+      },
+      {
+        "id": "op-23",
+        "name": "Color: Picker (#theme-color)",
+        "status": "FAIL",
+        "duration": 59,
+        "error": "Color mismatch: #000000"
+      },
+      {
+        "id": "op-24",
+        "name": "File: Single upload (#single-file)",
+        "status": "PASS",
+        "duration": 19,
+        "error": null
+      },
+      {
+        "id": "op-25",
+        "name": "File: Multiple upload (#multiple-files)",
+        "status": "PASS",
+        "duration": 14,
+        "error": null
+      },
+      {
+        "id": "op-26",
+        "name": "File: Filtered documents (#document-files)",
+        "status": "PASS",
+        "duration": 13,
+        "error": null
+      },
+      {
+        "id": "op-27",
+        "name": "File: Hidden file picker trigger (#open-file-picker)",
+        "status": "PASS",
+        "duration": 49,
+        "error": null
+      },
+      {
+        "id": "op-28",
+        "name": "File: Drag and Drop zone (#drop-zone)",
+        "status": "PASS",
+        "duration": 12,
+        "error": null
+      },
+      {
+        "id": "op-29",
+        "name": "Textarea: Inspection notes (#notes)",
+        "status": "PASS",
+        "duration": 56,
+        "error": null
+      },
+      {
+        "id": "op-30",
+        "name": "Field: Read-only protection (#readonly-field)",
+        "status": "PASS",
+        "duration": 65,
+        "error": null
+      },
+      {
+        "id": "op-31",
+        "name": "Field: Disabled toggle & input (#enable-disabled -> #disabled-field)",
+        "status": "PASS",
+        "duration": 249,
+        "error": null
+      },
+      {
+        "id": "op-32",
+        "name": "Form: Submission & Validation (Save & Submit)",
+        "status": "PASS",
+        "duration": 243,
+        "error": null
+      },
+      {
+        "id": "op-33",
+        "name": "Form: Reset (#reset-form)",
+        "status": "PASS",
+        "duration": 280,
+        "error": null
+      }
+    ]
+  },
+  "timestamp": "2026-10-28T14:51:54.366Z"
+}
