@@ -9,6 +9,7 @@ import {
 import { sanitizeJobForClient } from "@/lib/browser/secure-browser"
 import { setJobSecrets, clearJobSecrets } from "@/lib/ai-automation/job-secret-vault"
 import { emitSessionEvent, isJobActive } from "@/lib/ai-automation/job-store"
+import { ensureJobRecordingUrl } from "@/lib/ai-automation/visual-recorder"
 import { assertSafeTargetUrlWithDevBypass, UrlGuardError } from "@/lib/security/url-guard"
 
 async function assertJobAccess(job: { projectId?: string; userId?: string }) {
@@ -40,6 +41,9 @@ export async function GET(req: NextRequest) {
     }
 
     await assertJobAccess(job as any)
+    if (job.status === "completed" || job.status === "failed" || job.status === "stopped") {
+      ensureJobRecordingUrl(job)
+    }
 
     return NextResponse.json({
       success: true,

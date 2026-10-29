@@ -1,10 +1,13 @@
+import fs from "fs"
 import JSZip from "jszip"
 import type { AutomationJob } from "./types"
 import { sanitizeJobForClient } from "@/lib/browser/secure-browser"
 import { generateHTMLReport } from "./html-report-generator"
 import { generateAppMapHtml } from "./map-html-exporter"
+import { resolveJobRecordingPath, ensureJobRecordingUrl } from "./visual-recorder"
 
 export async function buildTestBundleZip(job: AutomationJob): Promise<{ buffer: Buffer; fileName: string }> {
+  ensureJobRecordingUrl(job)
   const zip = new JSZip()
   const sanitized = sanitizeJobForClient(job as unknown as Record<string, unknown>)
 
@@ -87,6 +90,14 @@ export async function buildTestBundleZip(job: AutomationJob): Promise<{ buffer: 
         })
       }
     })
+  }
+
+  // 8. Full Session Recording Video (.webm)
+  const recPath = resolveJobRecordingPath(job.id)
+  if (recPath && fs.existsSync(recPath)) {
+    try {
+      zip.file("session-recording.webm", fs.readFileSync(recPath))
+    } catch {}
   }
 
   const content = await zip.generateAsync({ type: "nodebuffer" })

@@ -2882,6 +2882,19 @@ export default function AISimulatorPage() {
                               type="button"
                               onClick={() => {
                                 setIsExportMenuOpen(false)
+                                const videoUrl = currentJob.report?.recordingUrl || currentJob.recordingUrl || `/api/ai-automation/recording?jobId=${encodeURIComponent(currentJob.id)}`
+                                const dlUrl = videoUrl.includes("?") ? `${videoUrl}&download=1` : `${videoUrl}?download=1`
+                                window.open(dlUrl, "_blank")
+                              }}
+                              className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-slate-300 hover:bg-slate-800 hover:text-white transition cursor-pointer text-left"
+                            >
+                              <Video className="h-3.5 w-3.5 text-cyan-400 shrink-0" />
+                              <span>Export Test Video (.webm) ⬇</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsExportMenuOpen(false)
                                 handleExportZip()
                               }}
                               disabled={isExportingZip}

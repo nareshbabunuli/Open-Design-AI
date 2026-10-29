@@ -508,6 +508,7 @@ export function generateHTMLReport(job: AutomationJob): string {
     ${generateExecutiveSummary(job)}
     ${generateUXAuditSection(job)}
     ${generateStatsSection(job)}
+    ${generateVideoSection(job)}
     ${generateOpenCVAuditSection(job)}
     ${generateIssuesSection(job)}
     ${generateScreensSection(job)}
@@ -690,6 +691,40 @@ function generateStatsSection(job: AutomationJob): string {
         <div class="stat-value">${closedLoopCount}</div>
         <div class="stat-label">Closed-Loop Rechecks</div>
       </div>
+    </div>
+  `
+}
+
+function generateVideoSection(job: AutomationJob): string {
+  const videoUrl = job.report?.recordingUrl || job.recordingUrl || (job.id ? `/api/ai-automation/recording?jobId=${encodeURIComponent(job.id)}` : '')
+  if (!videoUrl) return ''
+
+  const downloadUrl = videoUrl.includes('?') ? `${videoUrl}&download=1` : `${videoUrl}?download=1`
+  const segments = job.recordingSegments || []
+
+  return `
+    <div style="margin: 30px 0; padding: 20px; background: #0f172a; color: #f8fafc; border-radius: 12px;">
+      <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 14px;">
+        <div>
+          <h2 style="color: #f8fafc; border: none; margin: 0; padding: 0;">🎥 Full Testing Session Video Recording</h2>
+          <div style="font-size: 0.9em; color: #94a3b8; margin-top: 4px;">
+            Complete browser recording covering discovery, interactive step execution, file uploads, workflows, and multi-device responsive testing.
+          </div>
+        </div>
+        <a href="${escapeHtml(downloadUrl)}" download="full-test-session-${escapeHtml(job.id)}.webm" style="display: inline-block; padding: 8px 16px; background: #4f46e5; color: #ffffff; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 0.9em;">
+          ⬇ Download Video (.webm)
+        </a>
+      </div>
+      <video controls preload="metadata" src="${escapeHtml(videoUrl)}" style="width: 100%; max-height: 520px; border-radius: 8px; background: #000000; border: 1px solid #334155;"></video>
+      ${segments.length > 1 ? `
+        <div style="margin-top: 12px; display: flex; flex-wrap: wrap; gap: 8px;">
+          ${segments.map((seg, i) => `
+            <a href="${escapeHtml(seg)}" target="_blank" rel="noreferrer" style="padding: 4px 10px; background: #1e293b; color: #cbd5e1; border-radius: 6px; font-size: 0.85em; text-decoration: none;">
+              Segment ${i + 1}
+            </a>
+          `).join('')}
+        </div>
+      ` : ''}
     </div>
   `
 }

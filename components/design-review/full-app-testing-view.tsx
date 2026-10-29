@@ -2001,12 +2001,27 @@ export default function FullAppTestingView({
             })()}
 
             {/* Session Video Recording */}
-            {(job?.report?.recordingUrl || job?.recordingUrl || (job?.recordingSegments && job.recordingSegments.length > 0)) && (
+            {Boolean(job?.report?.recordingUrl || job?.recordingUrl || (job?.recordingSegments && job.recordingSegments.length > 0)) && (
               <div className="space-y-2">
-                <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
-                  <Video className="h-3.5 w-3.5 text-indigo-400" />
-                  Session Video Recording
-                </h4>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                    <Video className="h-3.5 w-3.5 text-indigo-400" />
+                    Full Testing Session Video Recording
+                  </h4>
+                  {(job?.report?.recordingUrl || job?.recordingUrl) && (
+                    <a
+                      href={(() => {
+                        const raw = job?.report?.recordingUrl || job?.recordingUrl || ""
+                        return raw.includes("?") ? `${raw}&download=1` : `${raw}?download=1`
+                      })()}
+                      download={`full-test-session-${job?.id || "recording"}.webm`}
+                      className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                    >
+                      <Film className="h-3.5 w-3.5" />
+                      <span>Export Video (.webm)</span>
+                    </a>
+                  )}
+                </div>
                 <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-3">
                   {(job?.report?.recordingUrl || job?.recordingUrl) && (
                     <video

@@ -10,6 +10,7 @@ import {
 } from "./types"
 import { formatCurlCommand } from "./workflow-chainer"
 import { secretRedactor } from "./secure-credentials-manager"
+import { ensureJobRecordingUrl } from "./visual-recorder"
 import { generateReferencesSection, ISO_9241_11_REFERENCE, WCAG_REFERENCE } from "./ux-research-references"
 import { generateUXIntelligenceReport, formatUXReportMarkdown } from "./ux-report-generator"
 
@@ -220,6 +221,8 @@ export function buildAutomationReport(
     postmanCoverage,
   })
 
+  const resolvedRecordingUrl = job.recordingUrl || ensureJobRecordingUrl(job)
+
   const report: AutomationReport = {
     totalScreensTested: uniqueScreensCount,
     uniqueScreensTested: uniqueScreensCount,
@@ -237,6 +240,7 @@ export function buildAutomationReport(
     responsiveScore: typeof job.report?.responsiveScore === "number" ? job.report.responsiveScore : (job.responsiveResults && job.responsiveResults.length > 0 ? Math.max(0, 100 - job.responsiveResults.filter((r) => r.status === "failed").length * 30 - job.responsiveResults.filter((r) => r.status === "warning").length * 10) : 100),
     responsiveBreakdown: job.responsiveResults,
     opencvAudit: job.opencvAudit,
+    recordingUrl: resolvedRecordingUrl,
     summary,
     recommendations,
     issues: job.issues,

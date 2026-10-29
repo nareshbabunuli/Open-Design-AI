@@ -311,6 +311,81 @@ export async function showActionBanner(page: Page, text: string): Promise<void> 
   } catch {}
 }
 
+const RECORDINGS_DIR = path.join(process.cwd(), ".jobs", "recordings")
+
+function ensureRecordingsDir(): void {
+  if (!fs.existsSync(RECORDINGS_DIR)) {
+    try {
+      fs.mkdirSync(RECORDINGS_DIR, { recursive: true })
+    } catch {}
+  }
+}
+
+/**
+ * Resolves the on-disk .webm file path for a given jobId (checking .jobs/recordings first, then os.tmpdir()).
+ */
+export function resolveJobRecordingPath(jobId: string, segmentIndex?: number): string | null {
+  if (!jobId) return null
+  const safeId = jobId.replace(/[^a-zA-Z0-9_-]/g, "")
+  ensureRecordingsDir()
+
+  if (typeof segmentIndex === "number" && segmentIndex > 0) {
+    const segFile = path.join(RECORDINGS_DIR, `${safeId}-segment-${segmentIndex}.webm`)
+    if (fs.existsSync(segFile) && fs.statSync(segFile).size > 1024) return segFile
+  }
+
+  const primaryFile = path.join(RECORDINGS_DIR, `${safeId}.webm`)
+  if (fs.existsSync(primaryFile) && fs.statSync(primaryFile).size > 1024) {
+    return primaryFile
+  }
+
+  // Fallback: check os.tmpdir() for qa-journey-<jobId>-*.webm
+  try {
+    const tmpDir = os.tmpdir()
+    const prefix = `qa-journey-${safeId}-`
+    const matches = fs
+      .readdirSync(tmpDir)
+      .filter((f) => f.startsWith(prefix) && f.endsWith(".webm"))
+      .map((f) => {
+        const full = path.join(tmpDir, f)
+        const stat = fs.statSync(full)
+        return { full, size: stat.size, mtimeMs: stat.mtimeMs }
+      })
+      .filter((m) => m.size > 1024)
+      .sort((a, b) => b.size - a.size || b.mtimeMs - a.mtimeMs)
+
+    if (matches.length > 0) {
+      try {
+        fs.copyFileSync(matches[0].full, primaryFile)
+        return primaryFile
+      } catch {
+        return matches[0].full
+      }
+    }
+  } catch {}
+
+  return null
+}
+
+/**
+ * Ensures job.recordingUrl is populated if a recording file exists on disk.
+ */
+export function ensureJobRecordingUrl(job: AutomationJob): string | undefined {
+  if (!job || !job.id) return undefined
+  if (job.recordingUrl) {
+    if (job.report && !job.report.recordingUrl) job.report.recordingUrl = job.recordingUrl
+    return job.recordingUrl
+  }
+  const diskPath = resolveJobRecordingPath(job.id)
+  if (diskPath) {
+    const localApiUrl = `/api/ai-automation/recording?jobId=${encodeURIComponent(job.id)}`
+    job.recordingUrl = localApiUrl
+    if (job.report && !job.report.recordingUrl) job.report.recordingUrl = localApiUrl
+    return localApiUrl
+  }
+  return undefined
+}
+
 /**
  * Uploads a recording video buffer to Supabase designs bucket (or returns local path)
  */
@@ -453,26 +528,61 @@ export class SessionVideoRecorder {
       this.recorder = null
     }
     this.state = "stopped"
+    ensureRecordingsDir()
+    const safeId = this.jobId.replace(/[^a-zA-Z0-9_-]/g, "")
     const urls: string[] = []
+    let largestSegmentPath = ""
+    let largestSegmentSize = 0
+
     for (let i = 0; i < this.segmentPaths.length; i++) {
       const p = this.segmentPaths[i]
       try {
-        if (!fs.existsSync(p) || fs.statSync(p).size <= 1024) continue
-        const url = await uploadSessionVideo(fs.readFileSync(p), this.projectId, `${this.jobId}-segment-${i + 1}`)
-        if (url) urls.push(url)
+        if (!fs.existsSync(p)) continue
+        const stat = fs.statSync(p)
+        if (stat.size <= 1024) continue
+
+        if (stat.size > largestSegmentSize) {
+          largestSegmentSize = stat.size
+          largestSegmentPath = p
+        }
+
+        const segDest = path.join(RECORDINGS_DIR, `${safeId}-segment-${i + 1}.webm`)
+        try {
+          fs.copyFileSync(p, segDest)
+        } catch {}
+
+        const remoteUrl = await uploadSessionVideo(fs.readFileSync(p), this.projectId, `${this.jobId}-segment-${i + 1}`)
+        const localSegUrl = `/api/ai-automation/recording?jobId=${encodeURIComponent(this.jobId)}&segment=${i + 1}`
+        urls.push(remoteUrl || localSegUrl)
       } catch (err: any) {
-        if (job) appendLog(job, "warn", `Recording segment upload failed: ${err?.message || String(err)}`)
+        if (job) appendLog(job, "warn", `Recording segment processing note: ${err?.message || String(err)}`)
       }
     }
+
+    if (largestSegmentPath) {
+      const primaryDest = path.join(RECORDINGS_DIR, `${safeId}.webm`)
+      try {
+        fs.copyFileSync(largestSegmentPath, primaryDest)
+      } catch {}
+    }
+
+    const fallbackLocalUrl = largestSegmentPath
+      ? `/api/ai-automation/recording?jobId=${encodeURIComponent(this.jobId)}`
+      : ""
+    const primaryUrl = fallbackLocalUrl || urls[0] || ""
+
     if (job) {
-      ;(job as any).recordingSegments = urls.length ? urls : undefined
+      ;(job as any).recordingSegments = urls.length ? urls : (primaryUrl ? [primaryUrl] : undefined)
       ;(job as any).recordingControl = "stopped"
-      if (urls[0]) {
-        job.recordingUrl = urls[0]
-        appendLog(job, "success", `Session recording finalized with ${urls.length} segment(s).`)
+      if (primaryUrl) {
+        job.recordingUrl = primaryUrl
+        if (job.report) {
+          job.report.recordingUrl = primaryUrl
+        }
+        appendLog(job, "success", `🎥 Full session video recording finalized (${Math.round(largestSegmentSize / 1024)} KB).`)
       }
     }
-    this.finalizedUrl = urls[0] || ""
+    this.finalizedUrl = primaryUrl
     this.finalized = true
     if (job) saveJob(job)
     return this.finalizedUrl

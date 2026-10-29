@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getJob } from "@/lib/ai-automation/job-store"
 import { generateHTMLReport } from "@/lib/ai-automation/html-report-generator"
+import { ensureJobRecordingUrl } from "@/lib/ai-automation/visual-recorder"
 import { requireUser, requireProjectAccess, authErrorResponse, AuthError } from "@/lib/auth/require-project-access"
 
 export const maxDuration = 60
@@ -61,6 +62,7 @@ export async function GET(req: NextRequest) {
 
     await assertJobAccess(job as any)
 
+    ensureJobRecordingUrl(job)
     // Generate the HTML report
     const htmlReport = generateHTMLReport(job)
 

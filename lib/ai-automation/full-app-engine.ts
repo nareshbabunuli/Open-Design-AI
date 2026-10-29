@@ -1417,6 +1417,7 @@ export async function executeStructuredTestPlan(
     uploadInventory?: UploadFolderInventory | null
     projectDir?: string
     viewports?: AutomationViewport[]
+    videoRecorder?: SessionVideoRecorder | null
   }
 ): Promise<void> {
   appendLog(job, "info", `Starting Phase 3: Outcome-Verified Test Plan Execution (${testPlan.steps.length} steps)...`)
@@ -3353,12 +3354,34 @@ export async function executeStructuredTestPlan(
     appendLog(job, "warn", `Multi-device responsive testing encountered error: ${respErr?.message}`)
   }
 
+  // Finalize full-session video recording BEFORE building the final report and marking job completed
+  if (options?.videoRecorder) {
+    try {
+      await showActionBanner(page, "🏁 Full App & Multi-Device Testing Complete")
+      await new Promise((r) => setTimeout(r, 250))
+      const recUrl = await options.videoRecorder.stop(job)
+      if (recUrl) {
+        job.recordingUrl = recUrl
+      }
+      job.recordingControl = "stopped"
+      emitSessionEvent(job, "recording", {
+        message: recUrl ? "Full session video recording finalized." : "Session recording stopped.",
+        payload: { state: "stopped", recordingUrl: recUrl || undefined },
+      })
+    } catch (recErr: any) {
+      appendLog(job, "warn", `Video finalization note: ${recErr?.message || recErr}`)
+    }
+  }
+
   // PHASE 6: Comprehensive Evidence Reporting & Markdown Artifact
   appendLog(job, "info", `Generating Phase 6: Evidence-Based Failure Report & Markdown Artifact...`)
   try {
     buildAutomationReport(job, testPlan, testPlan.workflows || [], {
       postmanSummary: options?.postmanSummary || testPlan.postmanSummary,
     })
+    if (job.recordingUrl && job.report) {
+      job.report.recordingUrl = job.recordingUrl
+    }
   } catch (repErr: any) {
     appendLog(job, "warn", `Evidence report generation encountered error: ${repErr?.message}`)
   }
@@ -3788,6 +3811,7 @@ export async function executeFullAppTestingJob(
       uploadInventory,
       projectDir: params.projectDir,
       viewports: params.viewports,
+      videoRecorder,
     })
 
     // Finalize session video recording
