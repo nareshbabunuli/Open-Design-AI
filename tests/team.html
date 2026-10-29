@@ -220,6 +220,161 @@
             border-color: #6366f1;
         }
 
+    
+        /* Top Navigation Bar */
+        .app-navbar {
+            background: #0b1222;
+            border-bottom: 1px solid #334155;
+            padding: 12px 24px;
+            margin: -24px -24px 24px -24px;
+        }
+        .nav-container {
+            max-width: 1000px;
+            margin: 0 auto;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+        .nav-brand {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 700;
+            font-size: 15px;
+            color: #818cf8;
+            letter-spacing: .02em;
+            text-decoration: none;
+        }
+        .nav-brand:hover { color: #a5b4fc; }
+        .nav-menu {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+        .nav-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 7px 13px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 500;
+            color: #94a3b8;
+            text-decoration: none;
+            transition: all 0.15s ease;
+            border: 1px solid transparent;
+        }
+        .nav-item:hover {
+            color: #f8fafc;
+            background: #1e293b;
+        }
+        .nav-item.active {
+            color: #ffffff;
+            background: #4f46e5;
+            border-color: #6366f1;
+        }
+
+        /* Breadcrumb Bar */
+        .breadcrumb-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 16px;
+            font-size: 12px;
+            color: #94a3b8;
+        }
+        .breadcrumb-link {
+            color: #818cf8;
+            text-decoration: none;
+            font-weight: 500;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .breadcrumb-link:hover { text-decoration: underline; color: #a5b4fc; }
+
+        /* Step Wizard Navigation Footer */
+        .wizard-footer {
+            margin-top: 32px;
+            padding-top: 20px;
+            border-top: 1px solid #334155;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 12px;
+            font-size: 13px;
+        }
+        .wizard-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 16px;
+            border-radius: 6px;
+            text-decoration: none;
+            font-weight: 600;
+            transition: all 0.15s ease;
+        }
+        .wizard-btn-prev {
+            background: #1e293b;
+            color: #94a3b8;
+            border: 1px solid #334155;
+        }
+        .wizard-btn-prev:hover { background: #334155; color: #f8fafc; }
+        .wizard-btn-next {
+            background: #4f46e5;
+            color: #ffffff;
+            border: 1px solid #6366f1;
+        }
+        .wizard-btn-next:hover { background: #4338ca; }
+
+        /* Test Files Preview Pill Box */
+        .test-files-pillbox {
+            background: #0b1222;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            padding: 12px 16px;
+            margin: 16px 0;
+            font-size: 12px;
+        }
+        .test-files-title {
+            color: #818cf8;
+            font-weight: 600;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .test-files-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .test-file-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 4px 10px;
+            background: #1e293b;
+            border: 1px solid #475569;
+            border-radius: 6px;
+            color: #e2e8f0;
+            text-decoration: none;
+            font-mono;
+            font-size: 11px;
+            transition: all 0.15s;
+        }
+        .test-file-item:hover {
+            background: #334155;
+            border-color: #6366f1;
+            color: #ffffff;
+        }
+
     </style>
 </head>
 
@@ -242,6 +397,15 @@
     </header>
 
     <main class="container">
+
+    <div class="breadcrumb-bar">
+        <div>
+            <a href="index.html" class="breadcrumb-link">← Back to Dashboard</a>
+            <span style="margin: 0 6px;">/</span>
+            <span>Workflow Step <strong>4 of 5</strong></span>
+        </div>
+        <span>Current: <strong>Team & Access</strong></span>
+    </div>
         <h1>Team Members & Permissions</h1>
         <p class="intro">Manage organization collaborators, assign RBAC permissions, and invite new QA engineers.</p>
 
@@ -285,7 +449,7 @@
                 <tbody>
                     <tr>
                         <td style="display: flex; align-items: center; gap: 10px;">
-                            <div style="width: 28px; height: 28px; border-radius: 50%; background: #6366f1; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: bold;">JD</div>
+                            <img src="test-files/sample-avatar.png" alt="Jane Doe avatar" width="28" height="28" style="border-radius: 50%; object-fit: cover;" />
                             <strong>Jane Doe</strong>
                         </td>
                         <td>jane.doe@company.com</td>
@@ -295,7 +459,7 @@
                     </tr>
                     <tr>
                         <td style="display: flex; align-items: center; gap: 10px;">
-                            <div style="width: 28px; height: 28px; border-radius: 50%; background: #10b981; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: bold;">AM</div>
+                            <img src="test-files/sample-avatar.png" alt="Alex Miller avatar" width="28" height="28" style="border-radius: 50%; object-fit: cover;" />
                             <strong>Alex Miller</strong>
                         </td>
                         <td>alex.m@company.com</td>
@@ -317,6 +481,11 @@
                 </tbody>
             </table>
         </div>
+    
+    <nav class="wizard-footer" aria-label="Workflow Navigation">
+        <a href="billing.html" class="wizard-btn wizard-btn-prev">← Previous: Billing & Plans (Step 3/5)</a>
+        <a href="settings.html" class="wizard-btn wizard-btn-next">Next: Account Settings (Step 5/5) →</a>
+    </nav>
     </main>
 </body>
 </html>
