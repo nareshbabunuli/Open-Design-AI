@@ -185,6 +185,63 @@ export type AutomationLog = {
   message: string
 }
 
+export type OpenCVVisualDiff = {
+  id: string
+  label: string
+  screenId?: string
+  viewportName?: string
+  beforeScreenshotUrl?: string
+  afterScreenshotUrl?: string
+  diffHeatmapUrl?: string
+  diffPercentage: number
+  changedRegionsCount: number
+  layoutShiftDetected: boolean
+  status: "stable" | "expected_change" | "unexpected_shift"
+  summary: string
+}
+
+export type OpenCVVisualDefect = {
+  id: string
+  type: "blank_region" | "missing_element" | "overlapping_elements" | "clipped_content" | "layout_shift"
+  severity: "low" | "medium" | "high"
+  screenName: string
+  viewport?: string
+  selector?: string
+  boundingBox?: [number, number, number, number]
+  edgeDensity?: number
+  domConfirmed: boolean
+  domConfirmationDetail: string
+  closedLoopVerified?: boolean
+  closedLoopAction?: string
+  defectPersisted?: boolean
+}
+
+export type OpenCVAuditReport = {
+  engine: "opencv-js" | "sharp-cv-hybrid"
+  visualStabilityScore: number
+  totalComparisons: number
+  unexpectedShiftsCount: number
+  blankRegionsCount: number
+  missingElementsCount: number
+  overlappingElementsCount: number
+  closedLoopLoopsExecuted: number
+  visualDiffs: OpenCVVisualDiff[]
+  defects: OpenCVVisualDefect[]
+  annotatedScreenshots: Array<{
+    label: string
+    viewport: string
+    annotatedImageUrl: string
+    elementsAnnotated: number
+    edgeDensityAvg: number
+  }>
+  frameTimeline: Array<{
+    stepIndex: number
+    label: string
+    diffFromPreviousPct: number
+    visualState: "unchanged" | "updated" | "layout_break"
+  }>
+}
+
 export type DeviceResponsiveResult = {
   name: string
   width: number
@@ -194,7 +251,13 @@ export type DeviceResponsiveResult = {
   overflowPixels?: number
   brokenImages?: number
   touchTargetViolations?: number
+  overlappingElements?: number
+  clippedElements?: number
+  blankRegions?: number
   screenshotUrl?: string
+  annotatedScreenshotUrl?: string
+  visualDiffHeatmapUrl?: string
+  diffFromDesktopPct?: number
   observations?: string[]
 }
 
@@ -206,6 +269,7 @@ export type AutomationReport = {
   backNavigationScore: number // 0-100 percentage
   responsiveScore: number // 0-100 percentage
   responsiveBreakdown?: DeviceResponsiveResult[]
+  opencvAudit?: OpenCVAuditReport
   summary: string
   recommendations: string[]
   issues?: AutomationIssue[]
@@ -772,6 +836,7 @@ export type AutomationJob = {
   pendingSettingsCredentials?: Record<string, string> & { skip?: boolean }
   /** UX Intelligence audit score with dimensional breakdown and evidence bundles */
   responsiveResults?: DeviceResponsiveResult[]
+  opencvAudit?: OpenCVAuditReport
   uxAuditScore?: {
     overall: number // 0-100
     grade: "A" | "B" | "C" | "D" | "F"

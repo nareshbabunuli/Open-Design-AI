@@ -167,6 +167,7 @@ export function buildAutomationReport(
     backNavigationScore: 100,
     responsiveScore: typeof job.report?.responsiveScore === "number" ? job.report.responsiveScore : (job.responsiveResults && job.responsiveResults.length > 0 ? Math.max(0, 100 - job.responsiveResults.filter((r) => r.status === "failed").length * 30 - job.responsiveResults.filter((r) => r.status === "warning").length * 10) : 100),
     responsiveBreakdown: job.responsiveResults,
+    opencvAudit: job.opencvAudit,
     summary,
     recommendations,
     issues: job.issues,
@@ -338,6 +339,54 @@ function generateMarkdownReportText(params: {
       }
     }
     sections.push("")
+  }
+
+  // OpenCV 5-Pillar Visual Intelligence & Regression Section
+  if (job.opencvAudit) {
+    const cv = job.opencvAudit
+    sections.push(`## 👁️ OpenCV Visual Intelligence & 5-Pillar Audit\n`)
+    sections.push(`**Engine:** \`${cv.engine}\` | **Visual Stability Score:** **${cv.visualStabilityScore}%** | **Comparisons:** ${cv.totalComparisons} | **Closed-Loop Re-Verifications:** ${cv.closedLoopLoopsExecuted}\n`)
+
+    sections.push(`| OpenCV Capability | Status | Findings |`)
+    sections.push(`| :--- | :--- | :--- |`)
+    sections.push(`| **1. Visual Regression Testing** | ${cv.unexpectedShiftsCount === 0 ? "✅ Passed" : "⚠️ Shifts Detected"} | ${cv.visualDiffs.length} screenshot diff(s) analyzed (${cv.unexpectedShiftsCount} unexpected layout shift(s)) |`)
+    sections.push(`| **2. Responsive Layout Validation** | ${cv.overlappingElementsCount === 0 ? "✅ Passed" : "⚠️ Layout Collisions"} | ${cv.annotatedScreenshots.length} device viewport(s) contour-mapped (${cv.overlappingElementsCount} clipped/overlapping control(s)) |`)
+    sections.push(`| **3. Missing-Element & Blank Detection** | ${cv.blankRegionsCount + cv.missingElementsCount === 0 ? "✅ Passed" : "⚠️ Flagged"} | ${cv.blankRegionsCount} low-edge blank region(s), ${cv.missingElementsCount} missing visual control(s) |`)
+    sections.push(`| **4. Screenshot & Video Frame Analysis** | ✅ Active | ${cv.frameTimeline.length} interaction frame transition(s) tracked across steps |`)
+    sections.push(`| **5. Closed-Loop Autonomous Verification** | ✅ Active | ${cv.closedLoopLoopsExecuted} visual defect(s) re-tested via live DOM scroll & computedStyle inspection |\n`)
+
+    if (cv.visualDiffs.length > 0) {
+      sections.push(`### 1. Visual Regression Diffs (Before vs. After / Viewport Reflow)\n`)
+      sections.push(`| Comparison | Pixel Delta | Changed Zones | Layout Shift | Status | Summary |`)
+      sections.push(`| :--- | :--- | :--- | :--- | :--- | :--- |`)
+      for (const d of cv.visualDiffs) {
+        const st = d.status === "unexpected_shift" ? "❌ Unexpected Shift" : d.status === "expected_change" ? "🟢 Verified Change" : "✅ Stable"
+        sections.push(`| **${d.label}** | ` + "`" + `${d.diffPercentage}%` + "`" + ` | ${d.changedRegionsCount} | ${d.layoutShiftDetected ? "⚠️ Yes" : "No"} | ${st} | ${d.summary} |`)
+      }
+      sections.push("")
+    }
+
+    if (cv.defects.length > 0) {
+      sections.push(`### 2, 3 & 5. Visual Defects, DOM Confirmation & Closed-Loop Re-Verification\n`)
+      sections.push(`| Type | Viewport | Selector / Region | DOM Confirmed | Closed-Loop Action | Persisted? |`)
+      sections.push(`| :--- | :--- | :--- | :--- | :--- | :--- |`)
+      for (const def of cv.defects) {
+        sections.push(
+          `| ` + "`" + `${def.type}` + "`" + ` | ${def.viewport || "Default"} | ` + "`" + `${def.selector || "region"}` + "`" + ` | ${def.domConfirmed ? "✅ Yes" : "⚪ No"} (${def.domConfirmationDetail}) | ${def.closedLoopAction || "Inspected"} | ${def.defectPersisted ? "❌ Persisted" : "✅ Resolved on scroll"} |`
+        )
+      }
+      sections.push("")
+    }
+
+    if (cv.frameTimeline.length > 0) {
+      sections.push(`### 4. Interaction Screenshot & Frame Delta Timeline\n`)
+      sections.push(`| Step | Interaction | Frame Delta (%) | Visual State |`)
+      sections.push(`| :--- | :--- | :--- | :--- |`)
+      for (const f of cv.frameTimeline) {
+        sections.push(`| Step #${f.stepIndex} | ${f.label} | ` + "`" + `${f.diffFromPreviousPct}%` + "`" + ` | **${f.visualState.toUpperCase()}** |`)
+      }
+      sections.push("")
+    }
   }
 
   // Workflows Section ("write down whole workflow so that user gets idea where it failed")

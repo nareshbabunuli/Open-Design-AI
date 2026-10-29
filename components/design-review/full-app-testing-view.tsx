@@ -1742,6 +1742,29 @@ export default function FullAppTestingView({
                           </div>
                         </div>
 
+                        {(device.annotatedScreenshotUrl || device.visualDiffHeatmapUrl) && (
+                          <div className="pt-2 border-t border-slate-800 flex items-center gap-1.5 flex-wrap">
+                            {device.annotatedScreenshotUrl && (
+                              <button
+                                type="button"
+                                onClick={() => setScreenshotModal(device.annotatedScreenshotUrl!)}
+                                className="px-2 py-1 rounded bg-cyan-950/60 hover:bg-cyan-900/70 border border-cyan-500/40 text-cyan-200 text-[10px] font-semibold cursor-pointer transition"
+                              >
+                                👁️ OpenCV Contours
+                              </button>
+                            )}
+                            {device.visualDiffHeatmapUrl && (
+                              <button
+                                type="button"
+                                onClick={() => setScreenshotModal(device.visualDiffHeatmapUrl!)}
+                                className="px-2 py-1 rounded bg-rose-950/60 hover:bg-rose-900/70 border border-rose-500/40 text-rose-200 text-[10px] font-semibold cursor-pointer transition"
+                              >
+                                🔥 Diff Heatmap ({device.diffFromDesktopPct ?? 0}%)
+                              </button>
+                            )}
+                          </div>
+                        )}
+
                         {device.observations && device.observations.length > 0 && (
                           <div className="pt-2 border-t border-slate-800 text-[10px] text-slate-400 leading-relaxed">
                             {device.observations.join(" ")}
@@ -1753,6 +1776,214 @@ export default function FullAppTestingView({
                 </div>
               </div>
             )}
+
+            {/* OpenCV 5-Pillar Visual Intelligence & Regression Section */}
+            {(() => {
+              const cv = job?.opencvAudit || job?.report?.opencvAudit
+              const respList = job?.responsiveResults || job?.report?.responsiveBreakdown || []
+              const stepShots = (plan?.steps || []).filter((s) => Boolean(s.screenshotUrl))
+              const visualDiffs = cv?.visualDiffs || []
+              const annotatedShots = cv?.annotatedScreenshots || []
+              const defects = cv?.defects || []
+              const frameTimeline = cv?.frameTimeline || []
+              const stabilityScore = cv?.visualStabilityScore ?? (job?.report?.responsiveScore ?? 100)
+
+              return (
+                <div className="space-y-3 p-3.5 rounded-xl bg-slate-900/80 border border-slate-800">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h4 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                        <Eye className="h-3.5 w-3.5 text-cyan-400" />
+                        OpenCV Visual Intelligence &amp; 5-Pillar Audit
+                      </h4>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        1. Visual Regression • 2. Responsive Layout • 3. Missing-Element &amp; Defect Detection • 4. Frame &amp; Video Analysis • 5. Closed-Loop Autonomous Re-Verification
+                      </p>
+                    </div>
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-cyan-950 text-cyan-300 border border-cyan-800">
+                      Visual Stability: {stabilityScore}% ({cv?.engine || "opencv-js"})
+                    </span>
+                  </div>
+
+                  {/* 5 OpenCV Pillars Grid */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5 text-xs">
+                    <div className="p-2.5 rounded-lg bg-slate-950/80 border border-slate-800/90 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-rose-300 text-[11px]">1. Visual Regression</span>
+                        <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-rose-950/60 text-rose-300 border border-rose-800/60">
+                          {visualDiffs.length || Math.max(0, respList.length - 1)} diffs
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-400 leading-relaxed">
+                        Before/after &amp; cross-viewport pixel absdiff heatmaps + layout shift detection.
+                      </p>
+                    </div>
+
+                    <div className="p-2.5 rounded-lg bg-slate-950/80 border border-slate-800/90 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-cyan-300 text-[11px]">2. Responsive Layout</span>
+                        <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-cyan-950/60 text-cyan-300 border border-cyan-800/60">
+                          {annotatedShots.length || respList.length} viewports
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-400 leading-relaxed">
+                        Desktop, Tablet &amp; Mobile Canny contour mapping for clipped or overlapping UI.
+                      </p>
+                    </div>
+
+                    <div className="p-2.5 rounded-lg bg-slate-950/80 border border-slate-800/90 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-amber-300 text-[11px]">3. Missing &amp; Blank UI</span>
+                        <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-amber-950/60 text-amber-300 border border-amber-800/60">
+                          {defects.length} flagged
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-400 leading-relaxed">
+                        Detects blank low-edge regions &amp; cross-checks live DOM to confirm missing elements.
+                      </p>
+                    </div>
+
+                    <div className="p-2.5 rounded-lg bg-slate-950/80 border border-slate-800/90 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-indigo-300 text-[11px]">4. Frame &amp; Video</span>
+                        <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-indigo-950/60 text-indigo-300 border border-indigo-800/60">
+                          {frameTimeline.length || stepShots.length} frames
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-400 leading-relaxed">
+                        Samples interaction frames &amp; recordings to pinpoint when UI updates or breaks.
+                      </p>
+                    </div>
+
+                    <div className="p-2.5 rounded-lg bg-slate-950/80 border border-slate-800/90 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-emerald-300 text-[11px]">5. Closed-Loop Agent</span>
+                        <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-emerald-950/60 text-emerald-300 border border-emerald-800/60">
+                          {cv?.closedLoopLoopsExecuted ?? defects.length} loops
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-400 leading-relaxed">
+                        Feeds visual defects back into agent to scroll, re-inspect DOM &amp; verify persistence.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Visual Diff Heatmaps & Annotated Contours Gallery */}
+                  {(visualDiffs.length > 0 || annotatedShots.length > 0) && (
+                    <div className="space-y-2 pt-2 border-t border-slate-800/80">
+                      <span className="text-[11px] font-bold text-slate-300 block">
+                        OpenCV Visual Diff Heatmaps &amp; Canny Bounding-Box Overlays
+                      </span>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
+                        {visualDiffs.map((diff) => (
+                          <div
+                            key={diff.id}
+                            className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 flex flex-col justify-between space-y-2"
+                          >
+                            <div className="flex items-center justify-between gap-1">
+                              <span className="text-[11px] font-semibold text-white truncate" title={diff.label}>
+                                🔥 {diff.label}
+                              </span>
+                              <span className="px-1.5 py-0.2 rounded text-[10px] font-mono bg-rose-950 text-rose-300 border border-rose-800 shrink-0">
+                                Δ {diff.diffPercentage}%
+                              </span>
+                            </div>
+                            {diff.diffHeatmapUrl && (
+                              <div
+                                onClick={() => setScreenshotModal(diff.diffHeatmapUrl!)}
+                                className="aspect-video rounded overflow-hidden bg-slate-900 border border-slate-800 cursor-pointer hover:border-rose-500/60 transition relative group"
+                              >
+                                <img
+                                  src={diff.diffHeatmapUrl}
+                                  alt={diff.label}
+                                  className="w-full h-full object-cover object-top"
+                                />
+                                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition text-[11px] text-white font-semibold">
+                                  Enlarge Diff Heatmap ↗
+                                </div>
+                              </div>
+                            )}
+                            <p className="text-[10px] text-slate-400">{diff.summary}</p>
+                          </div>
+                        ))}
+
+                        {annotatedShots.map((shot, idx) => (
+                          <div
+                            key={`${shot.label}-${idx}`}
+                            className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 flex flex-col justify-between space-y-2"
+                          >
+                            <div className="flex items-center justify-between gap-1">
+                              <span className="text-[11px] font-semibold text-white truncate">
+                                🎯 {shot.label}
+                              </span>
+                              <span className="px-1.5 py-0.2 rounded text-[10px] font-mono bg-cyan-950 text-cyan-300 border border-cyan-800 shrink-0">
+                                {shot.elementsAnnotated} boxes
+                              </span>
+                            </div>
+                            <div
+                              onClick={() => setScreenshotModal(shot.annotatedImageUrl)}
+                              className="aspect-video rounded overflow-hidden bg-slate-900 border border-slate-800 cursor-pointer hover:border-cyan-500/60 transition relative group"
+                            >
+                              <img
+                                src={shot.annotatedImageUrl}
+                                alt={shot.label}
+                                className="w-full h-full object-cover object-top"
+                              />
+                              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition text-[11px] text-white font-semibold">
+                                Enlarge Annotated Contours ↗
+                              </div>
+                            </div>
+                            <p className="text-[10px] text-slate-400">
+                              Viewport {shot.viewport} • Avg Canny Edge Density: {Math.round(shot.edgeDensityAvg * 100)}%
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Detected Visual Defects & Closed-Loop DOM Verification */}
+                  {defects.length > 0 && (
+                    <div className="space-y-1.5 pt-2 border-t border-slate-800/80">
+                      <span className="text-[11px] font-bold text-slate-300 block">
+                        Visual Defects &amp; Closed-Loop DOM Confirmation ({defects.length})
+                      </span>
+                      <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                        {defects.map((def) => (
+                          <div
+                            key={def.id}
+                            className="p-2 rounded-lg bg-slate-950/90 border border-slate-800 text-[11px] flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+                          >
+                            <div className="space-y-0.5 min-w-0">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="px-1.5 py-0.2 rounded font-mono text-[10px] uppercase bg-amber-950 text-amber-300 border border-amber-800">
+                                  {def.type.replace(/_/g, " ")}
+                                </span>
+                                <span className="text-slate-400 font-mono text-[10px]">{def.viewport}</span>
+                                {def.domConfirmed && (
+                                  <span className="px-1.5 py-0.2 rounded text-[10px] bg-emerald-950/80 text-emerald-300 border border-emerald-800/60">
+                                    ✓ DOM Confirmed
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-slate-300 truncate" title={def.domConfirmationDetail}>
+                                {def.domConfirmationDetail}
+                              </p>
+                            </div>
+                            <div className="text-[10px] font-mono shrink-0 text-right">
+                              <div className="text-indigo-300">{def.closedLoopAction || "Closed-loop verified"}</div>
+                              <div className={def.defectPersisted ? "text-rose-400" : "text-emerald-400"}>
+                                {def.defectPersisted ? "Persisted after re-check" : "Resolved on scroll/re-check"}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
 
             {/* Session Video Recording */}
             {(job?.report?.recordingUrl || job?.recordingUrl || (job?.recordingSegments && job.recordingSegments.length > 0)) && (

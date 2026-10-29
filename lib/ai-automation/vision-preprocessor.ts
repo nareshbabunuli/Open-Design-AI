@@ -498,3 +498,375 @@ export async function preprocessWithOpenCV(
     try { gray?.delete() } catch {}
   }
 }
+
+
+import type { OpenCVVisualDiff, OpenCVVisualDefect } from "./types"
+
+function inputToBuffer(input: string | Buffer | undefined): Buffer | null {
+  if (!input) return null
+  if (Buffer.isBuffer(input)) return input
+  if (typeof input === "string") {
+    const base64Match = input.match(/^data:image\/[a-zA-Z0-9+.-]+;base64,(.+)$/)
+    if (base64Match) {
+      return Buffer.from(base64Match[1], "base64")
+    }
+    try {
+      return Buffer.from(input, "base64")
+    } catch {
+      return null
+    }
+  }
+  return null
+}
+
+/**
+ * 1. Visual Regression Testing (OpenCV absdiff + Heatmap Generator)
+ * Compares two screenshots (before/after interaction or across viewports),
+ * calculates pixel difference percentage, identifies shifted/changed regions,
+ * and renders a visual diff heatmap data URL.
+ */
+export async function compareScreenshotsWithOpenCV(
+  beforeInput: string | Buffer,
+  afterInput: string | Buffer,
+  options: {
+    id?: string
+    label: string
+    screenId?: string
+    viewportName?: string
+    expectedChange?: boolean
+  }
+): Promise<OpenCVVisualDiff | null> {
+  const beforeBuf = inputToBuffer(beforeInput)
+  const afterBuf = inputToBuffer(afterInput)
+  if (!beforeBuf || !afterBuf) return null
+
+  let matA: any
+  let matB: any
+  let matDiff: any
+
+  try {
+    const sharpModule = await import("sharp")
+    const sharp = sharpModule.default
+
+    const gridW = 320
+    const gridH = 200
+
+    const [rawA, rawB, afterMeta] = await Promise.all([
+      sharp(beforeBuf).resize(gridW, gridH, { fit: "fill" }).greyscale().raw().toBuffer(),
+      sharp(afterBuf).resize(gridW, gridH, { fit: "fill" }).greyscale().raw().toBuffer(),
+      sharp(afterBuf).metadata(),
+    ])
+
+    const outW = afterMeta.width || 800
+    const outH = afterMeta.height || 600
+
+    let diffData: Uint8Array
+    try {
+      const cv = await loadOpenCv()
+      matA = new cv.Mat(gridH, gridW, cv.CV_8UC1)
+      matB = new cv.Mat(gridH, gridW, cv.CV_8UC1)
+      matDiff = new cv.Mat(gridH, gridW, cv.CV_8UC1)
+      matA.data.set(rawA)
+      matB.data.set(rawB)
+      cv.absdiff(matA, matB, matDiff)
+      diffData = new Uint8Array(matDiff.data)
+    } catch {
+      diffData = new Uint8Array(gridW * gridH)
+      for (let i = 0; i < diffData.length; i++) {
+        diffData[i] = Math.abs(rawA[i] - rawB[i])
+      }
+    }
+
+    const totalPixels = gridW * gridH
+    let changedPixels = 0
+    const cols = 12
+    const rows = 8
+    const cellW = gridW / cols
+    const cellH = gridH / rows
+    const hotCells: Array<{ c: number; r: number; intensity: number }> = []
+
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        let cellChanged = 0
+        let cellSamples = 0
+        const startY = Math.floor(r * cellH)
+        const endY = Math.floor((r + 1) * cellH)
+        const startX = Math.floor(c * cellW)
+        const endX = Math.floor((c + 1) * cellW)
+
+        for (let y = startY; y < endY; y++) {
+          for (let x = startX; x < endX; x++) {
+            const delta = diffData[y * gridW + x]
+            cellSamples++
+            if (delta > 22) {
+              changedPixels++
+              cellChanged++
+            }
+          }
+        }
+        const ratio = cellSamples > 0 ? cellChanged / cellSamples : 0
+        if (ratio > 0.12) {
+          hotCells.push({ c, r, intensity: Math.min(1, ratio * 1.5) })
+        }
+      }
+    }
+
+    const diffPercentage = Number(((changedPixels / totalPixels) * 100).toFixed(2))
+    const layoutShiftDetected = diffPercentage > 22 && hotCells.length >= 10
+
+    const scaleX = outW / gridW
+    const scaleY = outH / gridH
+    const rectsSvg = hotCells
+      .map((cell) => {
+        const rx = Math.round(cell.c * cellW * scaleX)
+        const ry = Math.round(cell.r * cellH * scaleY)
+        const rw = Math.round(cellW * scaleX)
+        const rh = Math.round(cellH * scaleY)
+        const fillAlpha = (0.18 + cell.intensity * 0.28).toFixed(2)
+        return `<rect x="${rx}" y="${ry}" width="${rw}" height="${rh}" fill="rgba(244,63,94,${fillAlpha})" stroke="#f43f5e" stroke-width="1.5" rx="3" />`
+      })
+      .join("\n")
+
+    const badgeSvg = `
+      <rect x="10" y="10" width="330" height="28" rx="6" fill="rgba(15,23,42,0.88)" stroke="#f43f5e" stroke-width="1.5" />
+      <text x="20" y="28" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#fda4af">
+        OpenCV Diff: ${diffPercentage}% • ${hotCells.length} region(s) ${layoutShiftDetected ? "• SHIFT" : ""}
+      </text>
+    `
+
+    const overlaySvg = Buffer.from(
+      `<svg width="${outW}" height="${outH}" xmlns="http://www.w3.org/2000/svg">${rectsSvg}${badgeSvg}</svg>`
+    )
+
+    const heatmapBuf = await sharp(afterBuf)
+      .composite([{ input: overlaySvg, top: 0, left: 0 }])
+      .jpeg({ quality: 68 })
+      .toBuffer()
+
+    const diffHeatmapUrl = `data:image/jpeg;base64,${heatmapBuf.toString("base64")}`
+
+    let status: OpenCVVisualDiff["status"] = "stable"
+    if (layoutShiftDetected && !options.expectedChange) {
+      status = "unexpected_shift"
+    } else if (diffPercentage > 1.5) {
+      status = "expected_change"
+    }
+
+    const summary =
+      diffPercentage < 1
+        ? `Visual state stable (${diffPercentage}% pixel delta).`
+        : layoutShiftDetected
+        ? `Significant visual shift detected (${diffPercentage}% pixel delta across ${hotCells.length} zones).`
+        : `Visual update verified (${diffPercentage}% pixel delta across ${hotCells.length} zones).`
+
+    return {
+      id: options.id || `diff-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      label: options.label,
+      screenId: options.screenId,
+      viewportName: options.viewportName,
+      beforeScreenshotUrl: typeof beforeInput === "string" ? beforeInput : undefined,
+      afterScreenshotUrl: typeof afterInput === "string" ? afterInput : undefined,
+      diffHeatmapUrl,
+      diffPercentage,
+      changedRegionsCount: hotCells.length,
+      layoutShiftDetected,
+      status,
+      summary,
+    }
+  } catch (err) {
+    console.warn("[OpenCV VisualDiff] Comparison error:", err)
+    return null
+  } finally {
+    try { matA?.delete() } catch {}
+    try { matB?.delete() } catch {}
+    try { matDiff?.delete() } catch {}
+  }
+}
+
+/**
+ * 2 & 3. Responsive Layout Validation & Missing-Element / Blank-Region Detection
+ * Runs OpenCV Canny edge detection + contour density over DOM elements,
+ * detects blank/unrendered controls, overlapping elements, and viewport clipping,
+ * and produces a color-coded OpenCV bounding-box annotated image.
+ */
+export async function analyzeScreenDefectsWithOpenCV(
+  screenshotInput: string | Buffer,
+  domElements: DOMElement[],
+  options: {
+    screenName: string
+    viewportLabel: string
+    viewportWidth: number
+    viewportHeight: number
+  }
+): Promise<{
+  engine: "opencv-js" | "sharp-cv-hybrid"
+  annotatedImageUrl?: string
+  elementsAnnotated: number
+  edgeDensityAvg: number
+  defects: OpenCVVisualDefect[]
+}> {
+  const buf = inputToBuffer(screenshotInput)
+  if (!buf) {
+    return {
+      engine: "sharp-cv-hybrid",
+      elementsAnnotated: 0,
+      edgeDensityAvg: 0,
+      defects: [],
+    }
+  }
+
+  const cvFeatures = await preprocessWithOpenCV(buf, domElements)
+  const boxes = cvFeatures.features.elementBoundingBoxes
+  const defects: OpenCVVisualDefect[] = []
+
+  // 1. Detect Clipped / Out-of-Viewport Elements & Suspicious Blank Regions
+  for (let i = 0; i < boxes.length; i++) {
+    const item = boxes[i]
+    const [x, y, w, h] = item.box
+    const domEl = domElements.find((d) => d.selector === item.selector)
+
+    // Clipped content extending beyond horizontal viewport
+    if (x + w > options.viewportWidth + 6 && w > 16 && y >= 0 && y < options.viewportHeight) {
+      defects.push({
+        id: `cv-clip-${options.viewportLabel}-${i}`,
+        type: "clipped_content",
+        severity: x + w - options.viewportWidth > 35 ? "high" : "medium",
+        screenName: options.screenName,
+        viewport: options.viewportLabel,
+        selector: item.selector,
+        boundingBox: [Math.round(x), Math.round(y), Math.round(w), Math.round(h)],
+        edgeDensity: Number(item.saliency.toFixed(2)),
+        domConfirmed: true,
+        domConfirmationDetail: `Element "${domEl?.label || item.selector}" extends ${Math.round(x + w - options.viewportWidth)}px past ${options.viewportWidth}px viewport right edge.`,
+      })
+    }
+
+    // Blank / Missing visual rendering inside a visible DOM control
+    if (
+      w >= 48 &&
+      h >= 24 &&
+      x >= 0 &&
+      y >= 0 &&
+      x + w <= options.viewportWidth &&
+      y + h <= options.viewportHeight &&
+      item.saliency < 0.12
+    ) {
+      defects.push({
+        id: `cv-blank-${options.viewportLabel}-${i}`,
+        type: "blank_region",
+        severity: "low",
+        screenName: options.screenName,
+        viewport: options.viewportLabel,
+        selector: item.selector,
+        boundingBox: [Math.round(x), Math.round(y), Math.round(w), Math.round(h)],
+        edgeDensity: Number(item.saliency.toFixed(2)),
+        domConfirmed: true,
+        domConfirmationDetail: `Low visual edge density (${(item.saliency * 100).toFixed(0)}%) inside DOM bounds [${Math.round(x)}, ${Math.round(y)}, ${Math.round(w)}×${Math.round(h)}] for "${domEl?.label || item.selector}".`,
+      })
+    }
+  }
+
+  // 2. Detect Overlapping Interactive Elements
+  for (let i = 0; i < Math.min(boxes.length, 40); i++) {
+    for (let j = i + 1; j < Math.min(boxes.length, 40); j++) {
+      const a = boxes[i]
+      const b = boxes[j]
+      if (a.selector === b.selector) continue
+      const [ax, ay, aw, ah] = a.box
+      const [bx, by, bw, bh] = b.box
+
+      const interX1 = Math.max(ax, bx)
+      const interY1 = Math.max(ay, by)
+      const interX2 = Math.min(ax + aw, bx + bw)
+      const interY2 = Math.min(ay + ah, by + bh)
+
+      if (interX2 > interX1 && interY2 > interY1) {
+        const interArea = (interX2 - interX1) * (interY2 - interY1)
+        const minArea = Math.min(aw * ah, bw * bh)
+        // Ignore parent-child containment where one is >3x larger
+        const maxArea = Math.max(aw * ah, bw * bh)
+        if (minArea > 100 && maxArea / minArea < 2.6 && interArea / minArea > 0.4) {
+          defects.push({
+            id: `cv-overlap-${options.viewportLabel}-${i}-${j}`,
+            type: "overlapping_elements",
+            severity: "medium",
+            screenName: options.screenName,
+            viewport: options.viewportLabel,
+            selector: `${a.selector} ∩ ${b.selector}`,
+            boundingBox: [Math.round(interX1), Math.round(interY1), Math.round(interX2 - interX1), Math.round(interY2 - interY1)],
+            domConfirmed: true,
+            domConfirmationDetail: `Interactive controls "${a.selector}" and "${b.selector}" overlap by ${Math.round((interArea / minArea) * 100)}%.`,
+          })
+          break
+        }
+      }
+    }
+  }
+
+  // 3. Render OpenCV Annotated Bounding-Box Screenshot
+  let annotatedImageUrl: string | undefined
+  try {
+    const sharpModule = await import("sharp")
+    const sharp = sharpModule.default
+    const meta = await sharp(buf).metadata()
+    const imgW = meta.width || options.viewportWidth || 1280
+    const imgH = meta.height || options.viewportHeight || 800
+
+    const defectSelectors = new Set(defects.map((d) => d.selector))
+    const topBoxes = boxes.slice(0, 28)
+
+    const rectsSvg = topBoxes
+      .map((item, idx) => {
+        const [rawX, rawY, rawW, rawH] = item.box
+        const x = Math.max(1, Math.min(imgW - 4, Math.round(rawX)))
+        const y = Math.max(1, Math.min(imgH - 4, Math.round(rawY)))
+        const w = Math.max(4, Math.min(imgW - x - 1, Math.round(rawW)))
+        const h = Math.max(4, Math.min(imgH - y - 1, Math.round(rawH)))
+        const isDefect = defectSelectors.has(item.selector) || rawX + rawW > imgW + 4
+        const stroke = isDefect ? "#f43f5e" : "#10b981"
+        const fill = isDefect ? "rgba(244,63,94,0.16)" : "rgba(16,185,129,0.08)"
+        const dash = isDefect ? 'stroke-dasharray="4,2"' : ""
+        return `
+          <rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${fill}" stroke="${stroke}" stroke-width="2" ${dash} rx="3" />
+          <rect x="${x}" y="${Math.max(0, y - 14)}" width="36" height="14" fill="${stroke}" rx="2" />
+          <text x="${x + 4}" y="${Math.max(10, y - 4)}" font-family="Arial, sans-serif" font-size="9" font-weight="bold" fill="#ffffff">
+            #${idx + 1} ${Math.round(item.saliency * 100)}%
+          </text>
+        `
+      })
+      .join("\n")
+
+    const headerSvg = `
+      <rect x="10" y="10" width="380" height="28" rx="6" fill="rgba(15,23,42,0.9)" stroke="#06b6d4" stroke-width="1.5" />
+      <text x="20" y="28" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#67e8f9">
+        OpenCV Canny + Contours • ${options.viewportLabel} • ${topBoxes.length} boxes
+      </text>
+    `
+
+    const svgOverlay = Buffer.from(
+      `<svg width="${imgW}" height="${imgH}" xmlns="http://www.w3.org/2000/svg">${rectsSvg}${headerSvg}</svg>`
+    )
+
+    const annotatedBuf = await sharp(buf)
+      .composite([{ input: svgOverlay, top: 0, left: 0 }])
+      .jpeg({ quality: 70 })
+      .toBuffer()
+
+    annotatedImageUrl = `data:image/jpeg;base64,${annotatedBuf.toString("base64")}`
+  } catch (err) {
+    console.warn("[OpenCV Annotate] Could not render annotated screenshot:", err)
+  }
+
+  const edgeDensityAvg =
+    boxes.length > 0
+      ? Number((boxes.reduce((acc, b) => acc + b.saliency, 0) / boxes.length).toFixed(2))
+      : 0.5
+
+  return {
+    engine: cvFeatures.engine === "opencv-js" ? "opencv-js" : "sharp-cv-hybrid",
+    annotatedImageUrl,
+    elementsAnnotated: Math.min(boxes.length, 28),
+    edgeDensityAvg,
+    defects: defects.slice(0, 12),
+  }
+}

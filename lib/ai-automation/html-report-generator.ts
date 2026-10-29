@@ -508,6 +508,7 @@ export function generateHTMLReport(job: AutomationJob): string {
     ${generateExecutiveSummary(job)}
     ${generateUXAuditSection(job)}
     ${generateStatsSection(job)}
+    ${generateOpenCVAuditSection(job)}
     ${generateIssuesSection(job)}
     ${generateScreensSection(job)}
     ${generateTestPlanSection(job)}
@@ -653,6 +654,92 @@ function generateStatsSection(job: AutomationJob): string {
         </div>
       ` : ''}
     </div>
+  `
+}
+
+function generateOpenCVAuditSection(job: AutomationJob): string {
+  const cv = job.opencvAudit || job.report?.opencvAudit
+  if (!cv) return ''
+
+  return `
+    <div class="page-break"></div>
+    <h2>👁️ OpenCV Visual Intelligence &amp; 5-Pillar Audit</h2>
+    <p style="color: #475569; margin-bottom: 16px;">
+      Engine: <strong>${escapeHtml(cv.engine)}</strong> • Visual Stability Score: <strong>${cv.visualStabilityScore}%</strong> • Comparisons: <strong>${cv.totalComparisons}</strong> • Closed-Loop Verifications: <strong>${cv.closedLoopLoopsExecuted}</strong>
+    </p>
+
+    <div class="stats-grid" style="margin-bottom: 24px;">
+      <div class="stat-card">
+        <div class="stat-value">${cv.visualDiffs.length}</div>
+        <div class="stat-label">1. Visual Diffs &amp; Regressions</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">${cv.annotatedScreenshots.length}</div>
+        <div class="stat-label">2. Responsive Contour Maps</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">${cv.blankRegionsCount + cv.missingElementsCount}</div>
+        <div class="stat-label">3. Blank / Missing Regions</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">${cv.frameTimeline.length}</div>
+        <div class="stat-label">4. Step Frame Transitions</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">${cv.closedLoopLoopsExecuted}</div>
+        <div class="stat-label">5. Closed-Loop Re-Checks</div>
+      </div>
+    </div>
+
+    ${cv.visualDiffs.length > 0 ? `
+      <h3>1. Visual Regression Diff Heatmaps (Before vs. After / Viewport Reflow)</h3>
+      <div class="screenshots-grid" style="margin-bottom: 24px;">
+        ${cv.visualDiffs.map(d => `
+          <div class="screenshot-item">
+            ${d.diffHeatmapUrl ? `<img src="${d.diffHeatmapUrl}" alt="${escapeHtml(d.label)}" loading="lazy" />` : ''}
+            <div class="screenshot-label">
+              <strong>${escapeHtml(d.label)}</strong><br/>
+              Pixel Delta: ${d.diffPercentage}% • ${d.changedRegionsCount} changed region(s) • ${escapeHtml(d.summary)}
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    ` : ''}
+
+    ${cv.annotatedScreenshots.length > 0 ? `
+      <h3>2. Responsive Layout Validation (OpenCV Canny &amp; Saliency Bounding Boxes)</h3>
+      <div class="screenshots-grid" style="margin-bottom: 24px;">
+        ${cv.annotatedScreenshots.map(a => `
+          <div class="screenshot-item">
+            <img src="${a.annotatedImageUrl}" alt="${escapeHtml(a.label)}" loading="lazy" />
+            <div class="screenshot-label">
+              <strong>${escapeHtml(a.label)} (${escapeHtml(a.viewport)})</strong><br/>
+              ${a.elementsAnnotated} controls annotated • Avg Edge Density: ${Math.round(a.edgeDensityAvg * 100)}%
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    ` : ''}
+
+    ${cv.defects.length > 0 ? `
+      <h3>3 &amp; 5. Missing-Element / Visual-Defect Detection &amp; Closed-Loop DOM Verification</h3>
+      <div class="issues-list" style="margin-bottom: 24px;">
+        ${cv.defects.map(def => `
+          <div class="issue-card severity-${def.severity}">
+            <div class="issue-header">
+              <span class="issue-type">${escapeHtml(def.type.replace(/_/g, ' '))}</span>
+              <span style="font-size: 0.85em; color: #475569;">${escapeHtml(def.viewport || def.screenName)}</span>
+            </div>
+            <div class="issue-description">${escapeHtml(def.domConfirmationDetail)}</div>
+            <div class="issue-meta">
+              <span>🔍 DOM Confirmed: ${def.domConfirmed ? 'Yes' : 'No'}</span>
+              <span>🔄 Closed-Loop: ${escapeHtml(def.closedLoopAction || 'Verified')}</span>
+              <span>📌 Status: ${def.defectPersisted ? 'Persisted' : 'Resolved on Re-Check'}</span>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    ` : ''}
   `
 }
 
