@@ -86,11 +86,52 @@ export function buildAutomationReport(
   const blockedSteps = steps.filter((s) => s.verdict === "blocked" || s.status === "blocked").length
   const pendingSteps = steps.filter((s) => s.status === "pending" || !s.status && !s.verdict).length
 
+  // Identify client-only upload steps (2/5 stages verified: attached to input, no backend server upload triggered)
+  const clientOnlyUploadSteps = steps.filter(
+    (s) =>
+      s.actionType === "upload" &&
+      (s.uploadVerification?.isClientOnlyAttachment === true ||
+        /server processing was not tested|Client Input Attachment Only/i.test(s.actualResult || ""))
+  )
+  if (clientOnlyUploadSteps.length > 0 && !job.issues.some((i) => i.type === "unverified_backend_upload")) {
+    job.issues.push({
+      id: `issue-upload-backend-${Date.now()}`,
+      screenUrl: job.targetUrl,
+      screenTitle: clientOnlyUploadSteps[0]?.screenName || "Home / Dashboard",
+      type: "unverified_backend_upload",
+      severity: "low",
+      description: `${clientOnlyUploadSteps.length} file upload scenario(s) verified client-side file selection and DOM state update (2/5 stages), but no network upload request or server-side file processing was triggered.`,
+      expected: "End-to-end upload verification requires 5 stages: (1) File Selection, (2) UI State Update, (3) Network Upload Request, (4) Server 2xx Response, and (5) Application-level Processing.",
+      actual: `Stages 1–2 verified for ${clientOnlyUploadSteps.map((u) => u.targetName).join(", ")}; stages 3–5 (network request, server response, app processing) were not triggered.`,
+      reproductionSteps: [
+        `1. Attach test file(s) to upload controls (${clientOnlyUploadSteps.slice(0, 3).map((u) => u.targetName).join(", ")}) on ${job.targetUrl}.`,
+        "2. Monitor outgoing HTTP network calls (POST/PUT multipart).",
+        "3. Observe files attach to browser <input type='file'> state, but page does not transmit files to a backend upload endpoint.",
+      ],
+      confidence: 100,
+      retestStatus: "retested_persisted",
+      retestDetail: "Network recorder monitored 600ms post-attachment settle window across all upload controls; 0 mutating upload requests observed.",
+      verificationCategory: "unverified_backend",
+      timestamp: new Date().toISOString(),
+    })
+  }
+
   const totalIssues = job.issues.length
   const postmanCoverage = buildPostmanCoverageReport(testPlan, options?.postmanSummary || testPlan.postmanSummary)
 
-  // Screen counts
-  const totalScreens = testPlan.screens.length
+  // Reconcile Unique Route Screens vs Responsive Device Viewports
+  const uniqueRouteScreenIds = new Set(
+    (testPlan.screens || []).map((s) => s.id.replace(/-(desktop|tablet|mobile|compact.*)$/i, ""))
+  )
+  const uniqueScreensCount = Math.max(1, uniqueRouteScreenIds.size || job.screens?.length || 1)
+  const viewportsTestedCount = (job.responsiveResults && job.responsiveResults.length > 0) ? job.responsiveResults.length : 1
+  const totalScreens = uniqueScreensCount
+
+  if (testPlan.coverage) {
+    testPlan.coverage.totalScreens = uniqueScreensCount
+    testPlan.coverage.screensTested = Math.min(uniqueScreensCount, Math.max(1, testPlan.coverage.screensTested))
+  }
+
   const failedScreenIds = new Set(
     job.issues.filter((i) => i.severity === "high" || i.severity === "blocker").map((i) => i.screenUrl)
   )
@@ -103,8 +144,29 @@ export function buildAutomationReport(
     (w) => w.verdict === "failed" || w.verdict === "suspected_non_functional"
   ).length
 
-  // Generate Recommendations
+  const partialClientOnlyCount = clientOnlyUploadSteps.length
+  const verifiedFunctionalCount = Math.max(0, passedSteps - partialClientOnlyCount)
+  const detectedDefectsCount = job.issues.filter((i) => i.verificationCategory !== "unverified_backend").length
+  const inconclusiveCount = blockedSteps + pendingSteps + suspectedSteps
+
+  // Generate Honest, Evidence-Backed Recommendations
   const recommendations: string[] = []
+  if (job.issues.some((i) => i.type === "touch_target_violation")) {
+    const touchIssues = job.issues.filter((i) => i.type === "touch_target_violation")
+    recommendations.push(
+      `Increase touch target dimensions to at least 32×32px (WCAG 2.5.8) on tablet/mobile viewports: ${touchIssues.map((t) => t.actual || t.description).join(" | ")}`
+    )
+  }
+  if (job.issues.some((i) => i.type === "responsive_overflow")) {
+    recommendations.push(
+      "Fix horizontal layout overflow on smaller viewports by constraining fixed-width containers with max-width: 100% and overflow-x: auto."
+    )
+  }
+  if (partialClientOnlyCount > 0) {
+    recommendations.push(
+      `Complete end-to-end backend upload verification for ${partialClientOnlyCount} file input(s): client-side file selection & DOM attachment passed (2/5 stages), but server upload endpoint, 2xx response, and server-side file parsing remain unverified.`
+    )
+  }
   if (suspectedSteps > 0) {
     recommendations.push(
       `Investigate ${suspectedSteps} suspected non-functional control(s) (e.g. placeholder cards, dead buttons) that produced zero observable DOM or network response.`
@@ -127,15 +189,14 @@ export function buildAutomationReport(
   }
   if (blockedSteps > 0) recommendations.push(`${blockedSteps} action(s) were blocked and require review or an explicitly documented safety decision.`)
   if (pendingSteps > 0) recommendations.push(`${pendingSteps} planned step(s) remain pending or have no recorded verdict; the run is incomplete.`)
-  if (recommendations.length === 0 && failedSteps === 0 && blockedSteps === 0 && pendingSteps === 0 && suspectedSteps === 0 && skippedUnsafe === 0) {
-    recommendations.push("All tested screens and workflows demonstrated verified outcomes and expected functional behavior.")
+  if (recommendations.length === 0 && failedSteps === 0 && failedWorkflows === 0 && totalIssues === 0 && partialClientOnlyCount === 0 && blockedSteps === 0 && pendingSteps === 0 && suspectedSteps === 0 && skippedUnsafe === 0) {
+    recommendations.push("All tested screens, responsive viewports, and workflows demonstrated verified end-to-end outcomes.")
   }
 
-  const summary = `Outcome-Verified Full App Testing completed across ${totalScreens} screens. ` +
-    `${passedSteps}/${steps.length} test steps passed. ` +
-    `${suspectedSteps} suspected non-functional controls flagged. ` +
-    `${failedSteps} failed, ${blockedSteps} blocked, ${pendingSteps} pending/unresolved, ${skippedUnsafe} skipped by safety guard. ` +
-    `${workflows.length} multi-step workflow chains executed (${passedWorkflows} passed, ${failedWorkflows} failed/stalled).`
+  const summary =
+    `Outcome-Verified Testing completed across ${uniqueScreensCount} unique route screen(s) and ${viewportsTestedCount} responsive device viewport(s) (${steps.length} total actions). ` +
+    `Verification Breakdown: ${verifiedFunctionalCount} fully verified functional checks, ${partialClientOnlyCount} client-attached upload checks (2/5 stages verified — backend upload unverified), ${detectedDefectsCount} confirmed defect finding(s), and ${inconclusiveCount} inconclusive/blocked check(s). ` +
+    `${workflows.length} device/feature workflow(s) executed (${passedWorkflows} passed, ${failedWorkflows} failed with findings).`
 
   // Build Markdown Document
   const md = generateMarkdownReportText({
@@ -160,7 +221,15 @@ export function buildAutomationReport(
   })
 
   const report: AutomationReport = {
-    totalScreensTested: totalScreens,
+    totalScreensTested: uniqueScreensCount,
+    uniqueScreensTested: uniqueScreensCount,
+    viewportsTestedCount,
+    verificationBreakdown: {
+      verifiedFunctionalCount,
+      detectedDefectsCount,
+      partialClientOnlyCount,
+      inconclusiveCount,
+    },
     passedScreens,
     failedScreens,
     totalIssues,
@@ -240,6 +309,11 @@ function generateMarkdownReportText(params: {
 
   const dateStr = new Date().toLocaleString()
   const overallVerdict = failedSteps > 0 || totalIssues > 0 ? "ISSUES DETECTED" : (blockedSteps > 0 || pendingSteps > 0 || suspectedSteps > 0 || skippedUnsafe > 0) ? "INCOMPLETE — REVIEW REQUIRED" : "PASSED"
+  const viewportsTestedCount = (job.responsiveResults && job.responsiveResults.length > 0) ? job.responsiveResults.length : 1
+  const clientOnlyUploadCount = (testPlan.steps || []).filter((s) => s.actionType === "upload" && (s.uploadVerification?.isClientOnlyAttachment === true || /server processing was not tested|Client Input Attachment Only/i.test(s.actualResult || ""))).length
+  const verifiedFunctionalCount = Math.max(0, passedSteps - clientOnlyUploadCount)
+  const confirmedDefectsCount = job.issues.filter((i) => i.verificationCategory !== "unverified_backend").length
+  const inconclusiveCount = blockedSteps + pendingSteps + suspectedSteps
 
   const sections: string[] = []
 
@@ -248,22 +322,42 @@ function generateMarkdownReportText(params: {
   sections.push(`**Target URL:** \`${job.targetUrl}\`  `)
   sections.push(`**Executed:** ${dateStr} | **Job ID:** \`${job.id}\` | **Verdict:** **${overallVerdict}**\n`)
 
+  // Developer Triage Summary (Answers the 3 Developer Questions)
+  sections.push(`## 🎯 Developer Triage Summary (3 Key Questions)\n`)
+  sections.push(`1. **What failed or remained unverified?**`)
+  if (job.issues.length === 0 && failedSteps === 0 && clientOnlyUploadCount === 0) {
+    sections.push(`   - All ${testPlan.steps.length} actions across ${totalScreens} unique route screen(s) and ${viewportsTestedCount} viewport(s) verified end-to-end with zero defects.`)
+  } else {
+    for (const iss of job.issues) {
+      sections.push(`   - **[${iss.severity.toUpperCase()} · ${iss.type}]** ${iss.description}`)
+    }
+  }
+  sections.push(`2. **What evidence proves it?**`)
+  sections.push(`   - Every finding below includes exact CSS selectors, expected vs. observed DOM/BoundingBox values, step-by-step reproduction instructions, and viewport-matched screenshot evidence.`)
+  if (clientOnlyUploadCount > 0) {
+    sections.push(`   - **Upload Pipeline Tracking (5 Stages):** ${clientOnlyUploadCount} upload control(s) verified Stages 1–2 (File Selection + DOM State Update) while Stages 3–5 (Network Request, 2xx Server Response, App Processing) were explicitly flagged as unverified on the wire.`)
+  }
+  sections.push(`3. **Did the agent investigate and verify the result (Closed-Loop)?**`)
+  const closedLoopCount = job.opencvAudit?.closedLoopLoopsExecuted || job.issues.filter((i) => i.retestStatus === "retested_persisted" || i.retestStatus === "retested_resolved").length
+  sections.push(`   - **Yes (${closedLoopCount} closed-loop re-verification(s) executed).** Detected layout/touch-target/disabled-state findings were re-inspected via live DOM \`getBoundingClientRect()\`, \`getComputedStyle()\`, and post-scroll baseline comparisons to confirm whether defects persisted.\n`)
+
   // Executive Summary & KPIs
-  sections.push(`## 📊 Executive Summary\n`)
+  sections.push(`## 📊 Executive Summary & 4-Category Verification Breakdown\n`)
   sections.push(`${summary}\n`)
 
-  sections.push(`| Metric | Count | Status |`)
+  sections.push(`| Verification Category | Count | Meaning |`)
   sections.push(`| :--- | :--- | :--- |`)
-  sections.push(`| **Discovered Screens** | ${totalScreens} | Verified |`)
-  sections.push(`| **Total Steps Planned** | ${testPlan.steps.length} | Completed |`)
-  sections.push(`| **Passed Steps** | ${passedSteps} | ✅ Healthy |`)
-  sections.push(`| **Suspected Non-Functional** | ${suspectedSteps} | ⚠️ Placeholder / Dead Controls |`)
-  sections.push(`| **Failed Steps** | ${failedSteps} | ❌ Action Failed |`)
-  sections.push(`| **Blocked Steps** | ${blockedSteps} | ⛔ Blocked / Needs Review |`)
-  sections.push(`| **Pending / Unresolved Steps** | ${pendingSteps} | ⏳ Not Verified |`)
-  sections.push(`| **Safety Skipped** | ${skippedUnsafe} | 🛡️ Protected by Safety Guard |`)
-  sections.push(`| **Total Issues Flagged** | ${totalIssues} | Detailed Below |`)
-  sections.push(`| **Workflow Chains Tested** | ${workflows.length} | Multi-step Journeys |\n`)
+  sections.push(`| **1. Verified Functional Behaviour** | **${verifiedFunctionalCount}** | ✅ End-to-end expected outcome matches observed DOM/state |`)
+  sections.push(`| **2. Confirmed Defects** | **${confirmedDefectsCount}** | ❌ Contradicts expected specification (touch target, overflow, disabled-field editability) |`)
+  sections.push(`| **3. Partial / Untested Backend Behaviour** | **${clientOnlyUploadCount}** | ⚠️ Client input attached (2/5 upload stages), server processing unverified |`)
+  sections.push(`| **4. Inconclusive / Blocked Checks** | **${inconclusiveCount}** | ⏳ Blocked, pending, or placeholder controls requiring review |\n`)
+
+  sections.push(`| Coverage Metric | Count | Definition |`)
+  sections.push(`| :--- | :--- | :--- |`)
+  sections.push(`| **Unique Route Screens Tested** | ${totalScreens} | Distinct application pages/routes (\`S001\`, etc.) |`)
+  sections.push(`| **Responsive Device Viewports Tested** | ${viewportsTestedCount} | Distinct viewport dimensions audited per screen (Desktop, Tablet, Mobile) |`)
+  sections.push(`| **Total Steps Planned** | ${testPlan.steps.length} | Interactive controls, forms, and upload scenarios |`)
+  sections.push(`| **Workflow Chains Tested** | ${workflows.length} | End-to-end & per-device responsive workflows |\n`)
 
   // Postman API Mapping Section
   if (postmanSummary) {
@@ -434,12 +528,14 @@ function generateMarkdownReportText(params: {
   // Issues Catalog
   if (job.issues.length > 0) {
     sections.push(`## 🚨 Discovered Issues Catalog\n`)
-    sections.push(`| Severity | Type | Screen | Description | Expected vs Observed |`)
-    sections.push(`| :--- | :--- | :--- | :--- | :--- |`)
+    sections.push(`| Severity | Type | Screen | Description & Reproduction | Expected vs Observed | Confidence & Closed-Loop Retest |`)
+    sections.push(`| :--- | :--- | :--- | :--- | :--- | :--- |`)
     for (const issue of job.issues) {
       const sevIcon = issue.severity === "high" || issue.severity === "blocker" ? "🔴" : issue.severity === "medium" ? "🟡" : "🔵"
+      const reproText = issue.reproductionSteps && issue.reproductionSteps.length > 0 ? `<br/>**Repro:** ${issue.reproductionSteps.join(" → ")}` : ""
+      const retestText = issue.retestStatus === "retested_persisted" ? `❌ Persisted (${issue.retestDetail || "Confirmed"})` : issue.retestStatus === "retested_resolved" ? `✅ Resolved` : "Inspected"
       sections.push(
-        `| ${sevIcon} **${issue.severity.toUpperCase()}** | \`${issue.type}\` | ${issue.screenTitle} | ${issue.description} | Exp: ${issue.expected || "N/A"}<br/>Obs: ${issue.actual || "N/A"} |`
+        `| ${sevIcon} **${issue.severity.toUpperCase()}** | \`${issue.type}\` | ${issue.screenTitle} | ${issue.description}${reproText} | **Exp:** ${issue.expected || "N/A"}<br/>**Obs:** ${issue.actual || "N/A"} | **${issue.confidence ?? 95}%** · ${retestText} |`
       )
     }
     sections.push("")

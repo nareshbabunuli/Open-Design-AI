@@ -1579,7 +1579,7 @@ export default function FullAppTestingView({
               </div>
             )}
 
-            {/* Coverage Summary Cards */}
+            {/* Coverage & Verification Summary Cards */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 text-center">
                 <div className="text-xl font-bold font-mono text-indigo-400">{coverage.percentage}%</div>
@@ -1591,23 +1591,21 @@ export default function FullAppTestingView({
 
               <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 text-center">
                 <div className="text-xl font-bold font-mono text-emerald-400">
-                  {coverage.totalScreens > 0 ? Math.round((coverage.screensTested / coverage.totalScreens) * 100) : 0}%
+                  {job?.report?.uniqueScreensTested ?? Math.max(1, coverage.totalScreens)} / {job?.report?.viewportsTestedCount ?? (job?.responsiveResults?.length || 1)}
                 </div>
-                <div className="text-xs font-semibold text-white mt-0.5">Screen Coverage</div>
+                <div className="text-xs font-semibold text-white mt-0.5">Screens / Viewports</div>
                 <div className="text-[10px] text-slate-400">
-                  {coverage.screensTested} / {coverage.totalScreens} screens
+                  {job?.report?.uniqueScreensTested ?? Math.max(1, coverage.totalScreens)} unique screen(s) • {job?.report?.viewportsTestedCount ?? (job?.responsiveResults?.length || 1)} viewport(s)
                 </div>
               </div>
 
               <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 text-center">
-                <div className="text-xl font-bold font-mono text-purple-400">
-                  {activeEdgeCases.length > 0 ? activeEdgeCases.length : coverage.newDiscoveries}
+                <div className="text-xl font-bold font-mono text-cyan-400">
+                  {job?.opencvAudit?.closedLoopLoopsExecuted ?? (job?.issues?.filter((i) => i.retestStatus === "retested_persisted" || i.retestStatus === "retested_resolved").length || 0)}
                 </div>
-                <div className="text-xs font-semibold text-white mt-0.5">
-                  {activeEdgeCases.length > 0 ? "Edge Cases" : "New Discoveries"}
-                </div>
+                <div className="text-xs font-semibold text-white mt-0.5">Closed-Loop Rechecks</div>
                 <div className="text-[10px] text-slate-400">
-                  {activeEdgeCases.length > 0 ? "Boundary scenarios" : "Found in run"}
+                  Autonomous DOM &amp; visual retests
                 </div>
               </div>
 
@@ -1615,19 +1613,36 @@ export default function FullAppTestingView({
                 <div className="text-xl font-bold font-mono text-amber-400">
                   {job?.issues?.length || 0}
                 </div>
-                <div className="text-xs font-semibold text-white mt-0.5">Issues Found</div>
-                <div className="text-[10px] text-slate-400">Console / DOM</div>
+                <div className="text-xs font-semibold text-white mt-0.5">Issues &amp; Findings</div>
+                <div className="text-[10px] text-slate-400">
+                  {job?.report?.verificationBreakdown ? `${job.report.verificationBreakdown.detectedDefectsCount} defect(s) • ${job.report.verificationBreakdown.partialClientOnlyCount} client-only upload(s)` : "DOM / Responsive / Upload"}
+                </div>
               </div>
             </div>
 
-            {/* Executive Summary & Recommendations */}
+            {/* Developer Triage Summary (3 Key Questions) & Executive Summary */}
             {job?.report && (
-              <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-2 text-xs">
-                <span className="font-bold text-white block">Executive Summary</span>
+              <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-2.5 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-bold text-white block">🎯 Developer Triage Summary &amp; Executive Overview</span>
+                  {job.report.verificationBreakdown && (
+                    <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-mono">
+                      <span className="px-2 py-0.5 rounded bg-emerald-950/70 text-emerald-300 border border-emerald-800/60">
+                        ✓ {job.report.verificationBreakdown.verifiedFunctionalCount} Verified
+                      </span>
+                      <span className="px-2 py-0.5 rounded bg-rose-950/70 text-rose-300 border border-rose-800/60">
+                        ✗ {job.report.verificationBreakdown.detectedDefectsCount} Defects
+                      </span>
+                      <span className="px-2 py-0.5 rounded bg-amber-950/70 text-amber-300 border border-amber-800/60">
+                        ⚠ {job.report.verificationBreakdown.partialClientOnlyCount} Client-Only Uploads (2/5 Stages)
+                      </span>
+                    </div>
+                  )}
+                </div>
                 <p className="text-slate-300 leading-relaxed">{job.report.summary}</p>
                 {job.report.recommendations && job.report.recommendations.length > 0 && (
                   <div className="pt-2 border-t border-slate-800 space-y-1">
-                    <span className="font-semibold text-slate-400 text-[11px] block">Recommendations:</span>
+                    <span className="font-semibold text-slate-400 text-[11px] block">Evidence-Backed Recommendations:</span>
                     <ul className="list-disc list-inside space-y-0.5 text-slate-300 text-[11px]">
                       {job.report.recommendations.map((rec, rIdx) => (
                         <li key={rIdx}>{rec}</li>

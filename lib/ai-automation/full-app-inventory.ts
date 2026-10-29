@@ -717,11 +717,6 @@ export async function extractActionableInventory(page: Page, layaBaseUrl?: strin
         return na.compareDocumentPosition(nb) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1
       } catch { return 0 }
     })
-    for (let i = 0; i < elements.length - 1; i++) {
-      if (elements[i].selector === "#disabled-field" && elements[i + 1].selector === "#enable-disabled") {
-        const tmp = elements[i]; elements[i] = elements[i + 1]; elements[i + 1] = tmp
-      }
-    }
     elements.forEach((el: any, idx: number) => { el.id = `elem-${idx + 1}` })
     return {
       actionableElements: elements,

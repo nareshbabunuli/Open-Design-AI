@@ -23,7 +23,9 @@ export type AutomationIssue = {
     | "http_error"
     | "request_failed"
     | "empty_data_surface"
-  | "correlated_ui_data_failure"
+    | "correlated_ui_data_failure"
+    | "touch_target_violation"
+    | "unverified_backend_upload"
   severity: "low" | "medium" | "high" | "blocker"
   viewport?: string
   description: string
@@ -37,6 +39,11 @@ export type AutomationIssue = {
   }
   screenshotUrl?: string
   timestamp: string
+  reproductionSteps?: string[]
+  confidence?: number
+  retestStatus?: "retested_persisted" | "retested_resolved" | "not_retested"
+  retestDetail?: string
+  verificationCategory?: "detected_defect" | "unverified_backend" | "inconclusive"
 }
 
 export type DiscoveredScreen = {
@@ -196,13 +203,14 @@ export type OpenCVVisualDiff = {
   diffPercentage: number
   changedRegionsCount: number
   layoutShiftDetected: boolean
+  comparisonType?: "same_viewport_regression" | "cross_viewport_reflow" | "step_interaction"
   status: "stable" | "expected_change" | "unexpected_shift"
   summary: string
 }
 
 export type OpenCVVisualDefect = {
   id: string
-  type: "blank_region" | "missing_element" | "overlapping_elements" | "clipped_content" | "layout_shift"
+  type: "blank_region" | "missing_element" | "overlapping_elements" | "clipped_content" | "layout_shift" | "touch_target_undersized"
   severity: "low" | "medium" | "high"
   screenName: string
   viewport?: string
@@ -261,8 +269,32 @@ export type DeviceResponsiveResult = {
   observations?: string[]
 }
 
+export type UploadStageStatus = "verified" | "failed" | "not_triggered_client_only"
+
+export type UploadVerificationBreakdown = {
+  fileSelection: UploadStageStatus
+  uiStateUpdate: UploadStageStatus
+  networkRequest: UploadStageStatus
+  serverResponse: UploadStageStatus
+  appProcessing: UploadStageStatus
+  verifiedStagesCount: number
+  isClientOnlyAttachment: boolean
+  attachedFiles: string[]
+  uploadEndpointUrl?: string
+  httpStatus?: number
+  summary: string
+}
+
 export type AutomationReport = {
   totalScreensTested: number
+  uniqueScreensTested?: number
+  viewportsTestedCount?: number
+  verificationBreakdown?: {
+    verifiedFunctionalCount: number
+    detectedDefectsCount: number
+    partialClientOnlyCount: number
+    inconclusiveCount: number
+  }
   passedScreens: number
   failedScreens: number
   totalIssues: number
@@ -672,6 +704,7 @@ export type TestPlanStep = {
   postmanEndpoint?: ParsedPostmanEndpoint
   postmanMappings?: PostmanFieldMapping[]
   confirmedOnWire?: boolean
+  uploadVerification?: UploadVerificationBreakdown
 }
 
 export type FullAppTestPlan = {

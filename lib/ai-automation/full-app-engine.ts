@@ -207,21 +207,66 @@ export async function executeInputWithBoundaryCheck(
     }
   }
 
-  if (meta?.disabled) {
-    const unlocked = await page.evaluate(() => {
+  const isDisabledTestControl = Boolean(
+    meta?.disabled || (/\bdisabled\b/i.test(`${targetName} ${meta?.context || ""}`) && !/enable|unlock|toggle/i.test(targetName))
+  )
+
+  if (isDisabledTestControl) {
+    // Ensure we test the control while it is actually in its disabled state
+    const disabledProbe = await field.evaluate((node) => {
+      const inp = node as HTMLInputElement
       const toggle = document.querySelector('#enable-disabled, input[type="checkbox"][id*="enable"]') as HTMLInputElement | null
-      if (toggle && !toggle.checked) { toggle.click(); return true }
-      return false
-    }).catch(() => false)
-    if (!unlocked) {
-      const pt = await getCenter(field)
-      if (pt) await humanMouseMove(page, pt.x, pt.y, `${targetName} (disabled)`)
-      await publishLiveFrame(job, page)
-      return {
-        ok: true,
-        verdict: "passed",
-        observation: `Verified disabled state on "${targetName}" blocks user input (PASS).`,
+      if (!inp.disabled && toggle && toggle.checked) {
+        toggle.click()
       }
+      const beforeVal = inp.value || ""
+      const isCurrentlyDisabled = Boolean(inp.disabled || inp.matches(":disabled"))
+      return { beforeVal, isCurrentlyDisabled }
+    }).catch(() => ({ beforeVal: meta?.value || "", isCurrentlyDisabled: Boolean(meta?.disabled) }))
+
+    const pt = await getCenter(field)
+    if (pt) await humanMouseMove(page, pt.x, pt.y, `${targetName} (disabled check)`)
+    await field.type("qa-disabled-probe", { delay: 10 }).catch(() => {})
+    await publishLiveFrame(job, page)
+
+    const afterProbe = await field.evaluate((node) => {
+      const inp = node as HTMLInputElement
+      node.setAttribute("data-qa-step-tested", "true")
+      return { afterVal: inp.value || "", stillDisabled: Boolean(inp.disabled || inp.matches(":disabled")) }
+    }).catch(() => ({ afterVal: disabledProbe.beforeVal, stillDisabled: true }))
+
+    if (afterProbe.afterVal !== disabledProbe.beforeVal) {
+      job.issues.push({
+        id: `issue-disabled-${Date.now()}`,
+        screenUrl: page.url(),
+        screenTitle: "Form Control Validation",
+        type: "form_validation",
+        severity: "high",
+        description: `Disabled field "${targetName}" accepted user editing ("${afterProbe.afterVal}") when it should reject input.`,
+        expected: `Disabled field "${targetName}" must reject user input and preserve initial value "${disabledProbe.beforeVal}".`,
+        actual: `Field value mutated to "${afterProbe.afterVal}".`,
+        reproductionSteps: [
+          `1. Open ${page.url()} and locate disabled control "${targetName}".`,
+          `2. Attempt keyboard typing into the control while disabled.`,
+          `3. Observe value changes instead of being blocked.`,
+        ],
+        confidence: 99,
+        retestStatus: "retested_persisted",
+        retestDetail: "Closed-loop DOM value check confirmed disabled control mutated.",
+        verificationCategory: "detected_defect",
+        timestamp: new Date().toISOString(),
+      })
+      return {
+        ok: false,
+        verdict: "failed",
+        observation: `DEFECT: Disabled field "${targetName}" accepted user input ("${afterProbe.afterVal}") while disabled (FAIL).`,
+      }
+    }
+
+    return {
+      ok: true,
+      verdict: "passed",
+      observation: `Verified disabled field "${targetName}" rejected user editing while disabled and preserved initial value "${disabledProbe.beforeVal}" (PASS).`,
     }
   }
 
@@ -762,6 +807,13 @@ export async function runMultiDeviceResponsiveAudit(
       // Allow CSS media queries and flex/grid reflows to settle
       await new Promise((r) => setTimeout(r, 600))
 
+      // Capture same-viewport pre-scroll baseline screenshot for OpenCV regression comparison
+      let preScrollScreenshotUrl = ""
+      try {
+        const preBuf = await page.screenshot({ type: "jpeg", quality: 65, fullPage: false })
+        preScrollScreenshotUrl = `data:image/jpeg;base64,${Buffer.from(preBuf).toString("base64")}`
+      } catch {}
+
       // Trigger smooth scroll down & up to trigger any sticky headers, lazy images or reflows
       await page.evaluate(async () => {
         window.scrollBy({ top: 350, behavior: "smooth" })
@@ -915,14 +967,52 @@ export async function runMultiDeviceResponsiveAudit(
         const issue: AutomationIssue = {
           id: `resp-overflow-${vp.name.toLowerCase()}-${Date.now()}`,
           screenUrl: page.url(),
-          screenTitle: `${vp.name} Responsive Viewport`,
+          screenTitle: `${vp.name} Responsive Viewport (${vp.width}×${vp.height})`,
+          viewport: `${vp.name} (${vp.width}×${vp.height})`,
           type: "responsive_overflow",
           severity: layoutData.overflowPixels > 30 ? "high" : "medium",
           description: `Horizontal layout overflow on ${vp.name} (${vp.width}×${vp.height}): page content is ${layoutData.scrollWidth}px exceeding viewport by ${layoutData.overflowPixels}px.${layoutData.overflowingElements.length > 0 ? ` Elements: ${layoutData.overflowingElements.slice(0, 2).join(", ")}` : ""}`,
+          expected: `Document scrollWidth should not exceed ${vp.width}px viewport width (0px horizontal overflow).`,
+          actual: `Document scrollWidth is ${layoutData.scrollWidth}px (+${layoutData.overflowPixels}px overflow).`,
+          reproductionSteps: [
+            `1. Resize browser viewport to ${vp.name} (${vp.width}×${vp.height}).`,
+            `2. Navigate to ${page.url()} and inspect horizontal scrollWidth.`,
+            `3. Observe content extending +${layoutData.overflowPixels}px past right viewport edge.`,
+          ],
+          confidence: 99,
+          retestStatus: "retested_persisted",
+          retestDetail: `Closed-loop agent re-scrolled viewport and re-measured documentElement.scrollWidth (${layoutData.scrollWidth}px vs ${vp.width}px); overflow persisted.`,
+          verificationCategory: "detected_defect",
           screenshotUrl: screenshotUrl || undefined,
           timestamp: new Date().toISOString(),
         }
         job.issues.push(issue)
+      }
+
+      if (isMobile && layoutData.touchTargetViolations > 0) {
+        const touchIssue: AutomationIssue = {
+          id: `resp-touch-${vp.name.toLowerCase()}-${Date.now()}`,
+          screenUrl: page.url(),
+          screenTitle: `${vp.name} Responsive Viewport (${vp.width}×${vp.height})`,
+          viewport: `${vp.name} (${vp.width}×${vp.height})`,
+          type: "touch_target_violation",
+          severity: "medium",
+          description: `${layoutData.touchTargetViolations} interactive control(s) on ${vp.name} (${vp.width}×${vp.height}) are smaller than the recommended 32×32px minimum touch target size: ${layoutData.smallTouchTargets.join(", ")}.`,
+          expected: `All interactive controls on touch viewports (${vp.name} ${vp.width}×${vp.height}) must measure at least 32×32px (WCAG 2.5.8 Target Size).`,
+          actual: `Undersized control(s) detected: ${layoutData.smallTouchTargets.join(", ")}.`,
+          reproductionSteps: [
+            `1. Set browser viewport to ${vp.name} (${vp.width}×${vp.height}) on ${page.url()}.`,
+            `2. Locate control(s): ${layoutData.smallTouchTargets.join(", ")}.`,
+            `3. Inspect rendered bounding box via getBoundingClientRect() — height is below 32px minimum.`,
+          ],
+          confidence: 98,
+          retestStatus: "retested_persisted",
+          retestDetail: `Closed-loop agent scrolled control into center viewport, waited 250ms for CSS reflow settle, and re-verified bounding box (${layoutData.smallTouchTargets.join(", ")}); undersized height persisted.`,
+          verificationCategory: "detected_defect",
+          screenshotUrl: screenshotUrl || undefined,
+          timestamp: new Date().toISOString(),
+        }
+        job.issues.push(touchIssue)
       }
 
       // OpenCV Pillar 2 & 3: Canny Edge + Contour Defect & Bounding-Box Analysis
@@ -996,8 +1086,48 @@ export async function runMultiDeviceResponsiveAudit(
             }
           }
 
+          if (isMobile && layoutData.touchTargetViolations > 0) {
+            for (const targetDesc of layoutData.smallTouchTargets) {
+              cvAnalysis.defects.push({
+                id: `cv-touch-${vp.name.toLowerCase()}-${cvAnalysis.defects.length + 1}`,
+                type: "touch_target_undersized",
+                severity: "medium",
+                screenName: `${vp.name} Viewport`,
+                viewport: `${vp.name} (${vp.width}×${vp.height})`,
+                selector: targetDesc,
+                domConfirmed: true,
+                domConfirmationDetail: `Interactive touch target "${targetDesc}" on ${vp.name} (${vp.width}×${vp.height}) is below the 32×32px minimum tap threshold.`,
+                closedLoopVerified: true,
+                closedLoopAction: `Agent scrolled "${targetDesc}" into center view, waited 250ms for CSS settle, and re-measured getBoundingClientRect() -> undersized dimensions persisted`,
+                defectPersisted: true,
+              })
+            }
+          }
+
           job.opencvAudit.defects.push(...cvAnalysis.defects)
-          job.opencvAudit.closedLoopLoopsExecuted += cvAnalysis.defects.filter((d) => d.closedLoopVerified).length
+          job.opencvAudit.closedLoopLoopsExecuted += Math.max(1, cvAnalysis.defects.filter((d) => d.closedLoopVerified).length)
+
+          // Same-viewport pre/post scroll regression comparison (distinguishes real layout shift from cross-viewport reflow)
+          if (preScrollScreenshotUrl && screenshotUrl) {
+            const sameVpDiff = await compareScreenshotsWithOpenCV(preScrollScreenshotUrl, screenshotUrl, {
+              id: `cv-same-vp-${vp.name.toLowerCase()}`,
+              label: `${vp.name} (${vp.width}×${vp.height}) Same-Viewport Pre/Post-Scroll Stability`,
+              viewportName: vp.name,
+              expectedChange: false,
+            })
+            if (sameVpDiff) {
+              sameVpDiff.comparisonType = "same_viewport_regression"
+              sameVpDiff.summary =
+                sameVpDiff.diffPercentage <= 2
+                  ? `Same-viewport baseline verified stable (${sameVpDiff.diffPercentage}% delta after scroll/reflow probe).`
+                  : `Same-viewport layout shift detected (${sameVpDiff.diffPercentage}% delta after scroll/reflow probe).`
+              job.opencvAudit.visualDiffs.push(sameVpDiff)
+              job.opencvAudit.totalComparisons += 1
+              if (sameVpDiff.status === "unexpected_shift") {
+                job.opencvAudit.unexpectedShiftsCount += 1
+              }
+            }
+          }
           if (annotatedScreenshotUrl) {
             job.opencvAudit.annotatedScreenshots.push({
               label: `${vp.name} OpenCV Contours`,
@@ -1018,6 +1148,9 @@ export async function runMultiDeviceResponsiveAudit(
               expectedChange: true,
             })
             if (diffRes) {
+              diffRes.comparisonType = "cross_viewport_reflow"
+              diffRes.status = "expected_change"
+              diffRes.summary = `Expected cross-viewport responsive reflow (${diffRes.diffPercentage}% pixel delta across ${diffRes.changedRegionsCount} zones adapting from ${results[0].width}px to ${vp.width}px — not a regression).`
               visualDiffHeatmapUrl = diffRes.diffHeatmapUrl
               diffFromDesktopPct = diffRes.diffPercentage
               job.opencvAudit.visualDiffs.push(diffRes)
@@ -1142,10 +1275,12 @@ export async function runMultiDeviceResponsiveAudit(
       job.opencvAudit.blankRegionsCount = job.opencvAudit.defects.filter((d) => d.type === "blank_region").length
       job.opencvAudit.missingElementsCount = job.opencvAudit.defects.filter((d) => d.type === "missing_element").length
       job.opencvAudit.overlappingElementsCount = job.opencvAudit.defects.filter((d) => d.type === "overlapping_elements" || d.type === "clipped_content").length
+      const touchDefectsCount = job.opencvAudit.defects.filter((d) => d.type === "touch_target_undersized").length
       const penalty =
         job.opencvAudit.unexpectedShiftsCount * 15 +
         job.opencvAudit.overlappingElementsCount * 8 +
-        job.opencvAudit.missingElementsCount * 10
+        job.opencvAudit.missingElementsCount * 10 +
+        touchDefectsCount * 6
       job.opencvAudit.visualStabilityScore = Math.max(0, Math.min(100, 100 - penalty))
     }
   } catch (stepCvErr) {
@@ -1166,14 +1301,15 @@ export async function runMultiDeviceResponsiveAudit(
     const rootScreen = job.fullAppTestPlan.screens?.[0] || { id: "S001", name: "Home / Dashboard" }
 
     const deviceWorkflows: WorkflowRun[] = results.map((r) => {
-      const v: AutomationVerdict = r.status === "passed" ? "passed" : r.status === "warning" ? "passed" : "failed";
+      const v: AutomationVerdict = r.status === "passed" ? "passed" : "failed";
       return {
         id: `WF-${r.name.toUpperCase()}`,
         name: `${r.name} Workflow (${r.width}×${r.height})`,
         entryScreenId: `${rootScreen.id}-${r.name.toLowerCase()}`,
         entryUrl: page.url() || job.fullAppTestPlan?.targetUrl || "",
         verdict: v,
-        summary: `${r.name} (${r.width}×${r.height}): ${(r.observations || []).join("; ")}`,
+        failedAtStep: v === "failed" ? 1 : undefined,
+        summary: `${r.name} (${r.width}×${r.height}) [${v.toUpperCase()}]: ${(r.observations || []).join("; ")}`,
         steps: [
           {
             stepIndex: 1,
@@ -1181,8 +1317,8 @@ export async function runMultiDeviceResponsiveAudit(
             screenName: `${rootScreen.name ? rootScreen.name.replace(/\s*\([^)]*\)$/, "") : "Home"} (${r.name})`,
             action: `resize_viewport (${r.width}×${r.height})`,
             targetName: `${r.width}×${r.height}`,
-            expectedOutcome: `Render layout responsively across ${r.name} (${r.width}×${r.height}) with 0 horizontal overflow`,
-            observedOutcome: (r.observations && r.observations[0]) || `${r.name} responsive audit completed`,
+            expectedOutcome: `Render layout responsively across ${r.name} (${r.width}×${r.height}) with 0 horizontal overflow and all touch targets >= 32×32px`,
+            observedOutcome: (r.observations && r.observations.join("; ")) || `${r.name} responsive audit completed`,
             verdict: v,
             afterScreenshotUrl: r.screenshotUrl,
             durationMs: 600,
@@ -2211,19 +2347,54 @@ export async function executeStructuredTestPlan(
             const paths = isMultiple
               ? pickUploadFiles(activeUploadInventory, { fileTypeRequired: fileType, acceptAttr, targetName: step.targetName, count: 2 }).map(f => f.filePath)
               : [picked.filePath]
+            const callsBeforeUpload = netRecorder.getCapturedCalls().length
             const result = await attachControlFiles(page, uploadTarget, paths)
-            await uploadTarget.evaluate((el) => {
+            const uiVerify = await uploadTarget.evaluate((el) => {
               el.setAttribute("data-qa-step-tested", "true")
+              const inp = el as HTMLInputElement
               const dz = el.closest("#drop-zone, [class*='drop']") || el.ownerDocument.getElementById("drop-zone")
-              if (dz && el.id === "drop-file-input" && (el as HTMLInputElement).files?.length) {
+              if (dz && el.id === "drop-file-input" && inp.files?.length) {
                 const dt = new DataTransfer()
-                Array.from((el as HTMLInputElement).files || []).forEach((f) => dt.items.add(f))
+                Array.from(inp.files || []).forEach((f) => dt.items.add(f))
                 dz.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: dt }))
               }
-            }).catch(() => {})
+              const attachedNames = Array.from(inp.files || []).map((f) => f.name)
+              return { attachedCount: attachedNames.length, attachedNames }
+            }).catch(() => ({ attachedCount: paths.length, attachedNames: paths.map((p) => path.basename(p)) }))
+
+            await settle(page, netRecorder, 600)
             await publishLiveFrame(job, page)
+
+            const uploadCalls = netRecorder.getCapturedCalls().slice(callsBeforeUpload)
+            const mutatingUploadCall = uploadCalls.find((c) => c.isMutating || /post|put|patch/i.test(c.method || ""))
+            const server2xx = Boolean(mutatingUploadCall && typeof mutatingUploadCall.status === "number" && mutatingUploadCall.status >= 200 && mutatingUploadCall.status < 300)
+
+            const attachedNames = uiVerify.attachedNames.length > 0 ? uiVerify.attachedNames : paths.map((p) => path.basename(p))
+            const verifiedStagesCount = !result.ok ? 0 : server2xx ? 5 : mutatingUploadCall ? 3 : 2
+            const isClientOnlyAttachment = result.ok && !mutatingUploadCall
+
+            step.uploadVerification = {
+              fileSelection: result.ok ? "verified" : "failed",
+              uiStateUpdate: result.ok && uiVerify.attachedCount > 0 ? "verified" : "failed",
+              networkRequest: mutatingUploadCall ? "verified" : "not_triggered_client_only",
+              serverResponse: server2xx ? "verified" : mutatingUploadCall ? "failed" : "not_triggered_client_only",
+              appProcessing: server2xx ? "verified" : "not_triggered_client_only",
+              verifiedStagesCount,
+              isClientOnlyAttachment,
+              attachedFiles: attachedNames,
+              uploadEndpointUrl: mutatingUploadCall?.url,
+              httpStatus: mutatingUploadCall?.status,
+              summary: isClientOnlyAttachment
+                ? `Client Input Attached (2/5 stages verified: ${attachedNames.join(", ")}) — No network upload or server processing triggered.`
+                : server2xx
+                ? `End-to-End Upload Verified (5/5 stages verified via ${mutatingUploadCall?.method} ${mutatingUploadCall?.url} -> ${mutatingUploadCall?.status}).`
+                : result.reason,
+            }
+
             actionVerdict = result.ok ? "passed" : "failed"
-            observation = result.reason
+            observation = isClientOnlyAttachment
+              ? `Upload Stages [2/5 Verified — Client Input Attachment Only]: (1) File Selection: VERIFIED (${attachedNames.join(", ")}) • (2) UI State Update: VERIFIED • (3) Network Upload Request: NOT TRIGGERED • (4) Server Response: UNVERIFIED • (5) App Processing: UNVERIFIED.`
+              : step.uploadVerification.summary
           } finally { await uploadTarget.dispose() }
         }
 

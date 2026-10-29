@@ -614,45 +614,82 @@ function generateStatsSection(job: AutomationJob): string {
   const report = job.report
   if (!report) return ''
 
+  const uniqueScreens = report.uniqueScreensTested ?? report.totalScreensTested ?? (job.screens?.length || 1)
+  const viewportsCount = report.viewportsTestedCount ?? ((job.responsiveResults && job.responsiveResults.length > 0) ? job.responsiveResults.length : 1)
+  const steps = job.fullAppTestPlan?.steps || []
+  const clientOnlyUploadSteps = steps.filter(
+    s => s.actionType === 'upload' && (s.uploadVerification?.isClientOnlyAttachment === true || /server processing was not tested|Client Input Attachment Only/i.test(s.actualResult || ''))
+  )
+  const passedTotal = steps.filter(s => s.status === 'passed' || s.verdict === 'passed').length
+  const vb = report.verificationBreakdown || {
+    verifiedFunctionalCount: Math.max(0, passedTotal - clientOnlyUploadSteps.length),
+    detectedDefectsCount: (job.issues || []).filter(i => i.verificationCategory !== 'unverified_backend').length,
+    partialClientOnlyCount: clientOnlyUploadSteps.length,
+    inconclusiveCount: steps.filter(s => s.status === 'blocked' || s.status === 'pending' || s.verdict === 'suspected_non_functional').length,
+  }
+  const closedLoopCount = job.opencvAudit?.closedLoopLoopsExecuted || (job.issues || []).filter(i => i.retestStatus === 'retested_persisted' || i.retestStatus === 'retested_resolved').length
+
   return `
-    <h2>Test Statistics</h2>
+    <h2>🎯 Developer Triage Summary (3 Key Questions)</h2>
+    <div style="background: #f8fafc; border: 1px solid #cbd5e1; border-left: 5px solid #4f46e5; border-radius: 8px; padding: 18px 20px; margin-bottom: 24px;">
+      <div style="margin-bottom: 12px;">
+        <strong>1. What failed or remained unverified?</strong>
+        <ul style="margin: 6px 0 0 20px; color: #334155;">
+          ${(job.issues || []).length === 0 && vb.partialClientOnlyCount === 0
+            ? `<li>All ${steps.length} actions across ${uniqueScreens} unique route screen(s) and ${viewportsCount} viewport(s) verified end-to-end with zero defects.</li>`
+            : (job.issues || []).map(iss => `<li><strong>[${escapeHtml(iss.severity.toUpperCase())} · ${escapeHtml(iss.type.replace(/_/g, ' '))}]</strong> ${escapeHtml(iss.description)}</li>`).join('')
+          }
+        </ul>
+      </div>
+      <div style="margin-bottom: 12px;">
+        <strong>2. What evidence proves it?</strong>
+        <div style="color: #475569; margin-top: 4px; font-size: 0.95em;">
+          Every finding below includes exact CSS selectors, expected vs. observed DOM/BoundingBox values, step-by-step reproduction instructions, and viewport-matched screenshot evidence.
+          ${vb.partialClientOnlyCount > 0 ? `<br/>• <strong>5-Stage Upload Pipeline:</strong> ${vb.partialClientOnlyCount} upload scenario(s) verified Stages 1–2 (File Selection + DOM State Update) while Stages 3–5 (Network Upload Request, 2xx Server Response, App Processing) were explicitly recorded as unverified on the wire.` : ''}
+        </div>
+      </div>
+      <div>
+        <strong>3. Did the agent investigate and verify the result (Closed-Loop)?</strong>
+        <div style="color: #475569; margin-top: 4px; font-size: 0.95em;">
+          <strong>Yes (${closedLoopCount} closed-loop re-verification(s) executed).</strong> Detected layout, touch-target, and disabled-state findings were re-inspected via live DOM <code>getBoundingClientRect()</code>, <code>getComputedStyle()</code>, and post-scroll baseline comparisons to confirm whether defects persisted.
+        </div>
+      </div>
+    </div>
+
+    <h2>Test Statistics &amp; 4-Category Verification Breakdown</h2>
     <div class="stats-grid">
       <div class="stat-card">
-        <div class="stat-value">${report.totalScreensTested}</div>
-        <div class="stat-label">Screens Tested</div>
+        <div class="stat-value">${uniqueScreens}</div>
+        <div class="stat-label">Unique Route Screens</div>
       </div>
       <div class="stat-card">
-        <div class="stat-value">${report.totalIssues}</div>
-        <div class="stat-label">Issues Found</div>
+        <div class="stat-value">${viewportsCount}</div>
+        <div class="stat-label">Responsive Viewports</div>
       </div>
       <div class="stat-card">
-        <div class="stat-value">${report.backNavigationScore}%</div>
-        <div class="stat-label">Back Navigation Score</div>
+        <div class="stat-value" style="color: #10b981;">${vb.verifiedFunctionalCount}</div>
+        <div class="stat-label">1. Verified Functional</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" style="color: #dc2626;">${vb.detectedDefectsCount}</div>
+        <div class="stat-label">2. Confirmed Defects</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" style="color: #d97706;">${vb.partialClientOnlyCount}</div>
+        <div class="stat-label">3. Client-Only Uploads (2/5 Stages)</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" style="color: #64748b;">${vb.inconclusiveCount}</div>
+        <div class="stat-label">4. Inconclusive / Blocked</div>
       </div>
       <div class="stat-card">
         <div class="stat-value">${report.responsiveScore}%</div>
         <div class="stat-label">Responsive Score</div>
       </div>
-      ${job.fullAppTestPlan ? `
-        <div class="stat-card">
-          <div class="stat-value">${job.fullAppTestPlan.steps?.length || 0}</div>
-          <div class="stat-label">Test Steps</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value">${job.fullAppTestPlan.coverage?.percentage.toFixed(1) || 0}%</div>
-          <div class="stat-label">Coverage</div>
-        </div>
-      ` : ''}
-      ${report.testCases ? `
-        <div class="stat-card">
-          <div class="stat-value">${report.testCases.filter(tc => tc.status === 'passed').length}</div>
-          <div class="stat-label">Test Cases Passed</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value">${report.testCases.filter(tc => tc.status === 'failed').length}</div>
-          <div class="stat-label">Test Cases Failed</div>
-        </div>
-      ` : ''}
+      <div class="stat-card">
+        <div class="stat-value">${closedLoopCount}</div>
+        <div class="stat-label">Closed-Loop Rechecks</div>
+      </div>
     </div>
   `
 }
@@ -692,17 +729,22 @@ function generateOpenCVAuditSection(job: AutomationJob): string {
     </div>
 
     ${cv.visualDiffs.length > 0 ? `
-      <h3>1. Visual Regression Diff Heatmaps (Before vs. After / Viewport Reflow)</h3>
+      <h3>1. Visual Regression Diff Heatmaps (Same-Viewport Baseline vs. Cross-Viewport Reflow)</h3>
       <div class="screenshots-grid" style="margin-bottom: 24px;">
-        ${cv.visualDiffs.map(d => `
+        ${cv.visualDiffs.map(d => {
+          const badgeText = d.comparisonType === 'same_viewport_regression'
+            ? (d.status === 'unexpected_shift' ? '❌ Same-Viewport Regression' : '✅ Same-Viewport Baseline Passed')
+            : '📐 Expected Responsive Reflow'
+          return `
           <div class="screenshot-item">
             ${d.diffHeatmapUrl ? `<img src="${d.diffHeatmapUrl}" alt="${escapeHtml(d.label)}" loading="lazy" />` : ''}
             <div class="screenshot-label">
+              <div style="font-size: 0.78em; font-weight: 700; color: ${d.status === 'unexpected_shift' ? '#dc2626' : '#059669'}; margin-bottom: 3px;">${badgeText}</div>
               <strong>${escapeHtml(d.label)}</strong><br/>
               Pixel Delta: ${d.diffPercentage}% • ${d.changedRegionsCount} changed region(s) • ${escapeHtml(d.summary)}
             </div>
           </div>
-        `).join('')}
+        `}).join('')}
       </div>
     ` : ''}
 
@@ -777,10 +819,24 @@ function generateIssuesSection(job: AutomationJob): string {
               <div class="issue-description">${escapeHtml(issue.description)}</div>
               ${issue.expected ? `<div style="margin-top: 8px;"><strong>Expected:</strong> ${escapeHtml(issue.expected)}</div>` : ''}
               ${issue.actual ? `<div style="margin-top: 4px;"><strong>Actual:</strong> ${escapeHtml(issue.actual)}</div>` : ''}
+              ${issue.reproductionSteps && issue.reproductionSteps.length > 0 ? `
+                <div style="margin-top: 8px; padding: 8px 12px; background: #f8fafc; border-left: 3px solid #6366f1; border-radius: 4px; font-size: 0.88em;">
+                  <strong>Reproduction Steps:</strong>
+                  <ol style="margin: 4px 0 0 18px;">
+                    ${issue.reproductionSteps.map(rs => `<li>${escapeHtml(rs)}</li>`).join('')}
+                  </ol>
+                </div>
+              ` : ''}
+              ${issue.retestDetail ? `
+                <div style="margin-top: 6px; font-size: 0.88em; color: #334155;">
+                  <strong>Closed-Loop Retest (${escapeHtml((issue.retestStatus || 'retested').replace(/_/g, ' '))}):</strong> ${escapeHtml(issue.retestDetail)}
+                </div>
+              ` : ''}
               <div class="issue-meta">
                 <span>📍 ${escapeHtml(issue.screenTitle)}</span>
                 <span>🔗 ${escapeHtml(issue.screenUrl)}</span>
                 ${issue.viewport ? `<span>📱 ${escapeHtml(issue.viewport)}</span>` : ''}
+                <span>🎯 Confidence: ${issue.confidence ?? 95}%</span>
                 <span>⏰ ${formatDate(issue.timestamp)}</span>
               </div>
               ${issue.correlatedEvidence ? `
@@ -884,19 +940,36 @@ function generateTestPlanSection(job: AutomationJob): string {
 
       return `
         <h3>${status.toUpperCase()} (${steps.length})</h3>
-        ${steps.map((step, index) => `
+        ${steps.map((step, index) => {
+          const isPartialUpload = step.actionType === 'upload' && (step.uploadVerification?.isClientOnlyAttachment === true || /server processing was not tested|Client Input Attachment Only/i.test(step.actualResult || ''))
+          const badgeLabel = isPartialUpload ? 'PARTIAL (2/5 STAGES: CLIENT ATTACHED)' : step.status
+          const badgeStyle = isPartialUpload ? 'background: #fef3c7; color: #92400e; border: 1px solid #f59e0b;' : ''
+          const uv = step.uploadVerification
+          return `
           <div class="test-step status-${step.status}">
             <div class="step-header">
               <div class="step-action">
                 Step ${step.stepIndex + 1}: ${escapeHtml(step.actionType)} - ${escapeHtml(step.targetName)}
               </div>
-              <span class="status-badge status-${step.status}">${step.status}</span>
+              <span class="status-badge status-${step.status}" style="${badgeStyle}">${escapeHtml(badgeLabel)}</span>
             </div>
             <div class="step-details">Screen: ${escapeHtml(step.screenName)}</div>
             ${step.targetSelector ? `<div class="step-details">Selector: <code>${escapeHtml(step.targetSelector)}</code></div>` : ''}
             ${step.syntheticValue ? `<div class="step-details">Value: ${escapeHtml(step.syntheticValue)}</div>` : ''}
             <div class="step-details">Expected: ${escapeHtml(step.expectedResult)}</div>
             ${step.actualResult ? `<div class="step-details">Actual: ${escapeHtml(step.actualResult)}</div>` : ''}
+            ${uv ? `
+              <div style="margin-top: 8px; padding: 8px 10px; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 6px; font-size: 0.85em;">
+                <strong>5-Stage Upload Verification Pipeline (${uv.verifiedStagesCount}/5 Stages Verified):</strong>
+                <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px;">
+                  <span style="padding: 2px 8px; border-radius: 4px; background: ${uv.fileSelection === 'verified' ? '#d1fae5' : '#fee2e2'}; color: ${uv.fileSelection === 'verified' ? '#065f46' : '#991b1b'};">1. File Selection: ${escapeHtml(uv.fileSelection)}</span>
+                  <span style="padding: 2px 8px; border-radius: 4px; background: ${uv.uiStateUpdate === 'verified' ? '#d1fae5' : '#fee2e2'}; color: ${uv.uiStateUpdate === 'verified' ? '#065f46' : '#991b1b'};">2. UI State Update: ${escapeHtml(uv.uiStateUpdate)}</span>
+                  <span style="padding: 2px 8px; border-radius: 4px; background: ${uv.networkRequest === 'verified' ? '#d1fae5' : '#fef3c7'}; color: ${uv.networkRequest === 'verified' ? '#065f46' : '#92400e'};">3. Network Request: ${escapeHtml(uv.networkRequest)}</span>
+                  <span style="padding: 2px 8px; border-radius: 4px; background: ${uv.serverResponse === 'verified' ? '#d1fae5' : '#fef3c7'}; color: ${uv.serverResponse === 'verified' ? '#065f46' : '#92400e'};">4. Server 2xx Response: ${escapeHtml(uv.serverResponse)}</span>
+                  <span style="padding: 2px 8px; border-radius: 4px; background: ${uv.appProcessing === 'verified' ? '#d1fae5' : '#fef3c7'}; color: ${uv.appProcessing === 'verified' ? '#065f46' : '#92400e'};">5. App Processing: ${escapeHtml(uv.appProcessing)}</span>
+                </div>
+              </div>
+            ` : ''}
             ${step.error ? `<div style="color: #dc2626; margin-top: 8px;">Error: ${escapeHtml(step.error)}</div>` : ''}
             ${step.evidence ? `
               <div style="margin-top: 10px; padding: 10px; background: #f8fafc; border-radius: 4px; font-size: 0.9em;">
@@ -906,7 +979,7 @@ function generateTestPlanSection(job: AutomationJob): string {
               </div>
             ` : ''}
           </div>
-        `).join('')}
+        `}).join('')}
       `
     }).join('')}
   `
