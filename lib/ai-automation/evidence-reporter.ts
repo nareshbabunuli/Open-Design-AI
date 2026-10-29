@@ -94,28 +94,8 @@ export function buildAutomationReport(
       (s.uploadVerification?.isClientOnlyAttachment === true ||
         /server processing was not tested|Client Input Attachment Only/i.test(s.actualResult || ""))
   )
-  if (clientOnlyUploadSteps.length > 0 && !job.issues.some((i) => i.type === "unverified_backend_upload")) {
-    job.issues.push({
-      id: `issue-upload-backend-${Date.now()}`,
-      screenUrl: job.targetUrl,
-      screenTitle: clientOnlyUploadSteps[0]?.screenName || "Home / Dashboard",
-      type: "unverified_backend_upload",
-      severity: "low",
-      description: `${clientOnlyUploadSteps.length} file upload scenario(s) verified client-side file selection and DOM state update (2/5 stages), but no network upload request or server-side file processing was triggered.`,
-      expected: "End-to-end upload verification requires 5 stages: (1) File Selection, (2) UI State Update, (3) Network Upload Request, (4) Server 2xx Response, and (5) Application-level Processing.",
-      actual: `Stages 1–2 verified for ${clientOnlyUploadSteps.map((u) => u.targetName).join(", ")}; stages 3–5 (network request, server response, app processing) were not triggered.`,
-      reproductionSteps: [
-        `1. Attach test file(s) to upload controls (${clientOnlyUploadSteps.slice(0, 3).map((u) => u.targetName).join(", ")}) on ${job.targetUrl}.`,
-        "2. Monitor outgoing HTTP network calls (POST/PUT multipart).",
-        "3. Observe files attach to browser <input type='file'> state, but page does not transmit files to a backend upload endpoint.",
-      ],
-      confidence: 100,
-      retestStatus: "retested_persisted",
-      retestDetail: "Network recorder monitored 600ms post-attachment settle window across all upload controls; 0 mutating upload requests observed.",
-      verificationCategory: "unverified_backend",
-      timestamp: new Date().toISOString(),
-    })
-  }
+  // Client-only uploads are tracked in verificationBreakdown.partialClientOnlyCount (2/5 stages verified)
+  // without inflating job.issues as a false defect on static/client-only pages.
 
   const totalIssues = job.issues.length
   const postmanCoverage = buildPostmanCoverageReport(testPlan, options?.postmanSummary || testPlan.postmanSummary)
@@ -155,7 +135,7 @@ export function buildAutomationReport(
   if (job.issues.some((i) => i.type === "touch_target_violation")) {
     const touchIssues = job.issues.filter((i) => i.type === "touch_target_violation")
     recommendations.push(
-      `Increase touch target dimensions to at least 32×32px (WCAG 2.5.8) on tablet/mobile viewports: ${touchIssues.map((t) => t.actual || t.description).join(" | ")}`
+      `Increase touch target dimensions to at least 24×24px (WCAG 2.5.8 Level AA) on tablet/mobile viewports: ${touchIssues.map((t) => t.actual || t.description).join(" | ")}`
     )
   }
   if (job.issues.some((i) => i.type === "responsive_overflow")) {

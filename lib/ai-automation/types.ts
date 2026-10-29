@@ -203,7 +203,7 @@ export type OpenCVVisualDiff = {
   diffPercentage: number
   changedRegionsCount: number
   layoutShiftDetected: boolean
-  comparisonType?: "same_viewport_regression" | "cross_viewport_reflow" | "step_interaction"
+  comparisonType?: "same_viewport_regression" | "cross_viewport_reflow" | "step_interaction" | "step_interaction"
   status: "stable" | "expected_change" | "unexpected_shift"
   summary: string
 }

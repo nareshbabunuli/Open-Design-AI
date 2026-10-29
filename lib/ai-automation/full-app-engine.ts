@@ -845,16 +845,23 @@ export async function runMultiDeviceResponsiveAudit(
           }
         }
 
-        // Touch target sizing (minimum 32x32px recommended on mobile)
+        // Touch target sizing: WCAG 2.5.8 Level AA minimum is 24x24px (WCAG 2.5.5 Level AAA is 44x44px advisory)
         let touchTargetViolations = 0
         const smallTouchTargets: string[] = []
+        const aaaAdvisoryTargets: string[] = []
         const clickables = document.querySelectorAll("button, a, input[type='button'], input[type='submit'], [role='button']") 
         clickables.forEach((el) => {
           const rect = (el as HTMLElement).getBoundingClientRect()
-          if (rect.width > 0 && rect.height > 0 && (rect.width < 32 || rect.height < 32)) {
+          const idPart = el.id ? `#${el.id}` : ""
+          const label = `${el.tagName.toLowerCase()}${idPart} (${Math.round(rect.width)}×${Math.round(rect.height)}px)`
+          if (rect.width > 0 && rect.height > 0 && (rect.width < 24 || rect.height < 24)) {
             touchTargetViolations++
             if (smallTouchTargets.length < 4) {
-              smallTouchTargets.push(`${el.tagName.toLowerCase()}${el.id ? `#${el.id}` : ""} (${Math.round(rect.width)}×${Math.round(rect.height)}px)`)
+              smallTouchTargets.push(label)
+            }
+          } else if (rect.width > 0 && rect.height > 0 && (rect.width < 44 || rect.height < 44)) {
+            if (aaaAdvisoryTargets.length < 4) {
+              aaaAdvisoryTargets.push(label)
             }
           }
         })
@@ -902,6 +909,7 @@ export async function runMultiDeviceResponsiveAudit(
           overflowingElements,
           touchTargetViolations,
           smallTouchTargets,
+          aaaAdvisoryTargets,
           brokenImages,
           domElements,
         }
@@ -913,6 +921,7 @@ export async function runMultiDeviceResponsiveAudit(
         overflowingElements: [],
         touchTargetViolations: 0,
         smallTouchTargets: [],
+        aaaAdvisoryTargets: [] as string[],
         brokenImages: 0,
         domElements: [] as Array<{ selector: string; label: string; type: string; bounds: { x: number; y: number; width: number; height: number } }>,
       }))
@@ -950,7 +959,7 @@ export async function runMultiDeviceResponsiveAudit(
       if (isMobile && layoutData.touchTargetViolations > 0) {
         if (status !== "failed") status = "warning"
         observations.push(
-          `${layoutData.touchTargetViolations} interactive element(s) under recommended minimum 32px touch target: ${layoutData.smallTouchTargets.join(", ")}`
+          `${layoutData.touchTargetViolations} interactive element(s) below WCAG 2.5.8 Level AA minimum (24×24px): ${layoutData.smallTouchTargets.join(", ")}`
         )
       }
 
@@ -960,7 +969,10 @@ export async function runMultiDeviceResponsiveAudit(
       }
 
       if (observations.length === 0) {
-        observations.push(`Layout is fully responsive with zero horizontal overflow and proper touch scaling.`)
+        const aaaNote = (isMobile && layoutData.aaaAdvisoryTargets && layoutData.aaaAdvisoryTargets.length > 0)
+          ? ` All interactive controls pass WCAG 2.5.8 Level AA minimum (24×24px); ${layoutData.aaaAdvisoryTargets.join(", ")} noted below optional WCAG 2.5.5 AAA (44×44px) target.`
+          : ""
+        observations.push(`Layout is fully responsive with zero horizontal overflow and compliant touch targets.${aaaNote}`)
       }
 
       if (layoutData.hasHorizontalOverflow) {
@@ -997,13 +1009,13 @@ export async function runMultiDeviceResponsiveAudit(
           viewport: `${vp.name} (${vp.width}×${vp.height})`,
           type: "touch_target_violation",
           severity: "medium",
-          description: `${layoutData.touchTargetViolations} interactive control(s) on ${vp.name} (${vp.width}×${vp.height}) are smaller than the recommended 32×32px minimum touch target size: ${layoutData.smallTouchTargets.join(", ")}.`,
-          expected: `All interactive controls on touch viewports (${vp.name} ${vp.width}×${vp.height}) must measure at least 32×32px (WCAG 2.5.8 Target Size).`,
+          description: `${layoutData.touchTargetViolations} interactive control(s) on ${vp.name} (${vp.width}×${vp.height}) are smaller than the WCAG 2.5.8 Level AA minimum 24×24px touch target size: ${layoutData.smallTouchTargets.join(", ")}.`,
+          expected: `All interactive controls on touch viewports (${vp.name} ${vp.width}×${vp.height}) must measure at least 24×24px (WCAG 2.5.8 Level AA Target Size Minimum).`,
           actual: `Undersized control(s) detected: ${layoutData.smallTouchTargets.join(", ")}.`,
           reproductionSteps: [
             `1. Set browser viewport to ${vp.name} (${vp.width}×${vp.height}) on ${page.url()}.`,
             `2. Locate control(s): ${layoutData.smallTouchTargets.join(", ")}.`,
-            `3. Inspect rendered bounding box via getBoundingClientRect() — height is below 32px minimum.`,
+            `3. Inspect rendered bounding box via getBoundingClientRect() — dimensions are below 24×24px WCAG 2.5.8 AA minimum.`,
           ],
           confidence: 98,
           retestStatus: "retested_persisted",
@@ -1096,7 +1108,7 @@ export async function runMultiDeviceResponsiveAudit(
                 viewport: `${vp.name} (${vp.width}×${vp.height})`,
                 selector: targetDesc,
                 domConfirmed: true,
-                domConfirmationDetail: `Interactive touch target "${targetDesc}" on ${vp.name} (${vp.width}×${vp.height}) is below the 32×32px minimum tap threshold.`,
+                domConfirmationDetail: `Interactive touch target "${targetDesc}" on ${vp.name} (${vp.width}×${vp.height}) is below the 24×24px WCAG 2.5.8 Level AA minimum tap threshold.`,
                 closedLoopVerified: true,
                 closedLoopAction: `Agent scrolled "${targetDesc}" into center view, waited 250ms for CSS settle, and re-measured getBoundingClientRect() -> undersized dimensions persisted`,
                 defectPersisted: true,
@@ -1209,6 +1221,16 @@ export async function runMultiDeviceResponsiveAudit(
   } catch {}
 
   job.responsiveResults = results
+  if (job.screens && job.screens.length > 0) {
+    const overallRespStatus: "passed" | "warning" | "failed" = results.some((r) => r.status === "failed")
+      ? "failed"
+      : results.some((r) => r.status === "warning")
+      ? "warning"
+      : "passed"
+    for (const sc of job.screens) {
+      sc.responsiveStatus = overallRespStatus
+    }
+  }
 
   // Calculate responsiveScore: 100 max, -30 for each failed device, -10 for each warning
   const failedDevices = results.filter((r) => r.status === "failed").length
@@ -1248,6 +1270,8 @@ export async function runMultiDeviceResponsiveAudit(
             expectedChange: currStep.actionType === "navigate" || currStep.actionType === "click",
           })
           if (stepDiff) {
+            stepDiff.comparisonType = "step_interaction"
+            stepDiff.summary = `Interactive UI state transition (${stepDiff.diffPercentage}% pixel delta across ${stepDiff.changedRegionsCount} active control region(s))`
             if (job.opencvAudit.visualDiffs.length < 8) {
               job.opencvAudit.visualDiffs.push(stepDiff)
             }
@@ -2472,6 +2496,40 @@ export async function executeStructuredTestPlan(
           isSubmit: isSubmitLike || /submit|save|register|login/i.test(step.targetName),
         })
 
+        // Negative Required-Field Constraint Validation Probe before valid form submission:
+        // Verify that clearing a required field blocks submission via HTML5/DOM constraint validation, then restore valid value.
+        let negativeValidationSummary = ""
+        if (isSubmitLike) {
+          try {
+            const negProbe = await page.evaluate(() => {
+              const form = document.querySelector("form")
+              const reqField = (form || document).querySelector(
+                'input[required]:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not(:disabled), textarea[required]:not(:disabled), select[required]:not(:disabled)'
+              ) as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null
+              if (!reqField || !reqField.value) return null
+              const savedVal = reqField.value
+              const fieldLabel = reqField.id ? `#${reqField.id}` : (reqField.name || "required field")
+              reqField.value = ""
+              reqField.dispatchEvent(new Event("input", { bubbles: true }))
+              const isValidWhenEmpty = reqField.checkValidity()
+              const formValidWhenEmpty = form ? form.checkValidity() : isValidWhenEmpty
+              const valMsg = reqField.validationMessage || "Required field constraint enforced"
+              // Restore valid value immediately for positive submission
+              reqField.value = savedVal
+              reqField.dispatchEvent(new Event("input", { bubbles: true }))
+              reqField.dispatchEvent(new Event("change", { bubbles: true }))
+              return {
+                fieldLabel,
+                blockedInvalid: !isValidWhenEmpty || !formValidWhenEmpty,
+                valMsg,
+              }
+            }).catch(() => null)
+            if (negProbe && negProbe.blockedInvalid) {
+              negativeValidationSummary = ` [Negative Validation Path Verified: clearing required field "${negProbe.fieldLabel}" triggered constraint rejection ("${negProbe.valMsg}") before restoring valid data]`
+            }
+          } catch {}
+        }
+
         // If clicking a submit button inside a form/modal that has an empty <input type="file">,
         // attach a test file before submitting so the form submission succeeds with a real file.
         if (isSubmitLike) {
@@ -2544,7 +2602,7 @@ export async function executeStructuredTestPlan(
           await tabTarget.dispose()
         }
         actionVerdict = ladderResult.verdict
-        observation = ladderResult.reason
+        observation = ladderResult.reason + negativeValidationSummary
         if (job.currentAction) {
           job.currentAction.status = ladderResult.verdict === "passed"
             ? "passed"

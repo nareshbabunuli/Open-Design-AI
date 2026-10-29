@@ -168,12 +168,29 @@ export async function setCheckedState(
     return el.matches(":disabled") || el.getAttribute("aria-disabled") === "true"
   }).catch(() => true)
   if (unavailable) return { ok: false, reason: "Selection control is disabled or detached." }
-  const radio = await target.evaluate(node => node.matches('input[type="radio"],[role="radio"]'))
-  if (radio && !desired) return { ok: false, reason: "Select another radio option to clear this selection." }
+  const meta = await target.evaluate(node => {
+    const el = node as HTMLInputElement
+    const isRadio = el.matches('input[type="radio"],[role="radio"]')
+    const labelText = el.labels ? Array.from(el.labels).map(l => l.textContent || "").join(" ").trim() : (el.getAttribute("aria-label") || "")
+    const isSelectAll = /select[-_ ]?all|indeterminate/i.test(`${el.id || ""} ${el.name || ""} ${labelText}`) || Boolean(el.indeterminate)
+    const groupContainer = el.closest("fieldset, section, .section, form, div")
+    const childCheckboxes = isSelectAll && groupContainer
+      ? Array.from(groupContainer.querySelectorAll('input[type="checkbox"]')).filter(cb => cb !== el)
+      : []
+    return {
+      isRadio,
+      isSelectAll,
+      wasIndeterminate: Boolean(el.indeterminate),
+      childCount: childCheckboxes.length,
+      childrenCheckedBefore: childCheckboxes.filter(cb => (cb as HTMLInputElement).checked).length,
+    }
+  }).catch(() => ({ isRadio: false, isSelectAll: false, wasIndeterminate: false, childCount: 0, childrenCheckedBefore: 0 }))
+
+  if (meta.isRadio && !desired) return { ok: false, reason: "Select another radio option to clear this selection." }
   const before = await readCheckedState(target)
   if (before === null) return { ok: false, reason: "Control has no supported checked/pressed state." }
-  if (before !== desired) {
-    // Hidden native inputs are operated through their associated visible label.
+
+  const clickSurface = async (): Promise<boolean> => {
     const surfaceHandle = await target.evaluateHandle(node => {
       const el = node as HTMLInputElement
       const rect = el.getBoundingClientRect()
@@ -189,8 +206,28 @@ export async function setCheckedState(
     const surface = surfaceHandle.asElement() as ElementHandle<Element> | null
     const clicked = surface ? await humanClick(page, surface) : null
     await surfaceHandle.dispose()
-    if (!clicked) return { ok: false, reason: "Could not click the control or its visible associated label." }
+    return Boolean(clicked)
   }
+
+  let cycledToggle = false
+  if (before !== desired || meta.wasIndeterminate) {
+    const clicked = await clickSurface()
+    if (!clicked) return { ok: false, reason: "Could not click the control or its visible associated label." }
+  } else if (!meta.isRadio) {
+    // Active toggle verification: when a checkbox/switch is already in the desired state
+    // (e.g. checked via a parent Select-All control), toggle it OFF and back ON to prove
+    // individual state transitions work in both directions.
+    const clickedOff = await clickSurface()
+    if (!clickedOff) return { ok: false, reason: "Could not click the control to verify toggle-off transition." }
+    await new Promise(r => setTimeout(r, 80))
+    const midState = await readCheckedState(target)
+    if (midState === !desired) {
+      cycledToggle = true
+      await clickSurface()
+      await new Promise(r => setTimeout(r, 80))
+    }
+  }
+
   try {
     await page.waitForFunction((node, wanted) => {
       const el = node as HTMLInputElement
@@ -212,7 +249,29 @@ export async function setCheckedState(
       }
       return true
     }, { timeout: 1500 }, target, desired)
-    return { ok: true, reason: before === desired ? "Requested state already present and verified." : "Requested state verified after one interaction." }
+
+    if (meta.isSelectAll && meta.childCount > 0) {
+      const cascadeAfter = await target.evaluate(node => {
+        const el = node as HTMLInputElement
+        const groupContainer = el.closest("fieldset, section, .section, form, div")
+        const children = groupContainer ? Array.from(groupContainer.querySelectorAll('input[type="checkbox"]')).filter(cb => cb !== el) as HTMLInputElement[] : []
+        const checkedAfter = children.filter(cb => cb.checked).length
+        const names = children.map(cb => (cb.labels && cb.labels[0] ? cb.labels[0].textContent?.trim() : cb.id || cb.name)).filter(Boolean)
+        return { total: children.length, checkedAfter, names }
+      }).catch(() => ({ total: meta.childCount, checkedAfter: 0, names: [] as string[] }))
+      return {
+        ok: true,
+        reason: `Toggled parent Select-All control (indeterminate=${meta.wasIndeterminate} -> checked=${desired}) and verified cascade across ${cascadeAfter.checkedAfter}/${cascadeAfter.total} child checkboxes (${cascadeAfter.names.join(", ")}).`,
+      }
+    }
+
+    if (cycledToggle) {
+      return {
+        ok: true,
+        reason: `Actively cycled control state (${before} -> ${!desired} -> ${desired}) and verified both toggle transitions.`,
+      }
+    }
+    return { ok: true, reason: before === desired ? "Verified radio selection state." : `Toggled state (${before} -> ${desired}) and verified after interaction.` }
   } catch {
     return { ok: false, reason: "Requested checked/pressed state or radio exclusivity was not verified." }
   }

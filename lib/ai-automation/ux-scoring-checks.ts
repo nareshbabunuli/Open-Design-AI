@@ -201,30 +201,35 @@ export function checkPrimaryCTADiscoverability(visual: VisualEvidence): ScoringC
 export function checkNavigationClarity(dom: DOMEvidence): ScoringCheck {
   let rating: CheckRating
   let evidence: string
+  const accessibleButtons = dom.buttons.filter(b => b.hasAccessibleName).length
+  const sectionHeadings = dom.headingHierarchy.length
   
-  if (dom.hasNavigationLandmark && dom.buttons.filter(b => b.hasAccessibleName).length >= 3) {
+  if (dom.hasNavigationLandmark && accessibleButtons >= 3) {
     rating = CheckRating.EXCELLENT
-    evidence = `Clear navigation structure with ${dom.buttons.length} accessible controls`
+    evidence = `Clear <nav> landmark structure with ${accessibleButtons} accessible action controls and ${sectionHeadings} section heading(s)`
   } else if (dom.hasNavigationLandmark) {
     rating = CheckRating.GOOD
-    evidence = 'Navigation landmark present but some controls lack accessible names'
-  } else if (dom.buttons.length >= 3) {
+    evidence = 'Navigation landmark present; most interactive controls have accessible names'
+  } else if (sectionHeadings >= 2 && accessibleButtons >= 2) {
+    rating = CheckRating.GOOD
+    evidence = `Single-page view structured via ${sectionHeadings} semantic headings (<h1>–<h3>) and ${accessibleButtons} labeled interactive buttons (no multi-page <nav> landmark required)`
+  } else if (dom.buttons.length >= 3 || sectionHeadings >= 1) {
     rating = CheckRating.NEEDS_IMPROVEMENT
-    evidence = 'No navigation landmark. Users rely on visual layout alone.'
+    evidence = `No <nav> landmark and limited heading hierarchy (${sectionHeadings} heading(s)); users rely on visual layout to locate actions`
   } else {
     rating = CheckRating.MAJOR_FRICTION
-    evidence = 'Limited navigation options and no semantic structure'
+    evidence = 'Limited navigation options and no semantic heading or landmark structure'
   }
   
   return {
     id: `DISC-002`,
     dimension: 'discoverability',
-    rule: 'Navigation structure discoverability',
+    rule: 'Navigation & section structure discoverability',
     rating,
     evidence,
     researchReference: 'Cognitive walkthrough: Will user notice the correct action?',
-    wcagCriteria: !dom.hasNavigationLandmark ? 'WCAG 2.2 A 1.3.1' : undefined,
-    confidence: 0.85,
+    wcagCriteria: (!dom.hasNavigationLandmark && sectionHeadings < 2) ? 'WCAG 2.2 A 1.3.1' : undefined,
+    confidence: 0.80,
     applicable: true
   }
 }
@@ -454,6 +459,36 @@ export function checkVisualClutter(visual: VisualEvidence): ScoringCheck {
   }
 }
 
+export function checkKeyboardOperability(accessibility: AccessibilityEvidence): ScoringCheck {
+  const tabSeq = accessibility.keyboardTabOrder || []
+  const uniqueStops = new Set(tabSeq).size
+  let rating: CheckRating
+  let evidence: string
+
+  if (accessibility.keyboardAccessible && accessibility.focusIndicatorVisible && uniqueStops >= 2) {
+    rating = CheckRating.EXCELLENT
+    evidence = `Keyboard Tab navigation verified across ${uniqueStops} focusable controls (${tabSeq.join(' → ')}) with visible focus indicators`
+  } else if (accessibility.keyboardAccessible) {
+    rating = CheckRating.GOOD
+    evidence = `Keyboard Tab focus advanced (${tabSeq.join(' → ') || 'focusable elements verified'}), but focus ring styling could be more prominent`
+  } else {
+    rating = CheckRating.NEEDS_IMPROVEMENT
+    evidence = 'Keyboard Tab traversal did not advance across interactive controls (potential focus trap or missing tabindex)'
+  }
+
+  return {
+    id: 'ACC-003',
+    dimension: 'accessibilityOperability',
+    rule: 'Keyboard Tab order & focus visibility',
+    rating,
+    evidence,
+    researchReference: 'WCAG 2.2 A 2.1.1 (Keyboard) & AA 2.4.7 (Focus Visible)',
+    wcagCriteria: !accessibility.keyboardAccessible ? 'WCAG 2.2 A 2.1.1' : undefined,
+    confidence: 0.90,
+    applicable: true
+  }
+}
+
 /**
  * Apply all scoring checks to collected evidence
  */
@@ -485,6 +520,7 @@ export function applyAllScoringChecks(evidence: ScreenEvidenceBundle): ScoringCh
   // Accessibility checks (per screen)
   checks.push(checkWCAGCompliance(evidence.accessibility))
   checks.push(checkFormAccessibility(evidence.dom))
+  checks.push(checkKeyboardOperability(evidence.accessibility))
   
   // Visual Clarity checks (per screen)
   checks.push(checkTextReadability(evidence.visual))

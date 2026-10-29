@@ -422,7 +422,8 @@ export function generateHTMLReport(job: AutomationJob): string {
     .log-info { background: #e0f2fe; color: #075985; }
 
     .page-break {
-      page-break-after: always;
+      height: 1px;
+      margin: 16px 0;
     }
 
     @media print {
@@ -587,13 +588,23 @@ function generateUXAuditSection(job: AutomationJob): string {
       <div class="ux-dimensions">
         ${uxScore.dimensions.map(dim => {
           const checksCount = 'checksApplied' in dim ? dim.checksApplied : dim.checks.length
+          const checkDetails = 'checks' in dim && Array.isArray((dim as any).checks) ? (dim as any).checks : []
           return `
           <div class="ux-dimension">
             <div class="ux-dimension-name">${escapeHtml(dim.dimension)}</div>
             <div class="ux-dimension-score">${dim.score.toFixed(1)}</div>
-            <div style="font-size: 0.85em; opacity: 0.8; margin-top: 5px;">
-              Weight: ${(dim.weight * 100).toFixed(0)}% | ${checksCount} checks
+            <div style="font-size: 0.85em; opacity: 0.85; margin-top: 5px;">
+              Weight: ${(dim.weight * 100).toFixed(0)}% | ${checksCount} check(s)
             </div>
+            ${checkDetails.length > 0 ? `
+              <div style="margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.2); font-size: 0.8em; line-height: 1.45; opacity: 0.95;">
+                ${checkDetails.map((chk: any) => `
+                  <div style="margin-bottom: 6px;">
+                    <strong>• ${escapeHtml(chk.rule || chk.id)} (${chk.rating}/4):</strong> ${escapeHtml(chk.evidence || '')}
+                  </div>
+                `).join('')}
+              </div>
+            ` : ''}
           </div>
         `
         }).join('')}
@@ -769,6 +780,8 @@ function generateOpenCVAuditSection(job: AutomationJob): string {
         ${cv.visualDiffs.map(d => {
           const badgeText = d.comparisonType === 'same_viewport_regression'
             ? (d.status === 'unexpected_shift' ? '❌ Same-Viewport Regression' : '✅ Same-Viewport Baseline Passed')
+            : d.comparisonType === 'step_interaction'
+            ? '⚡ Interactive State Transition'
             : '📐 Expected Responsive Reflow'
           return `
           <div class="screenshot-item">
@@ -912,9 +925,9 @@ function generateScreensSection(job: AutomationJob): string {
             <div class="screen-url">${escapeHtml(screen.url)}</div>
             ${screen.pageType ? `<div style="font-size: 0.85em; color: #64748b; margin-top: 5px;">Type: ${escapeHtml(screen.pageType)}</div>` : ''}
           </div>
-          <div>
-            <span class="status-badge status-${screen.backNavigationStatus}">${screen.backNavigationStatus}</span>
-            <span class="status-badge status-${screen.responsiveStatus}" style="margin-left: 8px;">${screen.responsiveStatus}</span>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <span class="status-badge status-${screen.backNavigationStatus}">Back Nav: ${escapeHtml(screen.backNavigationStatus)}</span>
+            <span class="status-badge status-${screen.responsiveStatus}">Responsive: ${escapeHtml(screen.responsiveStatus)}</span>
           </div>
         </div>
 
@@ -1102,7 +1115,7 @@ function generateLogsSection(job: AutomationJob): string {
   return `
     <div class="page-break"></div>
     <h2>Execution Logs (${logs.length})</h2>
-    <div style="max-height: 600px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 6px; padding: 15px; background: #fafafa;">
+    <div style="border: 1px solid #e2e8f0; border-radius: 6px; padding: 15px; background: #fafafa;">
       ${logs.map(log => `
         <div class="log-entry log-${log.level}">
           <span style="opacity: 0.7;">[${formatTime(log.timestamp)}]</span>

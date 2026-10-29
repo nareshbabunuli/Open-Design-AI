@@ -194,7 +194,7 @@ export function deriveScreenName(
 ): string {
   if (modalTitle) return `${modalTitle} (Modal)`
   if (isLoginWall) return "Sign In / Login"
-  if (heading && heading.length < 40 && !heading.toLowerCase().includes("welcome")) {
+  if (heading && heading.length <= 80 && !heading.toLowerCase().includes("welcome")) {
     return heading.trim()
   }
   const clean = pathStr.replace(/^\//, "").replace(/\/$/, "")

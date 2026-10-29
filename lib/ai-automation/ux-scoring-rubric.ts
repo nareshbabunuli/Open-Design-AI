@@ -237,13 +237,15 @@ export function calculateOverallUXScore(
   const overall = dimensions.reduce((sum, dim) => sum + dim.weightedContribution, 0)
   
   // Overall confidence (average of dimensional confidences weighted by their contribution)
+  const totalApplied = dimensions.reduce((sum, dim) => sum + dim.checksApplied, 0)
   const totalWeight = dimensions.reduce((sum, dim) => sum + (dim.checksApplied > 0 ? dim.weight : 0), 0)
-  const confidence = totalWeight > 0
+  const rawConfidence = totalWeight > 0
     ? dimensions.reduce((sum, dim) => 
         sum + (dim.checksApplied > 0 ? dim.confidence * dim.weight : 0), 0) / totalWeight
     : 0
-
-  const totalApplied = dimensions.reduce((sum, dim) => sum + dim.checksApplied, 0)
+  // Calibrate confidence by sample depth (1-2 checks per dimension on a single screen caps around 74-78%)
+  const sampleFactor = Math.min(1, 0.72 + Math.min(totalApplied, 30) * 0.008)
+  const confidence = rawConfidence * sampleFactor
   const totalAvailable = dimensions.reduce((sum, dim) => sum + dim.checksTotal, 0)
   const coverage = totalAvailable > 0 ? (totalApplied / totalAvailable) * 100 : 0
 

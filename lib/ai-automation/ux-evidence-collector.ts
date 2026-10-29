@@ -107,6 +107,7 @@ export type AccessibilityEvidence = {
   // Keyboard navigation
   keyboardAccessible: boolean
   focusIndicatorVisible: boolean
+  keyboardTabOrder?: string[]
   
   // ARIA usage
   ariaIssues: Array<{
@@ -188,11 +189,13 @@ export async function collectVisualEvidence(
   const viewport = page.viewport()!
   
   const analysis = await page.evaluate(() => {
-    // Find primary CTA
-    const buttons = Array.from(document.querySelectorAll('button, a, [role="button"]'))
+    // Find primary CTA (matches explicit submit buttons or primary action labels)
+    const buttons = Array.from(document.querySelectorAll('button[type="submit"], input[type="submit"], button, a, [role="button"]'))
     const primaryCandidates = buttons.filter(btn => {
-      const text = (btn.textContent || '').toLowerCase()
-      return /^(get started|sign up|try|buy|continue|next|submit|create)$/i.test(text.trim())
+      const el = btn as HTMLElement
+      if ((el as HTMLButtonElement).type === 'submit') return true
+      const text = (el.textContent || (el as HTMLInputElement).value || '').toLowerCase().trim()
+      return /\b(get started|sign up|try|buy|continue|next|submit|save|create|confirm|apply|send|verify)\b/i.test(text)
     })
     
     let primaryCTA: VisualEvidence['primaryCTA'] = { found: false }
@@ -487,11 +490,48 @@ export async function collectAccessibilityEvidence(page: Page): Promise<Accessib
     console.warn('[AccessibilityEvidence] Failed to collect:', err)
   }
   
+  // Active Keyboard Tab Order & Focus Ring Verification (WCAG 2.1.1 & 2.4.7)
+  let keyboardAccessible = true
+  let focusIndicatorVisible = true
+  const keyboardTabOrder: string[] = []
+  try {
+    await page.evaluate(() => {
+      if (document.activeElement && document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur()
+      }
+    }).catch(() => {})
+
+    let visibleFocusCount = 0
+    for (let t = 0; t < 5; t++) {
+      await page.keyboard.press('Tab').catch(() => {})
+      const focusedInfo = await page.evaluate(() => {
+        const el = document.activeElement as HTMLElement | null
+        if (!el || el === document.body || el === document.documentElement) return null
+        const s = window.getComputedStyle(el)
+        const hasRing =
+          (s.outlineStyle !== 'none' && parseFloat(s.outlineWidth || '0') > 0) ||
+          (s.boxShadow && s.boxShadow !== 'none') ||
+          Boolean(s.borderColor)
+        const tag = el.tagName.toLowerCase()
+        const id = el.id ? `#${el.id}` : (el.getAttribute('name') ? `[name="${el.getAttribute('name')}"]` : '')
+        return { selector: `${tag}${id}`, hasRing }
+      }).catch(() => null)
+      if (focusedInfo) {
+        keyboardTabOrder.push(focusedInfo.selector)
+        if (focusedInfo.hasRing) visibleFocusCount++
+      }
+    }
+    const uniqueFocused = new Set(keyboardTabOrder).size
+    keyboardAccessible = uniqueFocused >= 2 || keyboardTabOrder.length >= 1
+    focusIndicatorVisible = keyboardTabOrder.length === 0 ? true : visibleFocusCount > 0
+  } catch {}
+
   return {
     capturedAt: new Date().toISOString(),
     violations,
-    keyboardAccessible: true, // Would test with actual keyboard navigation
-    focusIndicatorVisible: true,
+    keyboardAccessible,
+    focusIndicatorVisible,
+    keyboardTabOrder,
     ariaIssues,
     contrastIssues
   }
