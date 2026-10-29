@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>WorkflowTracker · Billing & Subscription Plans</title>
+    <style>
+        :root {
+            color-scheme: dark;
+            --page: #0f172a;
+            --panel: #1e293b;
+            --field: #0b1222;
+            --border: #475569;
+            --muted: #94a3b8;
+            --accent: #6366f1;
+            --text: #f8fafc;
+            --success: #10b981;
+            --danger: #ef4444;
+            --warning: #f59e0b;
+        }
+        * { box-sizing: border-box; }
+        body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: var(--page);
+            color: var(--text);
+            padding: 24px;
+            margin: 0;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: var(--panel);
+            padding: 24px;
+            border-radius: 12px;
+            border: 1px solid #334155;
+        }
+        h1 { margin-top: 0; font-size: 22px; color: #818cf8; }
+        h2 {
+            font-size: 13px;
+            margin: 26px 0 12px;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: .06em;
+            border-bottom: 1px solid #334155;
+            padding-bottom: 8px;
+        }
+        p.intro { font-size: 13px; line-height: 1.6; color: var(--muted); }
+        .grid-2 {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 16px;
+        }
+        .grid-3 {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 16px;
+        }
+        .grid-4 {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 12px;
+        }
+        .card {
+            background: var(--field);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px;
+        }
+        .card-stat {
+            font-size: 24px;
+            font-weight: 700;
+            color: #f8fafc;
+            margin-top: 4px;
+        }
+        .card-label {
+            font-size: 12px;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: .05em;
+        }
+        .form-group {
+            margin-bottom: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 7px;
+        }
+        label { font-size: 13px; font-weight: 500; }
+        input, select, textarea {
+            width: 100%;
+            background: var(--field);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 9px 11px;
+            border-radius: 6px;
+            font: inherit;
+            font-size: 13px;
+        }
+        button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 9px 16px;
+            background: var(--accent);
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+        button:hover { background: #4f46e5; }
+        button.btn-secondary {
+            background: #334155;
+            color: var(--text);
+        }
+        button.btn-secondary:hover { background: #475569; }
+        button.btn-danger {
+            background: var(--danger);
+        }
+        button.btn-danger:hover { background: #dc2626; }
+        .table-responsive {
+            width: 100%;
+            overflow-x: auto;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        th, td {
+            padding: 10px 12px;
+            text-align: left;
+            border-bottom: 1px solid #334155;
+        }
+        th {
+            color: var(--muted);
+            font-weight: 600;
+            font-size: 12px;
+            text-transform: uppercase;
+        }
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 9999px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .badge-success { background: rgba(16, 185, 129, 0.2); color: #34d399; }
+        .badge-warning { background: rgba(245, 158, 11, 0.2); color: #fbbf24; }
+        .badge-danger { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+        .alert {
+            padding: 12px 16px;
+            border-radius: 6px;
+            font-size: 13px;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .alert-info { background: rgba(99, 102, 241, 0.15); border: 1px solid #6366f1; color: #c7d2fe; }
+        .alert-danger { background: rgba(239, 68, 68, 0.15); border: 1px solid #ef4444; color: #fca5a5; }
+        @media (max-width: 640px) {
+            body { padding: 12px; }
+            .container { padding: 16px; }
+            .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+        }
+        
+        .app-navbar {
+            background: #0b1222;
+            border-bottom: 1px solid #334155;
+            padding: 12px 24px;
+            margin: -24px -24px 24px -24px;
+        }
+        .nav-container {
+            max-width: 1000px;
+            margin: 0 auto;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+        .nav-brand {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 700;
+            font-size: 15px;
+            color: #818cf8;
+            letter-spacing: .02em;
+        }
+        .nav-menu {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+        .nav-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 7px 13px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 500;
+            color: #94a3b8;
+            text-decoration: none;
+            transition: all 0.15s ease;
+            border: 1px solid transparent;
+        }
+        .nav-item:hover {
+            color: #f8fafc;
+            background: #1e293b;
+        }
+        .nav-item.active {
+            color: #ffffff;
+            background: #4f46e5;
+            border-color: #6366f1;
+        }
+
+    </style>
+</head>
+
+<body>
+    
+    <header class="app-navbar">
+        <div class="nav-container">
+            <div class="nav-brand">
+                <span>⚡</span>
+                <span>WorkflowTracker Suite</span>
+            </div>
+            <nav class="nav-menu">
+                <a href="index.html" class="nav-item " data-route="/dashboard">📊 Dashboard</a>
+                <a href="inputs.html" class="nav-item " data-route="/inputs">📝 Input Controls</a>
+                <a href="billing.html" class="nav-item active" data-route="/billing">💳 Billing & Plans</a>
+                <a href="team.html" class="nav-item " data-route="/team">👥 Team & Access</a>
+                <a href="settings.html" class="nav-item " data-route="/settings">⚙️ Settings</a>
+            </nav>
+        </div>
+    </header>
+
+    <main class="container">
+        <h1>Billing & Subscription Management</h1>
+        <p class="intro">Select your organization plan, enter payment credentials, and review invoice history.</p>
+
+        <h2>Select Subscription Tier</h2>
+        <div class="grid-3" style="margin-bottom: 24px;">
+            <div class="card" style="border-color: #475569;">
+                <div class="card-label">Starter</div>
+                <div class="card-stat">$0<span style="font-size: 14px; font-weight: normal; color: var(--muted);">/mo</span></div>
+                <p class="intro" style="margin: 8px 0 16px;">Up to 10 automated test scans per month.</p>
+                <button type="button" class="btn-secondary" style="width: 100%;">Current Plan</button>
+            </div>
+            <div class="card" style="border-color: #6366f1; background: rgba(99, 102, 241, 0.08);">
+                <div class="card-label" style="color: #818cf8;">Professional ⭐</div>
+                <div class="card-stat">$49<span style="font-size: 14px; font-weight: normal; color: var(--muted);">/mo</span></div>
+                <p class="intro" style="margin: 8px 0 16px;">Unlimited autonomous multi-device testing & full video recordings.</p>
+                <button type="button" style="width: 100%;" id="select-pro-plan">Upgrade to Pro</button>
+            </div>
+            <div class="card" style="border-color: #475569;">
+                <div class="card-label">Enterprise</div>
+                <div class="card-stat">$199<span style="font-size: 14px; font-weight: normal; color: var(--muted);">/mo</span></div>
+                <p class="intro" style="margin: 8px 0 16px;">Dedicated test runners, SSO, and custom webhooks.</p>
+                <button type="button" class="btn-secondary" style="width: 100%;">Contact Sales</button>
+            </div>
+        </div>
+
+        <h2>Payment Details</h2>
+        <form id="billing-form" onsubmit="event.preventDefault(); validateBilling();">
+            <div id="billing-error" class="alert alert-danger" style="display: none;">
+                ⚠️ Invalid credit card format: Card number must contain 16 numeric digits.
+            </div>
+            <div class="form-group">
+                <label for="card-name">Cardholder Name *</label>
+                <input type="text" id="card-name" name="card_name" placeholder="Alex Morgan" required>
+            </div>
+            <div class="grid-2">
+                <div class="form-group">
+                    <label for="card-number">Card Number *</label>
+                    <input type="text" id="card-number" name="card_number" placeholder="4242 4242 4242 4242" required maxlength="19">
+                </div>
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label for="card-exp">Expiry (MM/YY) *</label>
+                        <input type="text" id="card-exp" name="card_exp" placeholder="12/28" required maxlength="5">
+                    </div>
+                    <div class="form-group">
+                        <label for="card-cvv">CVV *</label>
+                        <input type="password" id="card-cvv" name="card_cvv" placeholder="•••" required maxlength="4">
+                    </div>
+                </div>
+            </div>
+            <div style="display: flex; gap: 12px; margin-top: 16px;">
+                <button type="submit" id="save-billing-btn">Update Payment Method</button>
+                <button type="reset" class="btn-secondary" id="reset-billing-btn">Cancel</button>
+            </div>
+        </form>
+
+        <h2>Recent Invoices</h2>
+        <div class="table-responsive">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Invoice ID</th>
+                        <th>Billing Date</th>
+                        <th>Amount</th>
+                        <th>Status</th>
+                        <th>Download</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>INV-2026-004</code></td>
+                        <td>Oct 01, 2026</td>
+                        <td>$49.00</td>
+                        <td><span class="badge badge-success">PAID</span></td>
+                        <td><button class="btn-secondary" style="padding: 4px 8px; font-size: 11px;">PDF</button></td>
+                    </tr>
+                    <tr>
+                        <td><code>INV-2026-003</code></td>
+                        <td>Sep 01, 2026</td>
+                        <td>$49.00</td>
+                        <td><span class="badge badge-success">PAID</span></td>
+                        <td><button class="btn-secondary" style="padding: 4px 8px; font-size: 11px;">PDF</button></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </main>
+    <script>
+        function validateBilling() {
+            const card = document.getElementById("card-number").value.replace(/\s+/g, "");
+            const err = document.getElementById("billing-error");
+            if (card.length < 16 || isNaN(card)) {
+                err.style.display = "flex";
+            } else {
+                err.style.display = "none";
+                alert("Payment method updated successfully!");
+            }
+        }
+    </script>
+</body>
+</html>

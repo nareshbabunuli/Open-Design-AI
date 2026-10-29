@@ -1,0 +1,836 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Comprehensive HTML Inputs & Controls Test Suite</title>
+    <style>
+        :root {
+            color-scheme: dark;
+            --page: #0f172a;
+            --panel: #1e293b;
+            --field: #0b1222;
+            --border: #475569;
+            --muted: #94a3b8;
+            --accent: #6366f1;
+            --text: #f8fafc;
+            --success: #10b981;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: var(--page);
+            color: var(--text);
+            padding: 24px;
+            margin: 0;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: var(--panel);
+            padding: 24px;
+            border-radius: 12px;
+            border: 1px solid #334155;
+        }
+
+        h1 {
+            margin-top: 0;
+            font-size: 22px;
+            color: #818cf8;
+        }
+
+        h2 {
+            font-size: 13px;
+            margin: 26px 0 12px;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: .06em;
+            border-bottom: 1px solid #334155;
+            padding-bottom: 8px;
+        }
+
+        p.intro {
+            font-size: 13px;
+            line-height: 1.6;
+            color: var(--muted);
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 7px;
+            min-width: 0;
+        }
+
+        label {
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+        }
+
+        input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):not([type="image"]):not([type="hidden"]),
+        select,
+        textarea {
+            width: 100%;
+            background: var(--field);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 9px 11px;
+            border-radius: 6px;
+            font: inherit;
+            font-size: 13px;
+        }
+
+        input[type="file"] {
+            width: 100%;
+            background: var(--field);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 8px;
+            border-radius: 6px;
+            font-size: 13px;
+        }
+
+        input[type="checkbox"],
+        input[type="radio"] {
+            accent-color: var(--accent);
+        }
+
+        input[type="range"] {
+            width: 100%;
+            accent-color: var(--accent);
+        }
+
+        input[type="color"] {
+            width: 56px;
+            height: 38px;
+            padding: 3px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--field);
+        }
+
+        input:focus-visible,
+        select:focus-visible,
+        textarea:focus-visible,
+        button:focus-visible {
+            outline: 2px solid #a5b4fc;
+            outline-offset: 2px;
+        }
+
+        input:disabled,
+        select:disabled,
+        textarea:disabled {
+            opacity: .5;
+            cursor: not-allowed;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+        }
+
+        .row {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 14px;
+        }
+
+        .inline-option {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .custom-checkbox-wrapper {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .custom-checkbox-wrapper input.sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+
+        .custom-box {
+            width: 18px;
+            height: 18px;
+            flex: 0 0 18px;
+            border: 2px solid #64748b;
+            border-radius: 4px;
+            background: var(--field);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            transition: all .15s ease;
+        }
+
+        .custom-checkbox-wrapper input:checked+.custom-box {
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+
+        .custom-checkbox-wrapper input:checked+.custom-box::after {
+            content: "✔";
+            color: white;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .custom-checkbox-wrapper input:focus-visible+.custom-box {
+            outline: 2px solid #a5b4fc;
+            outline-offset: 3px;
+        }
+
+        .switch-btn {
+            width: 42px;
+            height: 24px;
+            background: #334155;
+            border-radius: 12px;
+            position: relative;
+            border: none;
+            cursor: pointer;
+            padding: 3px;
+            transition: background .2s;
+        }
+
+        .switch-btn[aria-checked="true"] {
+            background: var(--accent);
+        }
+
+        .switch-thumb {
+            width: 18px;
+            height: 18px;
+            background: white;
+            border-radius: 50%;
+            display: block;
+            transition: transform .2s;
+        }
+
+        .switch-btn[aria-checked="true"] .switch-thumb {
+            transform: translateX(18px);
+        }
+
+        button,
+        .button-like {
+            background: #334155;
+            color: var(--text);
+            border: 1px solid #475569;
+            padding: 9px 14px;
+            border-radius: 6px;
+            font: inherit;
+            font-size: 13px;
+            cursor: pointer;
+        }
+
+        button.primary {
+            background: var(--accent);
+            border-color: var(--accent);
+            font-weight: 650;
+        }
+
+        button:disabled {
+            opacity: .5;
+            cursor: not-allowed;
+        }
+
+        .help {
+            color: var(--muted);
+            font-size: 12px;
+            line-height: 1.5;
+        }
+
+        .drop-zone {
+            border: 2px dashed #64748b;
+            border-radius: 8px;
+            padding: 22px;
+            text-align: center;
+            background: #0f172a;
+            color: var(--muted);
+        }
+
+        .drop-zone.dragover {
+            border-color: var(--accent);
+            background: #20234b;
+        }
+
+        .log {
+            margin-top: 24px;
+            padding: 12px;
+            background: #020617;
+            border: 1px solid #1e293b;
+            border-radius: 8px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 11px;
+            max-height: 220px;
+            overflow: auto;
+            color: var(--success);
+            white-space: normal;
+            overflow-wrap: anywhere;
+        }
+
+        .log-entry {
+            padding: 3px 0;
+            border-bottom: 1px solid #172033;
+        }
+
+        .log-entry:last-child {
+            border-bottom: 0;
+        }
+
+        .status {
+            color: #cbd5e1;
+            font-size: 12px;
+        }
+
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+
+        @media (max-width: 640px) {
+            body {
+                padding: 12px;
+            }
+
+            .container {
+                padding: 16px;
+            }
+
+            .grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    
+        .app-navbar {
+            background: #0b1222;
+            border-bottom: 1px solid #334155;
+            padding: 12px 24px;
+            margin: -24px -24px 24px -24px;
+        }
+        .nav-container {
+            max-width: 1000px;
+            margin: 0 auto;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+        .nav-brand {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 700;
+            font-size: 15px;
+            color: #818cf8;
+            letter-spacing: .02em;
+        }
+        .nav-menu {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+        .nav-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 7px 13px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 500;
+            color: #94a3b8;
+            text-decoration: none;
+            transition: all 0.15s ease;
+            border: 1px solid transparent;
+        }
+        .nav-item:hover {
+            color: #f8fafc;
+            background: #1e293b;
+        }
+        .nav-item.active {
+            color: #ffffff;
+            background: #4f46e5;
+            border-color: #6366f1;
+        }
+
+    </style>
+</head>
+
+<body>
+
+    <header class="app-navbar">
+        <div class="nav-container">
+            <div class="nav-brand">
+                <span>⚡</span>
+                <span>WorkflowTracker Suite</span>
+            </div>
+            <nav class="nav-menu">
+                <a href="index.html" class="nav-item " data-route="/dashboard">📊 Dashboard</a>
+                <a href="inputs.html" class="nav-item active" data-route="/inputs">📝 Input Controls</a>
+                <a href="billing.html" class="nav-item " data-route="/billing">💳 Billing & Plans</a>
+                <a href="team.html" class="nav-item " data-route="/team">👥 Team & Access</a>
+                <a href="settings.html" class="nav-item " data-route="/settings">⚙️ Settings</a>
+            </nav>
+        </div>
+    </header>
+
+    <main class="container">
+        <h1>All Input Types & Controls Verification Fixture</h1>
+        <p class="intro">Interactive browser test suite for native HTML inputs, custom checkboxes, switches, file
+            pickers,
+            validation, keyboard interactions, and form submission. File selection is tested locally; this page does not
+            upload files to a server.</p>
+
+        <form id="test-form">
+            <h2>1. Checkboxes & Toggles</h2>
+            <div class="form-group">
+                <label class="inline-option" for="std-checkbox">
+                    <input type="checkbox" id="std-checkbox" name="standard_checkbox" required>
+                    Standard checkbox (required agreement)
+                </label>
+            </div>
+            <div class="form-group">
+                <label class="inline-option">
+                    <input type="checkbox" name="kensington_flat_nested">
+                    Nested input inside label
+                </label>
+            </div>
+            <div class="form-group">
+                <label class="custom-checkbox-wrapper">
+                    <input type="checkbox" class="sr-only" name="kensington_flat_custom" id="custom-kensington">
+                    <span class="custom-box" aria-hidden="true"></span>
+                    <span>Custom styled checkbox with visually hidden input</span>
+                </label>
+            </div>
+            <div class="form-group">
+                <div class="row">
+                    <button type="button" role="switch" id="toggle-notifications" aria-checked="false"
+                        class="switch-btn" aria-label="Enable notifications">
+                        <span class="switch-thumb" aria-hidden="true"></span>
+                    </button>
+                    <span>Enable notifications (ARIA switch)</span>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="inline-option"><input type="checkbox" id="indeterminate-parent"> Select all
+                    (indeterminate-state
+                    demo)</label>
+                <div class="row" style="padding-left: 24px">
+                    <label class="inline-option"><input type="checkbox" class="child-option" name="features"
+                            value="email">
+                        Email</label>
+                    <label class="inline-option"><input type="checkbox" class="child-option" name="features"
+                            value="sms">
+                        SMS</label>
+                    <label class="inline-option"><input type="checkbox" class="child-option" name="features"
+                            value="push">
+                        Push</label>
+                </div>
+            </div>
+
+            <h2>2. Radio Options</h2>
+            <div class="form-group row">
+                <label class="inline-option"><input type="radio" name="property_type" value="flat" checked> Flat /
+                    Apartment</label>
+                <label class="inline-option"><input type="radio" name="property_type" value="house"> Detached
+                    house</label>
+                <label class="inline-option"><input type="radio" name="property_type" value="commercial"> Commercial
+                    unit</label>
+            </div>
+
+            <h2>3. Text & Identity Fields</h2>
+            <div class="form-group">
+                <label for="plain-text">Plain text</label>
+                <input type="text" id="plain-text" name="plain_text" placeholder="Enter text">
+            </div>
+            <div class="grid">
+                <div class="form-group">
+                    <label for="username">Email</label>
+                    <input type="email" id="username" name="username" placeholder="name@example.com">
+                </div>
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" name="password" placeholder="Enter password">
+                </div>
+                <div class="form-group">
+                    <label for="phone">Telephone</label>
+                    <input type="tel" id="phone" name="phone" placeholder="+44 7700 900000">
+                </div>
+                <div class="form-group">
+                    <label for="website">Website URL</label>
+                    <input type="url" id="website" name="website" placeholder="https://example.com">
+                </div>
+                <div class="form-group">
+                    <label for="search">Search</label>
+                    <input type="search" id="search" name="search" placeholder="Search">
+                </div>
+                <div class="form-group">
+                    <label for="username-hint">Autocomplete / datalist</label>
+                    <input type="text" id="username-hint" name="username_hint" list="username-suggestions"
+                        placeholder="Choose or type a browser">
+                    <datalist id="username-suggestions">
+                        <option value="Chrome"></option>
+                        <option value="Firefox"></option>
+                        <option value="Safari"></option>
+                        <option value="Edge"></option>
+                    </datalist>
+                </div>
+            </div>
+
+            <h2>4. Numbers, Dates & Time</h2>
+            <div class="grid">
+                <div class="form-group">
+                    <label for="monthly-rent">Number (monthly rent)</label>
+                    <input type="number" id="monthly-rent" name="monthly_rent" min="0" max="10000" step="50"
+                        placeholder="1250">
+                </div>
+                <div class="form-group">
+                    <label for="lease-start">Date</label>
+                    <input type="date" id="lease-start" name="lease_start">
+                </div>
+                <div class="form-group">
+                    <label for="appointment-time">Time</label>
+                    <input type="time" id="appointment-time" name="appointment_time">
+                </div>
+                <div class="form-group">
+                    <label for="appointment-datetime">Date and time (local)</label>
+                    <input type="datetime-local" id="appointment-datetime" name="appointment_datetime">
+                </div>
+                <div class="form-group">
+                    <label for="billing-month">Month</label>
+                    <input type="month" id="billing-month" name="billing_month">
+                </div>
+                <div class="form-group">
+                    <label for="report-week">Week</label>
+                    <input type="week" id="report-week" name="report_week">
+                </div>
+            </div>
+
+            <h2>5. Selects, Range & Color</h2>
+            <div class="form-group">
+                <label for="property-category">Category (single select)</label>
+                <select id="property-category" name="category">
+                    <option value="">-- Choose category --</option>
+                    <option value="residential">Residential</option>
+                    <option value="hmo">HMO (House in Multiple Occupation)</option>
+                    <option value="commercial">Commercial</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="multi-category">Categories (multiple select)</label>
+                <select id="multi-category" name="multi_category" multiple size="4">
+                    <option value="residential">Residential</option>
+                    <option value="hmo">HMO</option>
+                    <option value="commercial">Commercial</option>
+                    <option value="industrial">Industrial</option>
+                </select>
+                <span class="help">Use Ctrl (Windows) or Command (macOS) to select multiple options.</span>
+            </div>
+            <div class="form-group">
+                <label for="volume">Range slider: <output id="volume-output" for="volume">50</output></label>
+                <input type="range" id="volume" name="volume" min="0" max="100" value="50">
+            </div>
+            <div class="form-group">
+                <label for="theme-color">Color picker</label>
+                <input type="color" id="theme-color" name="theme_color" value="#6366f1">
+            </div>
+
+            <h2>6. File Uploads & File Picker Behaviors</h2>
+            <div class="form-group">
+                <label for="single-file">Single file upload</label>
+                <input type="file" id="single-file" name="single_file">
+            </div>
+            <div class="form-group">
+                <label for="multiple-files">Multiple files</label>
+                <input type="file" id="multiple-files" name="multiple_files" multiple>
+            </div>
+            <div class="form-group">
+                <label for="image-files">Images only</label>
+                <input type="file" id="image-files" name="image_files" accept="image/*" multiple>
+            </div>
+            <div class="form-group">
+                <label for="document-files">Documents (PDF, Word, text)</label>
+                <input type="file" id="document-files" name="document_files" accept=".pdf,.doc,.docx,.txt" multiple>
+            </div>
+            <div class="form-group">
+                <label for="camera-capture">Camera capture (mobile-supported browsers)</label>
+                <input type="file" id="camera-capture" name="camera_capture" accept="image/*" capture="environment">
+            </div>
+            <div class="form-group">
+                <label for="inspection-files">Inspection photos & documents</label>
+                <input type="file" id="inspection-files" name="inspection_files" accept="image/*,.pdf,.doc,.docx"
+                    multiple>
+            </div>
+            <div class="form-group">
+                <label for="hidden-file">Hidden file input trigger</label>
+                <div class="row">
+                    <button type="button" id="open-file-picker">Choose file</button>
+                    <span class="status" id="hidden-file-status">No file selected</span>
+                </div>
+                <input type="file" id="hidden-file" name="hidden_file" hidden>
+            </div>
+            <div class="form-group">
+                <label for="drop-file-input">Drag-and-drop file test</label>
+                <div id="drop-zone" class="drop-zone" tabindex="0" role="button" aria-describedby="drop-help">
+                    Drop files here, or press Enter / Space to choose files
+                </div>
+                <span id="drop-help" class="help">This demo logs dropped file names; it does not upload them.</span>
+                <input type="file" id="drop-file-input" name="drop_files" multiple hidden>
+            </div>
+
+            <h2>7. Textarea & Disabled / Read-only States</h2>
+            <div class="form-group">
+                <label for="notes">Inspection notes</label>
+                <textarea id="notes" name="notes" rows="3" placeholder="Enter notes"></textarea>
+            </div>
+            <div class="grid">
+                <div class="form-group">
+                    <label for="readonly-field">Read-only field</label>
+                    <input type="text" id="readonly-field" name="readonly_field" value="Cannot edit this value"
+                        readonly>
+                </div>
+                <div class="form-group">
+                    <label for="disabled-field">Disabled field</label>
+                    <input type="text" id="disabled-field" name="disabled_field" value="Disabled value" disabled>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="inline-option"><input type="checkbox" id="enable-disabled"> Enable / disable the test
+                    field</label>
+            </div>
+
+            <h2>8. Hidden & Image Submit Inputs</h2>
+            <p class="help">The hidden input value is included in the form data. The image input acts as a submit
+                button.</p>
+            <input type="hidden" name="test_token" value="test-123">
+            <div class="form-group">
+                <label for="image-submit">Image submit button</label>
+                <input type="image" id="image-submit" name="image_submit" alt="Submit using image button" width="120"
+                    height="36"
+                    src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='36'%3E%3Crect width='120' height='36' rx='6' fill='%236366f1'/%3E%3Ctext x='60' y='23' font-size='13' text-anchor='middle' fill='white'%3ESubmit%3C/text%3E%3C/svg%3E">
+            </div>
+
+            <div class="row" style="margin-top: 20px">
+                <button type="submit" class="primary">Save & Submit</button>
+                <button type="reset" id="reset-form">Reset</button>
+            </div>
+        </form>
+
+        <h2>Interaction Log</h2>
+        <div id="log" class="log" aria-live="polite">Interaction log will appear here...</div>
+    </main>
+
+    <script>
+        const form = document.getElementById("test-form");
+        const logElement = document.getElementById("log");
+
+        function recordLog(message) {
+            const entry = document.createElement("div");
+            entry.className = "log-entry";
+            const time = new Date().toLocaleTimeString();
+            entry.textContent = `[${time}] ${message}`;
+            logElement.prepend(entry);
+        }
+
+        function toggleSwitch(button) {
+            const next = button.getAttribute("aria-checked") !== "true";
+            button.setAttribute("aria-checked", String(next));
+            recordLog(`Switch "${button.id}" toggled to ${next ? "ON" : "OFF"}`);
+        }
+
+        document.getElementById("toggle-notifications").addEventListener("click", event => {
+            toggleSwitch(event.currentTarget);
+        });
+
+        // Log user changes and clicks. Avoid logging passwords or other sensitive field values.
+        form.querySelectorAll("input, select, textarea").forEach(input => {
+            input.addEventListener("change", event => {
+                const target = event.currentTarget;
+                if (target.type === "password") {
+                    recordLog(`Changed [${target.name}]: [value hidden]`);
+                } else if (target.type === "file") {
+                    const files = Array.from(target.files || []);
+                    if (!files.length) {
+                        recordLog(`File selection cleared or empty: ${target.name || target.id}`);
+                    } else {
+                        files.forEach(file => {
+                            recordLog(`File selected [${target.name || target.id}]: ${file.name}, ${(file.size / 1024).toFixed(2)} KB, type=${file.type || "unknown"}`);
+                        });
+                    }
+                    if (target.id === "hidden-file") {
+                        document.getElementById("hidden-file-status").textContent =
+                            files.length ? files.map(file => file.name).join(", ") : "No file selected";
+                    }
+                } else if (target.type === "checkbox" || target.type === "radio") {
+                    recordLog(`Changed [${target.name || target.id}]: checked=${target.checked}${target.type === "radio" ? `, value=${target.value}` : ""}`);
+                } else {
+                    recordLog(`Changed [${target.name || target.id}]: ${target.value}`);
+                }
+            });
+
+            input.addEventListener("click", event => {
+                const target = event.currentTarget;
+                if (target.type === "checkbox") {
+                    recordLog(`Clicked checkbox [${target.name || target.id}]`);
+                } else if (target.type === "radio") {
+                    recordLog(`Clicked radio [${target.name || target.id}]`);
+                } else if (target.type === "file") {
+                    recordLog(`Clicked file input [${target.name || target.id}]`);
+                }
+            });
+        });
+
+        // Range slider output.
+        const volume = document.getElementById("volume");
+        const volumeOutput = document.getElementById("volume-output");
+        volume.addEventListener("input", () => {
+            volumeOutput.value = volume.value;
+            recordLog(`Range changed: ${volume.value}`);
+        });
+
+        // Indeterminate checkbox state.
+        const parentCheckbox = document.getElementById("indeterminate-parent");
+        const childCheckboxes = Array.from(document.querySelectorAll(".child-option"));
+
+        function updateParentCheckbox() {
+            const checkedCount = childCheckboxes.filter(item => item.checked).length;
+            parentCheckbox.checked = checkedCount === childCheckboxes.length;
+            parentCheckbox.indeterminate = checkedCount > 0 && checkedCount < childCheckboxes.length;
+            parentCheckbox.setAttribute("aria-checked",
+                parentCheckbox.indeterminate ? "mixed" : String(parentCheckbox.checked));
+        }
+
+        parentCheckbox.addEventListener("change", () => {
+            childCheckboxes.forEach(item => { item.checked = parentCheckbox.checked; });
+            updateParentCheckbox();
+            recordLog(`Select all changed: ${parentCheckbox.checked}`);
+        });
+
+        childCheckboxes.forEach(item => item.addEventListener("change", updateParentCheckbox));
+
+        // Hidden file picker: open synchronously from a direct user click.
+        document.getElementById("open-file-picker").addEventListener("click", () => {
+            recordLog("Opening hidden file picker");
+            document.getElementById("hidden-file").click();
+        });
+
+        // Accessible drop zone; dropped files are logged locally.
+        const dropZone = document.getElementById("drop-zone");
+        const dropInput = document.getElementById("drop-file-input");
+
+        function openDropPicker() {
+            recordLog("Opening drag-and-drop test file picker");
+            dropInput.click();
+        }
+
+        dropZone.addEventListener("click", openDropPicker);
+        dropZone.addEventListener("keydown", event => {
+            if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                openDropPicker();
+            }
+        });
+
+        ["dragenter", "dragover"].forEach(type => {
+            dropZone.addEventListener(type, event => {
+                event.preventDefault();
+                dropZone.classList.add("dragover");
+            });
+        });
+
+        ["dragleave", "drop"].forEach(type => {
+            dropZone.addEventListener(type, event => {
+                event.preventDefault();
+                dropZone.classList.remove("dragover");
+            });
+        });
+
+        dropZone.addEventListener("drop", event => {
+            const files = Array.from(event.dataTransfer?.files || []);
+            if (!files.length) {
+                recordLog("Drop zone: no files detected");
+                return;
+            }
+            files.forEach(file => {
+                recordLog(`File dropped: ${file.name}, ${(file.size / 1024).toFixed(2)} KB, type=${file.type || "unknown"}`);
+            });
+        });
+
+        dropInput.addEventListener("change", () => {
+            Array.from(dropInput.files || []).forEach(file => recordLog(`File chosen via drop-zone picker: ${file.name}`));
+        });
+
+        // Disabled-state toggle.
+        document.getElementById("enable-disabled").addEventListener("change", event => {
+            document.getElementById("disabled-field").disabled = !event.currentTarget.checked;
+            recordLog(`Disabled field is now ${event.currentTarget.checked ? "enabled" : "disabled"}`);
+        });
+
+        // Submission uses native constraint validation and logs successful form data.
+        // No data is sent to a server.
+        form.addEventListener("submit", event => {
+            event.preventDefault();
+            if (!form.reportValidity()) {
+                recordLog("Form validation failed");
+                return;
+            }
+
+            const formData = new FormData(form);
+            const summary = [];
+            for (const [key, value] of formData.entries()) {
+                if (value instanceof File) {
+                    summary.push(`${key}=${value.name || "(no file)"}`);
+                } else if (key.toLowerCase().includes("password")) {
+                    summary.push(`${key}=[value hidden]`);
+                } else {
+                    summary.push(`${key}=${value}`);
+                }
+            }
+            recordLog(`Form submitted locally. Fields: ${summary.join(" | ") || "(none)"}`);
+        });
+
+        form.addEventListener("reset", () => {
+            // Reset event fires before controls have completed resetting.
+            setTimeout(() => {
+                volumeOutput.value = volume.value;
+                document.getElementById("hidden-file-status").textContent = "No file selected";
+                document.getElementById("disabled-field").disabled = true;
+                updateParentCheckbox();
+                recordLog("Form reset");
+            }, 0);
+        });
+
+        updateParentCheckbox();
+    </script>
+</body>
+
+</html>

@@ -3170,18 +3170,21 @@ export default function AISimulatorPage() {
                 )}
               </button>
 
-              <button
-                type="button"
-                onClick={() => setBottomPanelTab("duo")}
-                className={`px-3 py-1 flex items-center gap-1.5 rounded-t text-xs font-medium transition cursor-pointer ${
-                  bottomPanelTab === "duo"
-                    ? "bg-[#0a0c12] text-purple-400 border-t-2 border-purple-500 text-white"
-                    : "text-slate-400 hover:text-slate-200"
-                }`}
-              >
-                <Sparkles className="h-3.5 w-3.5 text-purple-400" />
-                <span>Duo Agent</span>
-              </button>
+              {/* Duo Agent tab hidden for streamlined testing presentation */}
+              {false && (
+                <button
+                  type="button"
+                  onClick={() => setBottomPanelTab("duo")}
+                  className={`px-3 py-1 flex items-center gap-1.5 rounded-t text-xs font-medium transition cursor-pointer ${
+                    bottomPanelTab === "duo"
+                      ? "bg-[#0a0c12] text-purple-400 border-t-2 border-purple-500 text-white"
+                      : "text-slate-400 hover:text-slate-200"
+                  }`}
+                >
+                  <Sparkles className="h-3.5 w-3.5 text-purple-400" />
+                  <span>Duo Agent</span>
+                </button>
+              )}
             </div>
 
             <div className="flex items-center gap-2">
@@ -3315,28 +3318,30 @@ export default function AISimulatorPage() {
           )}
         </div>
 
-        {/* Right: Duo Agent & Console Drawer Toggles */}
+        {/* Right: Console Drawer Toggle (Duo Agent hidden for now) */}
         <div className="flex items-center gap-1.5 shrink-0 ml-2">
-          <button
-            type="button"
-            onClick={() => {
-              if (isBottomPanelOpen && bottomPanelTab === "duo") {
-                setIsBottomPanelOpen(false)
-              } else {
-                setBottomPanelTab("duo")
-                setIsBottomPanelOpen(true)
-              }
-            }}
-            className={`flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded transition cursor-pointer ${
-              isBottomPanelOpen && bottomPanelTab === "duo"
-                ? "text-purple-300 bg-purple-950/60 border border-purple-800/60"
-                : "text-slate-400 hover:text-purple-300 hover:bg-slate-800/40"
-            }`}
-            title="Toggle GitLab Duo AI Fix Review"
-          >
-            <Sparkles className="h-3 w-3 text-purple-400" />
-            <span className="hidden sm:inline">Duo Agent</span>
-          </button>
+          {false && (
+            <button
+              type="button"
+              onClick={() => {
+                if (isBottomPanelOpen && bottomPanelTab === "duo") {
+                  setIsBottomPanelOpen(false)
+                } else {
+                  setBottomPanelTab("duo")
+                  setIsBottomPanelOpen(true)
+                }
+              }}
+              className={`flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded transition cursor-pointer ${
+                isBottomPanelOpen && bottomPanelTab === "duo"
+                  ? "text-purple-300 bg-purple-950/60 border border-purple-800/60"
+                  : "text-slate-400 hover:text-purple-300 hover:bg-slate-800/40"
+              }`}
+              title="Toggle GitLab Duo AI Fix Review"
+            >
+              <Sparkles className="h-3 w-3 text-purple-400" />
+              <span className="hidden sm:inline">Duo Agent</span>
+            </button>
+          )}
 
           <button
             type="button"
