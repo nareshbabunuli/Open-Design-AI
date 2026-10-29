@@ -3,6 +3,8 @@
 import React, { useState, useMemo, useCallback, useEffect } from "react"
 import type {
   AutomationJob,
+  AutomationIssue,
+  OpenCVVisualDefect,
   FullAppTestPlan,
   AppScreenNode,
   TestPlanStep,
@@ -14,6 +16,8 @@ import TestFlowGraph from "./test-flow-graph"
 import ActionLedgerPanel from "./action-ledger-panel"
 import { synthesizeFullAppPlanFromJob, buildFigmaWorkflowMap } from "@/lib/ai-automation/full-app-utils"
 import FormattedMessageText from "./formatted-message-text"
+import { RepairVerifyModal } from "./repair-verify-modal"
+import { Wrench } from "lucide-react"
 import {
   Compass,
   Map as MapIcon,
@@ -150,6 +154,52 @@ export default function FullAppTestingView({
   const [planApprovalBusy, setPlanApprovalBusy] = useState(false)
   const [isExportingZip, setIsExportingZip] = useState(false)
   const [isResettingData, setIsResettingData] = useState(false)
+
+  // Repair and Verify modal state (Self-Healing Prototype)
+  const [repairModalTarget, setRepairModalTarget] = useState<{
+    issue?: AutomationIssue | null
+    defect?: OpenCVVisualDefect | null
+  } | null>(null)
+
+  const handleRepairApplied = useCallback(
+    (targetId: string, proposal: any) => {
+      if (!job) return
+      const updatedIssues = (job.issues || []).map((iss) => {
+        if (iss.id === targetId) {
+          return {
+            ...iss,
+            retestStatus: "retested_resolved" as const,
+            retestDetail: proposal.verificationDetail || "[PROTOTYPE] Simulated repair applied and re-test verified.",
+            repairProposal: proposal,
+          }
+        }
+        return iss
+      })
+      const updatedDefects = (job.opencvAudit?.defects || []).map((d) => {
+        if (d.id === targetId) {
+          return {
+            ...d,
+            defectPersisted: false,
+            closedLoopAction: proposal.verificationDetail || "[PROTOTYPE] Simulated repair applied and re-test verified.",
+            repairProposal: proposal,
+          }
+        }
+        return d
+      })
+      const updatedJob: AutomationJob = {
+        ...job,
+        issues: updatedIssues,
+        opencvAudit: job.opencvAudit
+          ? {
+              ...job.opencvAudit,
+              defects: updatedDefects,
+            }
+          : undefined,
+      }
+      onJobUpdate?.(updatedJob)
+    },
+    [job, onJobUpdate]
+  )
 
   // Evidence stream screen search state
   const [evidenceSearchInput, setEvidenceSearchInput] = useState("")
@@ -1967,7 +2017,7 @@ export default function FullAppTestingView({
                         {defects.map((def) => (
                           <div
                             key={def.id}
-                            className="p-2 rounded-lg bg-slate-950/90 border border-slate-800 text-[11px] flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+                            className="p-2.5 rounded-lg bg-slate-950/90 border border-slate-800 text-[11px] flex flex-col sm:flex-row sm:items-center justify-between gap-2"
                           >
                             <div className="space-y-0.5 min-w-0">
                               <div className="flex items-center gap-1.5 flex-wrap">
@@ -1980,16 +2030,32 @@ export default function FullAppTestingView({
                                     ✓ DOM Confirmed
                                   </span>
                                 )}
+                                {def.repairProposal && (
+                                  <span className="px-1.5 py-0.2 rounded text-[10px] bg-purple-950/80 text-purple-300 border border-purple-800/60 font-mono">
+                                    [PROTOTYPE] Repaired
+                                  </span>
+                                )}
                               </div>
                               <p className="text-slate-300 truncate" title={def.domConfirmationDetail}>
                                 {def.domConfirmationDetail}
                               </p>
                             </div>
-                            <div className="text-[10px] font-mono shrink-0 text-right">
-                              <div className="text-indigo-300">{def.closedLoopAction || "Closed-loop verified"}</div>
-                              <div className={def.defectPersisted ? "text-rose-400" : "text-emerald-400"}>
-                                {def.defectPersisted ? "Persisted after re-check" : "Resolved on scroll/re-check"}
+                            <div className="flex items-center gap-2 shrink-0">
+                              <div className="text-[10px] font-mono text-right">
+                                <div className="text-indigo-300">{def.closedLoopAction || "Closed-loop verified"}</div>
+                                <div className={def.defectPersisted ? "text-rose-400" : "text-emerald-400"}>
+                                  {def.defectPersisted ? "Persisted after re-check" : "Resolved on re-check / repair"}
+                                </div>
                               </div>
+                              <button
+                                type="button"
+                                onClick={() => setRepairModalTarget({ defect: def })}
+                                className="px-2 py-1 rounded bg-indigo-600/30 hover:bg-indigo-600 text-indigo-200 hover:text-white border border-indigo-500/40 text-[10px] font-semibold flex items-center gap-1 transition cursor-pointer"
+                                title="Repair and verify with simulated code fix"
+                              >
+                                <Wrench className="h-3 w-3" />
+                                <span>Repair &amp; Verify</span>
+                              </button>
                             </div>
                           </div>
                         ))}
@@ -2158,16 +2224,34 @@ export default function FullAppTestingView({
                 job.issues.map((issue) => (
                   <div
                     key={issue.id}
-                    className="p-3 rounded-xl bg-rose-950/20 border border-rose-800/40 text-xs space-y-1"
+                    className="p-3 rounded-xl bg-rose-950/20 border border-rose-800/40 text-xs space-y-2"
                   >
                     <div className="flex items-center justify-between">
-                      <span className="font-bold text-rose-400 uppercase font-mono text-[10px]">
-                        {issue.type} · {issue.severity}
-                      </span>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-bold text-rose-400 uppercase font-mono text-[10px]">
+                          {issue.type} · {issue.severity}
+                        </span>
+                        {issue.retestStatus === "retested_resolved" && (
+                          <span className="px-1.5 py-0.2 rounded text-[10px] bg-emerald-950 text-emerald-300 border border-emerald-800 font-mono">
+                            ✓ [PROTOTYPE] Repaired &amp; Verified
+                          </span>
+                        )}
+                      </div>
                       <span className="text-[10px] text-slate-500 font-mono">{issue.timestamp}</span>
                     </div>
                     <div className="text-slate-200 font-medium">{issue.description}</div>
-                    <div className="text-[10px] text-slate-400 font-mono truncate">{issue.screenUrl}</div>
+                    <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-800/60">
+                      <div className="text-[10px] text-slate-400 font-mono truncate">{issue.screenUrl}</div>
+                      <button
+                        type="button"
+                        onClick={() => setRepairModalTarget({ issue })}
+                        className="px-2.5 py-1 rounded-lg bg-indigo-600/30 hover:bg-indigo-600 text-indigo-200 hover:text-white border border-indigo-500/40 text-[10px] font-semibold flex items-center gap-1 transition cursor-pointer shrink-0"
+                        title="Propose code fix and rerun verification"
+                      >
+                        <Wrench className="h-3 w-3" />
+                        <span>Repair &amp; Verify</span>
+                      </button>
+                    </div>
                   </div>
                 ))
               ) : (
@@ -2179,6 +2263,17 @@ export default function FullAppTestingView({
           </div>
         )}
       </div>
+
+      {/* Repair & Verify Modal [PROTOTYPE] */}
+      {repairModalTarget && (
+        <RepairVerifyModal
+          jobId={job?.id || ""}
+          issue={repairModalTarget.issue}
+          defect={repairModalTarget.defect}
+          onClose={() => setRepairModalTarget(null)}
+          onRepaired={handleRepairApplied}
+        />
+      )}
 
       {/* Screenshot Preview Modal */}
       {screenshotModal && (

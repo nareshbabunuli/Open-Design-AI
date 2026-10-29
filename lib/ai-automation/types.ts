@@ -44,6 +44,20 @@ export type AutomationIssue = {
   retestStatus?: "retested_persisted" | "retested_resolved" | "not_retested"
   retestDetail?: string
   verificationCategory?: "detected_defect" | "unverified_backend" | "inconclusive"
+  repairProposal?: RepairProposal
+}
+
+export type RepairProposal = {
+  isPrototype: boolean
+  label: string
+  file?: string
+  targetSelector?: string
+  diff: string
+  explanation: string
+  confidence: number
+  appliedAt?: string
+  verificationOutcome?: "PASSED" | "FAILED"
+  verificationDetail?: string
 }
 
 export type DiscoveredScreen = {
@@ -222,6 +236,7 @@ export type OpenCVVisualDefect = {
   closedLoopVerified?: boolean
   closedLoopAction?: string
   defectPersisted?: boolean
+  repairProposal?: RepairProposal
 }
 
 export type OpenCVAuditReport = {
