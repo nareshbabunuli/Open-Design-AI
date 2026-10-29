@@ -245,18 +245,24 @@ export async function executeChainedWorkflows(
           const f = (document.querySelector(sel) || document.querySelector("form")) as HTMLFormElement | null
           if (!f) return
           f.querySelectorAll("input, textarea, select").forEach((field: any) => {
-            const name = field.name || field.id || ""
-            if (p[name]) {
-              field.value = p[name]
-            } else if (field.tagName.toLowerCase() === "select") {
-              if (field.options?.length > 1) field.selectedIndex = 1
-            } else if (field.type === "checkbox" || field.type === "radio") {
-              field.checked = true
-            } else if (field.type !== "submit" && field.type !== "button" && field.type !== "hidden") {
-              field.value = defaultData.fullName
+            try {
+              // File inputs cannot have programmatic string values assigned in browsers (throws InvalidStateError)
+              if (field.type === "file") return
+              const name = field.name || field.id || ""
+              if (p[name]) {
+                field.value = p[name]
+              } else if (field.tagName.toLowerCase() === "select") {
+                if (field.options?.length > 1) field.selectedIndex = 1
+              } else if (field.type === "checkbox" || field.type === "radio") {
+                field.checked = true
+              } else if (field.type !== "submit" && field.type !== "button" && field.type !== "hidden") {
+                field.value = defaultData.fullName
+              }
+              field.dispatchEvent(new Event("input", { bubbles: true }))
+              field.dispatchEvent(new Event("change", { bubbles: true }))
+            } catch {
+              // Ignore programmatic assignments on unsupported input types
             }
-            field.dispatchEvent(new Event("input", { bubbles: true }))
-            field.dispatchEvent(new Event("change", { bubbles: true }))
           })
         },
         formSel,

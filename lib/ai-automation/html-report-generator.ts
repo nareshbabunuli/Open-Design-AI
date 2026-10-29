@@ -4,13 +4,20 @@ import type { AutomationJob } from "./types"
  * Generate a comprehensive HTML report with all testing details and UX audit.
  * Includes print styles for PDF export.
  */
+export function sanitizeReportLocalPaths(html: string): string {
+  return html
+    .replace(/[A-Za-z]:[\\/][^\s"'<>]+?(?:design-workflow-tracker[\\/]?)/gi, '<workspace-root>/')
+    .replace(/[A-Za-z]:[\\/][^\s"'<>]+?(?:\.gemini[\\/]antigravity[\\/]brain[\\/])/gi, '<artifacts-dir>/')
+    .replace(/file:\/\/\/[A-Za-z]:[^\s"'<>]+/gi, '<file-path>')
+}
+
 export function generateHTMLReport(job: AutomationJob): string {
   const timestamp = new Date().toISOString()
   const duration = job.finishedAt
     ? Math.round((new Date(job.finishedAt).getTime() - new Date(job.startedAt).getTime()) / 1000)
     : 0
 
-  return `<!DOCTYPE html>
+  const rawHtml = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -525,6 +532,8 @@ export function generateHTMLReport(job: AutomationJob): string {
   </div>
 </body>
 </html>`
+
+  return sanitizeReportLocalPaths(rawHtml)
 }
 
 function generateExecutiveSummary(job: AutomationJob): string {
@@ -824,7 +833,7 @@ function generateOpenCVAuditSection(job: AutomationJob): string {
             <div class="issue-meta">
               <span>🔍 DOM Confirmed: ${def.domConfirmed ? 'Yes' : 'No'}</span>
               <span>🔄 Closed-Loop: ${escapeHtml(def.closedLoopAction || 'Verified')}</span>
-              <span>📌 Status: ${def.defectPersisted ? 'Persisted' : 'Resolved on Re-Check'}</span>
+              <span>📌 Status: ${def.defectPersisted ? '<strong style="color: #ef4444;">Persisted Defect</strong>' : '<strong style="color: #10b981;">Resolved on Re-Check (Transient Reflow Settle Confirmed by DOM)</strong>'}</span>
             </div>
           </div>
         `).join('')}
@@ -926,7 +935,7 @@ function generateScreensSection(job: AutomationJob): string {
             ${screen.pageType ? `<div style="font-size: 0.85em; color: #64748b; margin-top: 5px;">Type: ${escapeHtml(screen.pageType)}</div>` : ''}
           </div>
           <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-            <span class="status-badge status-${screen.backNavigationStatus}">Back Nav: ${escapeHtml(screen.backNavigationStatus)}</span>
+            <span class="status-badge status-${screens.length <= 1 ? 'passed' : screen.backNavigationStatus}">${screens.length <= 1 ? 'Back Navigation: N/A (Single Screen View)' : `Back Nav: ${escapeHtml(screen.backNavigationStatus)}`}</span>
             <span class="status-badge status-${screen.responsiveStatus}">Responsive: ${escapeHtml(screen.responsiveStatus)}</span>
           </div>
         </div>

@@ -59,6 +59,8 @@ class SecretRedactor {
       /((?:password|pass|secret|token|api_?key|card_?number|cardnumber|cvv|cvc|security_?code|expiry|expiration)=)([^&]+)/gi,
       "$1[REDACTED]"
     )
+    // Windows absolute project filesystem paths
+    result = result.replace(/[A-Za-z]:[\\/][^\s"'<>]+?(?:design-workflow-tracker[\\/]?)/gi, "<workspace-root>/")
 
     return result
   }
