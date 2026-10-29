@@ -542,30 +542,33 @@
 
 <body>
 
+    
     <header class="app-navbar">
         <div class="nav-container">
-            <div class="nav-brand">
+            <a href="index.html" class="nav-brand">
                 <span>⚡</span>
-                <span>WorkflowTracker Suite</span>
-            </div>
+                <span>OpenDesign QA Suite</span>
+            </a>
             <nav class="nav-menu">
-                <a href="index.html" class="nav-item " data-route="/dashboard">📊 Dashboard</a>
-                <a href="inputs.html" class="nav-item active" data-route="/inputs">📝 Input Controls</a>
-                <a href="billing.html" class="nav-item " data-route="/billing">💳 Billing & Plans</a>
-                <a href="team.html" class="nav-item " data-route="/team">👥 Team & Access</a>
-                <a href="settings.html" class="nav-item " data-route="/settings">⚙️ Settings</a>
+                <a href="index.html" class="nav-item " data-route="/dashboard">📊 1. Dashboard</a>
+                <a href="inputs.html" class="nav-item active" data-route="/inputs">📝 2. Input Controls</a>
+                <a href="billing.html" class="nav-item " data-route="/billing">💳 3. Billing & Plans</a>
             </nav>
         </div>
     </header>
 
+
     <main class="container">
 
+    
     <div class="breadcrumb-bar">
         <div>
             <a href="index.html" class="breadcrumb-link">← Back to Dashboard</a>
             <span style="margin: 0 6px;">/</span>
-            <span>Workflow Step <strong>2 of 5</strong></span>
+            <span>Workflow Step <strong>2 of 3</strong></span>
         </div>
+        <span>Screen: <strong>All Input Types & Controls Suite</strong></span>
+    </div>
         <span>Current: <strong>Input Controls Suite</strong></span>
     </div>
         <h1>All Input Types & Controls Verification Fixture</h1>
@@ -829,9 +832,10 @@
         <h2>Interaction Log</h2>
         <div id="log" class="log" aria-live="polite">Interaction log will appear here...</div>
     
+    
     <nav class="wizard-footer" aria-label="Workflow Navigation">
-        <a href="index.html" class="wizard-btn wizard-btn-prev">← Previous: Dashboard (Step 1/5)</a>
-        <a href="billing.html" class="wizard-btn wizard-btn-next">Next: Billing & Plans (Step 3/5) →</a>
+        <a href="index.html" class="wizard-btn wizard-btn-prev">← Previous: Dashboard (Step 1/3)</a>
+        <a href="billing.html" class="wizard-btn wizard-btn-next">Next: Billing & Plans (Step 3/3) →</a>
     </nav>
     </main>
 

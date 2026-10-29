@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>WorkflowTracker · Dashboard & Overview</title>
+    <title>OpenDesign · Dashboard & Overview</title>
     <style>
         :root {
             color-scheme: dark;
@@ -54,11 +54,6 @@
             display: grid;
             grid-template-columns: repeat(3, minmax(0, 1fr));
             gap: 16px;
-        }
-        .grid-4 {
-            display: grid;
-            grid-template-columns: repeat(4, minmax(0, 1fr));
-            gap: 12px;
         }
         .card {
             background: var(--field);
@@ -116,40 +111,13 @@
             color: var(--text);
         }
         button.btn-secondary:hover { background: #475569; }
-        button.btn-danger {
-            background: var(--danger);
-        }
-        button.btn-danger:hover { background: #dc2626; }
-        .table-responsive {
-            width: 100%;
-            overflow-x: auto;
-        }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 13px;
-        }
-        th, td {
-            padding: 10px 12px;
-            text-align: left;
-            border-bottom: 1px solid #334155;
-        }
-        th {
-            color: var(--muted);
-            font-weight: 600;
-            font-size: 12px;
-            text-transform: uppercase;
-        }
-        .badge {
-            display: inline-block;
-            padding: 2px 8px;
-            border-radius: 9999px;
-            font-size: 11px;
-            font-weight: 600;
-        }
+        .table-responsive { width: 100%; overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #334155; }
+        th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; }
+        .badge { display: inline-block; padding: 2px 8px; border-radius: 9999px; font-size: 11px; font-weight: 600; }
         .badge-success { background: rgba(16, 185, 129, 0.2); color: #34d399; }
         .badge-warning { background: rgba(245, 158, 11, 0.2); color: #fbbf24; }
-        .badge-danger { background: rgba(239, 68, 68, 0.2); color: #f87171; }
         .alert {
             padding: 12px 16px;
             border-radius: 6px;
@@ -159,68 +127,13 @@
             align-items: center;
             gap: 10px;
         }
-        .alert-info { background: rgba(99, 102, 241, 0.15); border: 1px solid #6366f1; color: #c7d2fe; }
         .alert-danger { background: rgba(239, 68, 68, 0.15); border: 1px solid #ef4444; color: #fca5a5; }
         @media (max-width: 640px) {
             body { padding: 12px; }
             .container { padding: 16px; }
-            .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+            .grid-2, .grid-3 { grid-template-columns: 1fr; }
         }
         
-        .app-navbar {
-            background: #0b1222;
-            border-bottom: 1px solid #334155;
-            padding: 12px 24px;
-            margin: -24px -24px 24px -24px;
-        }
-        .nav-container {
-            max-width: 1000px;
-            margin: 0 auto;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            flex-wrap: wrap;
-            gap: 12px;
-        }
-        .nav-brand {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-weight: 700;
-            font-size: 15px;
-            color: #818cf8;
-            letter-spacing: .02em;
-        }
-        .nav-menu {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            flex-wrap: wrap;
-        }
-        .nav-item {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 7px 13px;
-            border-radius: 6px;
-            font-size: 13px;
-            font-weight: 500;
-            color: #94a3b8;
-            text-decoration: none;
-            transition: all 0.15s ease;
-            border: 1px solid transparent;
-        }
-        .nav-item:hover {
-            color: #f8fafc;
-            background: #1e293b;
-        }
-        .nav-item.active {
-            color: #ffffff;
-            background: #4f46e5;
-            border-color: #6366f1;
-        }
-
-    
         /* Top Navigation Bar */
         .app-navbar {
             background: #0b1222;
@@ -251,14 +164,14 @@
         .nav-menu {
             display: flex;
             align-items: center;
-            gap: 6px;
+            gap: 8px;
             flex-wrap: wrap;
         }
         .nav-item {
             display: inline-flex;
             align-items: center;
             gap: 6px;
-            padding: 7px 13px;
+            padding: 7px 14px;
             border-radius: 6px;
             font-size: 13px;
             font-weight: 500;
@@ -275,6 +188,7 @@
             color: #ffffff;
             background: #4f46e5;
             border-color: #6366f1;
+            font-weight: 600;
         }
 
         /* Breadcrumb Bar */
@@ -333,7 +247,7 @@
         }
         .wizard-btn-next:hover { background: #4338ca; }
 
-        /* Test Files Preview Pill Box */
+        /* Test Files Preview Box */
         .test-files-pillbox {
             background: #0b1222;
             border: 1px solid #334155;
@@ -365,7 +279,7 @@
             border-radius: 6px;
             color: #e2e8f0;
             text-decoration: none;
-            font-mono;
+            font-family: monospace;
             font-size: 11px;
             transition: all 0.15s;
         }
@@ -377,136 +291,93 @@
 
     </style>
 </head>
-
 <body>
     
     <header class="app-navbar">
         <div class="nav-container">
-            <div class="nav-brand">
+            <a href="index.html" class="nav-brand">
                 <span>⚡</span>
-                <span>WorkflowTracker Suite</span>
-            </div>
+                <span>OpenDesign QA Suite</span>
+            </a>
             <nav class="nav-menu">
-                <a href="index.html" class="nav-item active" data-route="/dashboard">📊 Dashboard</a>
-                <a href="inputs.html" class="nav-item " data-route="/inputs">📝 Input Controls</a>
-                <a href="billing.html" class="nav-item " data-route="/billing">💳 Billing & Plans</a>
-                <a href="team.html" class="nav-item " data-route="/team">👥 Team & Access</a>
-                <a href="settings.html" class="nav-item " data-route="/settings">⚙️ Settings</a>
+                <a href="index.html" class="nav-item active" data-route="/dashboard">📊 1. Dashboard</a>
+                <a href="inputs.html" class="nav-item " data-route="/inputs">📝 2. Input Controls</a>
+                <a href="billing.html" class="nav-item " data-route="/billing">💳 3. Billing & Plans</a>
             </nav>
         </div>
     </header>
 
     <main class="container">
-
+        
         <div class="breadcrumb-bar">
-            <span>Workflow Step: <strong>1 of 5</strong></span>
-            <span>Current: <strong>Dashboard & Overview</strong></span>
+            <span>Workflow Step: <strong>1 of 3</strong></span>
+            <span>Screen: <strong>Home / Dashboard Overview</strong></span>
         </div>
 
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+            <div>
+                <h1>Home / Dashboard Overview</h1>
+                <p class="intro">Autonomous workflow health, responsive audit coverage, and closed-loop visual regression monitoring.</p>
+            </div>
+            <div style="display: flex; gap: 8px; align-items: center;">
+                <!-- Intentional undersized touch target for WCAG 2.5.8 Level AA detection & Repair showcase -->
+                <button id="quick-sync" title="Quick Sync Status" style="width: 18px; height: 18px; padding: 0; min-width: 0; font-size: 10px; background: #475569;" aria-label="Quick sync status">↻</button>
+                <a href="inputs.html" class="wizard-btn wizard-btn-next" style="font-size: 12px; padding: 6px 14px;">Next: Input Suite →</a>
+            </div>
+        </div>
+
+        
     <div class="test-files-pillbox">
         <div class="test-files-title">
-            <span>📁 Available Test Files in <code>tests/test-files/</code>:</span>
+            <span>📁 Upload Test Artifacts in <code>tests/test-files/</code>:</span>
         </div>
         <div class="test-files-grid">
             <a href="test-files/sample-document.pdf" download class="test-file-item">📄 sample-document.pdf</a>
             <a href="test-files/assured_shorthold_tenancy_agreement.pdf" download class="test-file-item">📑 tenancy_agreement.pdf</a>
             <a href="test-files/sample-data.csv" download class="test-file-item">📊 sample-data.csv</a>
             <a href="test-files/rental_transactions_2024_2025.csv" download class="test-file-item">📈 transactions.csv</a>
-            <a href="test-files/sample-avatar.png" download class="test-file-item">🖼️ sample-avatar.png</a>
-            <a href="test-files/boiler_inspection_photo.png" download class="test-file-item">📷 boiler_inspection.png</a>
+            <a href="test-files/boiler_inspection_photo.png" download class="test-file-item">📷 inspection_photo.png</a>
             <a href="test-files/sample-invoice.pdf" download class="test-file-item">🧾 sample-invoice.pdf</a>
-            <a href="test-files/sample-notes.txt" download class="test-file-item">📝 sample-notes.txt</a>
         </div>
     </div>
 
-        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
-            <div>
-                <h1>Home / Analytics Dashboard</h1>
-                <p class="intro">Real-time overview of autonomous workflow runs, system health, and visual regression alerts.</p>
+
+        <h2>Workflow Health & Execution Metrics</h2>
+        <div class="grid-3">
+            <div class="card">
+                <div class="card-label">Mapped Flow Screens</div>
+                <div class="card-stat" style="color: #818cf8;">3 / 3 (100%)</div>
             </div>
-            <div style="display: flex; gap: 8px; align-items: center;">
-                <!-- Intentional touch-target warning for WCAG 2.5.8 detection (< 24px: 18x18px) -->
-                <button id="quick-sync" title="Quick Sync Status" style="width: 18px; height: 18px; padding: 0; min-width: 0; font-size: 10px; background: #475569;" aria-label="Quick sync status">↻</button>
-                <button id="run-full-scan" type="button">▶ Run Full Test Scan</button>
-                <a href="inputs.html" class="nav-item" style="background: #334155; color: white;">Open Input Suite →</a>
+            <div class="card">
+                <div class="card-label">Planned Actions</div>
+                <div class="card-stat">39 Controls</div>
+            </div>
+            <div class="card">
+                <div class="card-label">Responsive Pass Rate</div>
+                <div class="card-stat" style="color: #34d399;">100% (3 Devices)</div>
             </div>
         </div>
 
-        <h2>System Health & Execution Metrics</h2>
-        <div class="grid-4">
-            <div class="card">
-                <div class="card-label">Total Test Runs</div>
-                <div class="card-stat">1,428</div>
-            </div>
-            <div class="card">
-                <div class="card-label">Passed Workflows</div>
-                <div class="card-stat" style="color: #34d399;">98.4%</div>
-            </div>
-            <div class="card">
-                <div class="card-label">Avg Execution</div>
-                <div class="card-stat">3.2s</div>
-            </div>
-            <div class="card">
-                <div class="card-label">Active Screens</div>
-                <div class="card-stat" style="color: #818cf8;">5 / 5</div>
-            </div>
-        </div>
-
-        <h2>Recent Automated Scans</h2>
-        <div class="table-responsive">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Workflow / Screen</th>
-                        <th>Device Viewport</th>
-                        <th>Status</th>
-                        <th>Duration</th>
-                        <th>Action</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr>
-                        <td><strong>WF-001 Form Interaction Flow</strong></td>
-                        <td>Desktop (1440×900)</td>
-                        <td><span class="badge badge-success">PASSED</span></td>
-                        <td>1.8s</td>
-                        <td><button class="btn-secondary" style="padding: 4px 10px; font-size: 12px;" onclick="alert('Viewing execution log...')">View Log</button></td>
-                    </tr>
-                    <tr>
-                        <td><strong>WF-002 Responsive Reflow & Touch</strong></td>
-                        <td>Tablet (768×1024)</td>
-                        <td><span class="badge badge-success">PASSED</span></td>
-                        <td>2.4s</td>
-                        <td><button class="btn-secondary" style="padding: 4px 10px; font-size: 12px;" onclick="alert('Viewing execution log...')">View Log</button></td>
-                    </tr>
-                    <tr>
-                        <td><strong>WF-003 Compact Mobile Stability</strong></td>
-                        <td>Mobile (393×852)</td>
-                        <td><span class="badge badge-warning">CHECK WARN</span></td>
-                        <td>1.9s</td>
-                        <td><button class="btn-secondary" style="padding: 4px 10px; font-size: 12px;" onclick="alert('Viewing execution log...')">Inspect</button></td>
-                    </tr>
-                </tbody>
-            </table>
-        </div>
-
-        <h2>Quick Navigation Flow</h2>
+        <h2>Core Application Workflow Journey</h2>
         <div class="grid-2">
-            <div class="card">
-                <h3>📝 Input Verification Suite</h3>
-                <p class="intro">Test 39 inputs, standard and custom checkboxes, switches, selects, file upload, and boundary validation.</p>
-                <a href="inputs.html" style="color: #818cf8; font-weight: 600; text-decoration: none;">Launch Inputs Page →</a>
+            <div class="card" style="border-color: #6366f1;">
+                <div style="font-size: 11px; font-weight: 700; color: #818cf8; text-transform: uppercase;">Step 2 of 3</div>
+                <h3 style="margin: 4px 0 8px; font-size: 16px;">📝 All Input Types & Verification</h3>
+                <p class="intro">Execute 39 actions across text, numeric bounds, cascading toggles, and multi-stage file uploads.</p>
+                <a href="inputs.html" style="color: #818cf8; font-weight: 600; text-decoration: none; font-size: 13px;">Open Screen 2 →</a>
             </div>
             <div class="card">
-                <h3>💳 Billing & Payment Gate</h3>
-                <p class="intro">Review tier plans, payment methods, CVV validation, and subscription management.</p>
-                <a href="billing.html" style="color: #818cf8; font-weight: 600; text-decoration: none;">Launch Billing Page →</a>
+                <div style="font-size: 11px; font-weight: 700; color: #94a3b8; text-transform: uppercase;">Step 3 of 3</div>
+                <h3 style="margin: 4px 0 8px; font-size: 16px;">💳 Billing & Subscription Plans</h3>
+                <p class="intro">Validate tier selection, card regex format constraints, and invoice PDF retrieval.</p>
+                <a href="billing.html" style="color: #818cf8; font-weight: 600; text-decoration: none; font-size: 13px;">Open Screen 3 →</a>
             </div>
         </div>
-    
+
+        
     <nav class="wizard-footer" aria-label="Workflow Navigation">
         <span></span>
-        <a href="inputs.html" class="wizard-btn wizard-btn-next">Next: Input Controls (Step 2/5) →</a>
+        <a href="inputs.html" class="wizard-btn wizard-btn-next">Next: Input Controls Suite (Step 2/3) →</a>
     </nav>
     </main>
 </body>
