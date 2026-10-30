@@ -523,6 +523,7 @@ export function generateHTMLReport(job: AutomationJob): string {
     ${generateTestPlanSection(job)}
     ${generateWorkflowsSection(job)}
     ${generateRecommendations(job)}
+    ${generateDeveloperGuideAndPrompt(job)}
     ${generateLogsSection(job)}
 
     <div style="margin-top: 60px; padding-top: 30px; border-top: 2px solid #e2e8f0; text-align: center; color: #94a3b8; font-size: 0.9em;">
@@ -1099,6 +1100,44 @@ function generateWorkflowsSection(job: AutomationJob): string {
         ` : ''}
       </div>
     `).join('')}
+  `
+}
+
+function generateDeveloperGuideAndPrompt(job: AutomationJob): string {
+  const issues = (job.issues || []).slice(0, 12)
+  const targetUrl = job.targetUrl || job.fullAppTestPlan?.targetUrl || 'the application'
+  const issueLines = issues.map((iss, idx) =>
+    `${idx + 1}. [${iss.severity.toUpperCase()}] (${iss.type}) on "${iss.screenTitle}" (${iss.screenUrl || targetUrl}): ${iss.description} | Expected: ${iss.expected || 'Compliant behavior'} | Observed: ${iss.actual || 'Defect persisted'}`
+  )
+  const aiPrompt = [
+    `You are a senior full-stack engineer fixing UI, accessibility, and functional defects discovered by Open Design AI automated testing on ${targetUrl}.`,
+    ``,
+    `Please inspect the source files corresponding to the screens below and fix each verified defect:`,
+    ``,
+    ...(issueLines.length > 0 ? issueLines : [`1. Ensure all interactive controls meet WCAG 2.5.8 Level AA minimum (24x24px) and eliminate horizontal overflow across desktop, tablet, and mobile viewports.`]),
+    ``,
+    `Requirements:`,
+    `- Ensure all interactive buttons, links, and inputs measure at least 24x24px on mobile/tablet viewports (WCAG 2.5.8 Level AA).`,
+    `- Eliminate any horizontal layout overflow across 1440x900, 768x1024, and 393x852 viewports.`,
+    `- Ensure all form submissions and action buttons provide clear validation or state feedback.`,
+    `- Provide minimal, surgical code changes.`
+  ].join('\n')
+
+  return `
+    <div class="page-break"></div>
+    <h2>🛠️ How Developers Use This Report &amp; AI Fix Prompt</h2>
+    <div style="background: #f8fafc; border: 1px solid #cbd5e1; border-left: 4px solid #6366f1; border-radius: 8px; padding: 20px; margin-bottom: 24px;">
+      <h3 style="margin-top: 0; color: #1e293b;">Developer Triage &amp; Repair Workflow</h3>
+      <p style="color: #334155; line-height: 1.7; margin-bottom: 12px;">
+        Developers use this report as an actionable engineering blueprint to move directly from automated QA discovery to verified code fixes:
+      </p>
+      <ol style="color: #334155; line-height: 1.7; margin-left: 20px; margin-bottom: 16px;">
+        <li><strong>Triage by Severity:</strong> Prioritize High/Blocker functional failures and broken form submissions using the step-by-step traces and reproduction steps above.</li>
+        <li><strong>Inspect Visual &amp; Responsive Evidence:</strong> Use the OpenCV contour bounding boxes and WCAG 2.5.8 target measurements to pinpoint exact CSS/DOM regressions across Desktop (1440×900), Tablet (768×1024), and Mobile (393×852).</li>
+        <li><strong>Self-Heal or Prompt Your AI Coding Agent:</strong> Click <em>"Repair &amp; Verify"</em> on any flagged defect in the Open Design AI simulator for an instant NVIDIA Nemotron code patch, or copy the ready-to-paste prompt below into Cursor, Antigravity, GitHub Copilot, or Claude Code to fix all issues in one pass.</li>
+      </ol>
+      <div style="background: #0f172a; color: #e2e8f0; border-radius: 8px; padding: 16px; font-family: monospace; font-size: 0.85em; white-space: pre-wrap; line-height: 1.5; overflow-x: auto;">${escapeHtml(aiPrompt)}</div>
+    </div>
   `
 }
 

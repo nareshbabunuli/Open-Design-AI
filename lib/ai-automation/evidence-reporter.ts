@@ -532,6 +532,32 @@ function generateMarkdownReportText(params: {
   }
   sections.push("")
 
+  // How Developers Use This Report & AI Coding Agent Fix Prompt
+  sections.push(`## 🛠️ How Developers Use This Report & One-Click AI Fix Prompt\n`)
+  sections.push(
+    `Developers use this report as an actionable engineering blueprint to move directly from automated QA discovery to verified code fixes: (1) **Triage by Severity** — prioritize 🔴 HIGH/BLOCKER functional failures and broken form submissions using the exact step traces and cURL commands above; (2) **Inspect Visual & Responsive Evidence** — use the OpenCV contour bounding boxes and WCAG 2.5.8 target measurements to pinpoint exact CSS/DOM regressions across Desktop, Tablet, and Mobile; (3) **Self-Heal or Prompt Your AI Agent** — click **"Repair & Verify"** on any issue in the simulator UI for an instant NVIDIA Nemotron code patch, or copy the ready-to-use prompt below directly into your AI coding assistant (Cursor, Antigravity, GitHub Copilot, or Claude Code) to fix all detected issues in one pass.\n`
+  )
+
+  const issueLines = (job.issues || []).slice(0, 12).map((iss, idx) => {
+    return `${idx + 1}. [${iss.severity.toUpperCase()}] (${iss.type}) on "${iss.screenTitle}" (${iss.screenUrl || testPlan.targetUrl}): ${iss.description} | Expected: ${iss.expected || "Valid behavior"} | Observed: ${iss.actual || "Defect persisted"}`
+  })
+  const promptBody = [
+    `You are a senior full-stack engineer fixing UI, accessibility, and functional defects discovered by Open Design AI automated testing on ${testPlan.targetUrl}.`,
+    ``,
+    `Please inspect the source files corresponding to the screens below and fix each verified defect without breaking existing layouts or tests:`,
+    ``,
+    ...(issueLines.length > 0 ? issueLines : [`1. Review form submission handlers and ensure all interactive touch targets meet WCAG 2.5.8 Level AA minimum (>= 24x24px) with zero horizontal overflow.`]),
+    ``,
+    `Requirements for your fix:`,
+    `- Ensure all interactive buttons, links, and inputs measure at least 24x24px on mobile/tablet viewports (WCAG 2.5.8 AA).`,
+    `- Eliminate any horizontal layout overflow (documentElement.scrollWidth <= window.innerWidth) across 1440px, 768px, and 393px viewports.`,
+    `- Ensure every form submission and primary action button triggers a clear state update, validation feedback, or network mutation.`,
+    `- Return a clean, minimal diff for each modified file.`
+  ].join("\n")
+
+  sections.push(`### 📋 Copy-Paste Prompt for Your AI Coding Agent\n`)
+  sections.push(`\`\`\`text\n${promptBody}\n\`\`\`\n`)
+
   // Research References - Add at end of report
   sections.push(`---\n`)
   sections.push(generateReferencesSection())

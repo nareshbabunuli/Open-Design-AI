@@ -1700,6 +1700,57 @@ export default function FullAppTestingView({
                     </ul>
                   </div>
                 )}
+
+                {/* How Developers Use This Report & One-Click AI Fix Prompt */}
+                <div className="pt-2.5 border-t border-slate-800 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold text-indigo-300 text-[11px] flex items-center gap-1.5">
+                      <span>🛠️ How Developers Use This Report &amp; AI Fix Prompt</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const targetUrl = job?.targetUrl || plan?.targetUrl || "the application"
+                        const issueLines = (job?.issues || []).slice(0, 12).map((iss, idx) =>
+                          `${idx + 1}. [${iss.severity.toUpperCase()}] (${iss.type}) on "${iss.screenTitle}" (${iss.screenUrl || targetUrl}): ${iss.description} | Expected: ${iss.expected || "Compliant behavior"} | Observed: ${iss.actual || "Defect persisted"}`
+                        )
+                        const promptText = [
+                          `You are a senior full-stack engineer fixing UI, accessibility, and functional defects discovered by Open Design AI automated testing on ${targetUrl}.`,
+                          "",
+                          "Please inspect the source files corresponding to the screens below and fix each verified defect:",
+                          "",
+                          ...(issueLines.length > 0
+                            ? issueLines
+                            : ["1. Ensure all interactive controls meet WCAG 2.5.8 Level AA minimum (24x24px) and eliminate horizontal overflow across desktop, tablet, and mobile viewports."]),
+                          "",
+                          "Requirements:",
+                          "- Ensure all interactive buttons, links, and inputs measure at least 24x24px on mobile/tablet viewports (WCAG 2.5.8 Level AA).",
+                          "- Eliminate any horizontal layout overflow across 1440x900, 768x1024, and 393x852 viewports.",
+                          "- Ensure all form submissions and action buttons provide clear validation or state feedback.",
+                          "- Return minimal, surgical code changes for each modified file."
+                        ].join("\n")
+                        navigator.clipboard?.writeText(promptText)
+                      }}
+                      className="px-2.5 py-1 rounded-md bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 border border-indigo-500/40 text-[10px] font-semibold transition cursor-pointer"
+                    >
+                      📋 Copy AI Fix Prompt
+                    </button>
+                  </div>
+                  <p className="text-slate-400 text-[11px] leading-relaxed">
+                    Developers use this report to move directly from automated discovery to verified fixes: (1) prioritize high-severity blockers using the step traces below; (2) inspect OpenCV contour boxes and WCAG 24×24px touch-target checks across Desktop, Tablet, and Mobile; and (3) click <strong className="text-slate-200">&ldquo;Repair &amp; Verify&rdquo;</strong> on any issue for an instant NVIDIA Nemotron patch, or copy the prompt below into Cursor, Antigravity, Copilot, or Claude Code to remediate all defects in one pass.
+                  </p>
+                  <pre className="p-2.5 rounded-lg bg-slate-950/90 border border-slate-800/90 text-[10px] text-slate-300 font-mono whitespace-pre-wrap overflow-x-auto max-h-36">
+{`You are a senior full-stack engineer fixing UI, accessibility, and functional defects discovered by Open Design AI on ${job?.targetUrl || plan?.targetUrl || "the application"}.
+
+Fix the following verified defects:
+${(job?.issues || []).slice(0, 8).map((iss, idx) => `${idx + 1}. [${iss.severity.toUpperCase()}] (${iss.type}) on "${iss.screenTitle}": ${iss.description}`).join("\n") || "1. Ensure all interactive controls meet WCAG 2.5.8 Level AA (>= 24x24px) with 0px horizontal overflow."}
+
+Requirements:
+- Meet WCAG 2.5.8 Level AA minimum (24x24px) on all interactive touch targets.
+- Eliminate horizontal overflow across Desktop (1440px), Tablet (768px), and Mobile (393px).
+- Ensure all form submissions trigger clear validation or state feedback.`}
+                  </pre>
+                </div>
               </div>
             )}
 
