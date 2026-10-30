@@ -19,6 +19,9 @@ import {
   Cpu,
   BarChart3,
   GitBranch,
+  Scan,
+  Zap,
+  Bot,
 } from "lucide-react"
 
 function GithubIcon({ className = "h-4 w-4" }: { className?: string }) {
@@ -146,65 +149,65 @@ export const PRODUCT_PREVIEWS = [
 
 const FEATURES = [
   {
-    icon: Cpu,
-    title: "AI Full App Testing",
-    description: "One click runs a systematic crawl of your entire app — generating test plans, executing steps, and reporting pass/fail with evidence screenshots.",
+    icon: Scan,
+    title: "OpenCV Visual Inspection",
+    description: "Pixel-accurate computer vision audits WCAG 2.5.8 touch target bounds (24×24px), text truncation, visual clipping, and responsive layout shift deltas.",
+  },
+  {
+    icon: Zap,
+    title: "Laya 30ms Reflex Engine",
+    description: "Ultra-fast local vision classifier verifies page load readiness and clears modal overlays at 30ms speeds without incurring cloud API delays.",
+  },
+  {
+    icon: Bot,
+    title: "Nebius Token Factory & Nemotron",
+    description: "High-throughput token factory running NVIDIA Nemotron models for autonomous journey planning, deep reasoning, and 1-click code repair proposals.",
   },
   {
     icon: GitBranch,
     title: "App Flow Canvas",
-    description: "Auto-generated Figma-style canvas mapping every screen, transition, and actionable element discovered during the AI crawl.",
-  },
-  {
-    icon: Archive,
-    title: "Figma .ZIP Import",
-    description: "Drop exported Figma .zip archives to extract and preview all design screens instantly — zero rate limits.",
+    description: "Auto-generated Figma-style canvas mapping every screen, transition, and actionable element discovered during the autonomous crawl.",
   },
   {
     icon: Smartphone,
-    title: "Device Simulator",
-    description: "Test live URLs inside Phone, Tablet, and Desktop frames side-by-side with Figma specs and difference overlays.",
-  },
-  {
-    icon: Users,
-    title: "Client Collaboration",
-    description: "Developers share specs. Clients inspect, test, and leave structured feedback. No email threads.",
+    title: "Multi-Device Simulator",
+    description: "Test live URLs inside Phone (393×852), Tablet (768×1024), and Desktop (1280×800) frames with responsive side-by-side design audit overlays.",
   },
   {
     icon: CheckCircle,
-    title: "1-Click Sign-off",
-    description: "Clients verify and approve workflows in a single click. Export presentation-ready audit reports.",
+    title: "1-Click Sign-off & Reports",
+    description: "Clients verify and approve workflows in a single click. Export presentation-ready HTML/Markdown audit reports with developer remediation guides.",
   },
 ]
 
 const AI_PROVIDERS = [
   {
+    name: "Nebius Token Factory (Nimbus)",
+    description: "High-throughput token factory running NVIDIA Nemotron models for autonomous journey planning and 1-click code repairs",
+    models: ["nvidia/Nemotron-3-Nano-Omni", "nvidia/Llama-3.1-Nemotron-70B", "nemotron-4-340b"],
+    badge: "Default Engine",
+    badgeColor: "bg-[#0071e3]",
+  },
+  {
     name: "OmniRouter",
     description: "Multi-provider gateway with free flagship models",
     models: ["DeepSeek V4 Flash", "GPT-5.5 Free", "Gemini 2.0 Flash"],
-    badge: "Recommended",
-    badgeColor: "bg-green-500",
+    badge: "Multi-Cloud",
+    badgeColor: "bg-emerald-600",
   },
   {
     name: "OpenRouter",
-    description: "100+ models from various providers",
-    models: ["Claude 3.5 Sonnet", "GPT-4o", "Llama 3.1 70B"],
-    badge: "Popular",
-    badgeColor: "bg-blue-500",
+    description: "100+ frontier and open-weight models from top research labs",
+    models: ["Claude 3.5 Sonnet", "GPT-4o", "Llama 3.3 70B"],
+    badge: "Frontier",
+    badgeColor: "bg-blue-600",
   },
   {
-    name: "LLMA",
-    description: "Optimized large language model inference",
-    models: ["LLMA 3.1 70B", "LLMA 3.1 8B", "LLMA 2 70B"],
-    badge: null,
-    badgeColor: "",
-  },
-  {
-    name: "Local LLM",
-    description: "Run models locally with Ollama or LM Studio",
-    models: ["Llama 3.2", "Mistral", "CodeLlama"],
-    badge: "Free",
-    badgeColor: "bg-purple-500",
+    name: "Local LLM & Laya Vision",
+    description: "Run models locally with Ollama or LM Studio alongside local 30ms Laya vision reflexes",
+    models: ["Laya 30ms Vision", "Llama 3.2", "Qwen 2.5 Coder"],
+    badge: "100% Private",
+    badgeColor: "bg-purple-600",
   },
 ]
 
@@ -391,6 +394,12 @@ export function LandingPage({ onGetStarted, theme = "light", onToggleTheme }: La
 
           <nav className="hidden md:flex items-center gap-8 text-sm font-medium">
             <a
+              href="#engine"
+              className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white transition-colors duration-300"
+            >
+              AI Engine
+            </a>
+            <a
               href="#features"
               className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white transition-colors duration-300"
             >
@@ -435,7 +444,7 @@ export function LandingPage({ onGetStarted, theme = "light", onToggleTheme }: La
         <div className="mx-auto max-w-4xl text-center">
           <div className="inline-flex items-center gap-2 rounded-full border border-slate-200/80 dark:border-white/10 glass-panel px-4 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 mb-8 shadow-sm hover:scale-105 transition-transform duration-300 cursor-default animate-in fade-in duration-500">
             <Sparkles className="h-3.5 w-3.5 text-[#0071e3]" />
-            AI-Powered Design Review for Modern Teams
+            Powered by OpenCV Eyes · Laya 30ms Reflex · Nebius Token Factory
           </div>
 
           <h1 className="font-display text-4xl sm:text-5xl md:text-6xl lg:text-[4rem] font-semibold tracking-tight leading-[1.08] mb-6 text-slate-900 dark:text-white animate-in fade-in duration-700">
@@ -444,7 +453,7 @@ export function LandingPage({ onGetStarted, theme = "light", onToggleTheme }: La
           </h1>
 
           <p className="text-base md:text-lg text-slate-500 dark:text-slate-400 max-w-2xl mx-auto leading-relaxed mb-10 font-medium animate-in fade-in duration-700">
-            Import Figma specs, run your live app in a device simulator, and let the AI bot crawl your entire product — generating test plans, executing flows, and reporting coverage automatically.
+            Import Figma specs, simulate real viewports, and audit your app with autonomous agents. Powered by <strong className="text-slate-800 dark:text-slate-200 font-semibold">OpenCV</strong> for pixel-level defect vision, <strong className="text-slate-800 dark:text-slate-200 font-semibold">Laya</strong> for 30ms edge reflexes, and <strong className="text-slate-800 dark:text-slate-200 font-semibold">Nebius Token Factory</strong> with NVIDIA Nemotron for deep reasoning and 1-click code repairs.
           </p>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16 animate-in fade-in duration-700">
@@ -527,6 +536,193 @@ export function LandingPage({ onGetStarted, theme = "light", onToggleTheme }: La
               </div>
             </div>
           </div>
+        </div>
+      </section>
+
+      {/* ─── TRIO ARCHITECTURE: OPENCV + LAYA VISION + NEBIUS TOKEN FACTORY ─── */}
+      <section id="engine" className="py-28 px-6 relative z-10 border-t border-slate-200/50 dark:border-white/5 bg-slate-50/50 dark:bg-white/[0.015]">
+        <div className="mx-auto max-w-6xl">
+          <Reveal direction="up">
+            <div className="text-center mb-16">
+              <div className="inline-flex items-center gap-2 rounded-full border border-blue-500/20 dark:border-blue-400/20 bg-blue-50/50 dark:bg-blue-950/20 px-4 py-1.5 text-xs font-semibold text-blue-600 dark:text-blue-400 mb-6 shadow-sm">
+                <Sparkles className="h-3.5 w-3.5" />
+                Three-Tier Autonomous Engine
+              </div>
+              <h2 className="font-display text-3xl sm:text-4xl md:text-5xl font-semibold tracking-tight mb-5 text-slate-900 dark:text-white">
+                OpenCV Eyes. Laya Reflex. Nebius Brain.
+              </h2>
+              <p className="text-slate-600 dark:text-slate-400 max-w-2xl mx-auto text-base sm:text-lg leading-relaxed">
+                Autonomous UI testing without blind clicking. A unified visual pipeline where computer vision verifies pixels, edge reflexes clear routine barriers in 30ms, and cloud models reason through complex journeys.
+              </p>
+            </div>
+          </Reveal>
+
+          {/* Trio Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8 mb-12">
+            {/* Card 1: OpenCV */}
+            <Reveal delay={100} direction="up">
+              <div className="h-full group relative flex flex-col p-8 rounded-[28px] glass-panel border border-slate-200/70 dark:border-white/10 hover:border-indigo-500/40 dark:hover:border-indigo-500/40 transition-all duration-500 hover:shadow-2xl hover:-translate-y-1.5 bg-white/70 dark:bg-[#141417]/80 overflow-hidden">
+                <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/10 dark:bg-indigo-500/15 rounded-full blur-2xl group-hover:scale-150 transition-transform duration-700 pointer-events-none" />
+                
+                <div className="flex items-center justify-between mb-6">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 shadow-inner group-hover:scale-110 group-hover:rotate-3 transition-transform duration-500">
+                    <Scan className="h-6 w-6" />
+                  </div>
+                  <span className="text-[11px] font-mono font-semibold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/50 border border-indigo-200/60 dark:border-indigo-800/40 px-2.5 py-1 rounded-full">
+                    The Eyes
+                  </span>
+                </div>
+
+                <h3 className="text-xl font-bold mb-2 tracking-tight text-slate-900 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
+                  OpenCV Visual Inspection
+                </h3>
+                <p className="text-xs font-medium text-slate-400 dark:text-slate-500 mb-4">
+                  Pixel Grounding & Defect Optics
+                </p>
+                <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed mb-6 flex-1">
+                  Evaluates live device viewports down to individual bounding boxes. Detects WCAG 2.5.8 touch target violations (&lt; 24×24px), text truncation, visual clipping, and unexpected layout shifts before test steps execute.
+                </p>
+
+                <div className="pt-4 border-t border-slate-100 dark:border-white/5 space-y-2 text-xs">
+                  <div className="flex items-center justify-between text-slate-600 dark:text-slate-400">
+                    <span className="font-medium">WCAG 2.5.8 Target Check</span>
+                    <span className="font-mono text-indigo-600 dark:text-indigo-400 font-semibold">24×24px Bounding</span>
+                  </div>
+                  <div className="flex items-center justify-between text-slate-600 dark:text-slate-400">
+                    <span className="font-medium">Layout Shift Drift</span>
+                    <span className="font-mono text-indigo-600 dark:text-indigo-400 font-semibold">Pixel-Delta Salience</span>
+                  </div>
+                  <div className="flex items-center justify-between text-slate-600 dark:text-slate-400">
+                    <span className="font-medium">Audit Scope</span>
+                    <span className="font-mono text-indigo-600 dark:text-indigo-400 font-semibold">Mobile, Tablet, Desktop</span>
+                  </div>
+                </div>
+              </div>
+            </Reveal>
+
+            {/* Card 2: Laya Vision */}
+            <Reveal delay={200} direction="up">
+              <div className="h-full group relative flex flex-col p-8 rounded-[28px] glass-panel border border-slate-200/70 dark:border-white/10 hover:border-emerald-500/40 dark:hover:border-emerald-500/40 transition-all duration-500 hover:shadow-2xl hover:-translate-y-1.5 bg-white/70 dark:bg-[#141417]/80 overflow-hidden">
+                <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 dark:bg-emerald-500/15 rounded-full blur-2xl group-hover:scale-150 transition-transform duration-700 pointer-events-none" />
+                
+                <div className="flex items-center justify-between mb-6">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 shadow-inner group-hover:scale-110 group-hover:rotate-3 transition-transform duration-500">
+                    <Zap className="h-6 w-6" />
+                  </div>
+                  <span className="text-[11px] font-mono font-semibold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200/60 dark:border-emerald-800/40 px-2.5 py-1 rounded-full">
+                    The Reflex
+                  </span>
+                </div>
+
+                <h3 className="text-xl font-bold mb-2 tracking-tight text-slate-900 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">
+                  Laya Vision Fast Reflexes
+                </h3>
+                <p className="text-xs font-medium text-slate-400 dark:text-slate-500 mb-4">
+                  ~30ms Edge System-1 Classifier
+                </p>
+                <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed mb-6 flex-1">
+                  Sub-frame local classification engine. Detects page readiness, dismisses cookie banners and modal overlays, and handles high-frequency DOM navigation without sending screenshots across the web or burning AI quota.
+                </p>
+
+                <div className="pt-4 border-t border-slate-100 dark:border-white/5 space-y-2 text-xs">
+                  <div className="flex items-center justify-between text-slate-600 dark:text-slate-400">
+                    <span className="font-medium">Inference Latency</span>
+                    <span className="font-mono text-emerald-600 dark:text-emerald-400 font-semibold">~30ms Local Reflex</span>
+                  </div>
+                  <div className="flex items-center justify-between text-slate-600 dark:text-slate-400">
+                    <span className="font-medium">Overlay Handling</span>
+                    <span className="font-mono text-emerald-600 dark:text-emerald-400 font-semibold">Auto-Dismiss Modals</span>
+                  </div>
+                  <div className="flex items-center justify-between text-slate-600 dark:text-slate-400">
+                    <span className="font-medium">Escalation Policy</span>
+                    <span className="font-mono text-emerald-600 dark:text-emerald-400 font-semibold">Bounded Fallback</span>
+                  </div>
+                </div>
+              </div>
+            </Reveal>
+
+            {/* Card 3: Nebius Token Factory */}
+            <Reveal delay={300} direction="up">
+              <div className="h-full group relative flex flex-col p-8 rounded-[28px] glass-panel border border-slate-200/70 dark:border-white/10 hover:border-blue-500/40 dark:hover:border-blue-500/40 transition-all duration-500 hover:shadow-2xl hover:-translate-y-1.5 bg-white/70 dark:bg-[#141417]/80 overflow-hidden">
+                <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/10 dark:bg-blue-500/15 rounded-full blur-2xl group-hover:scale-150 transition-transform duration-700 pointer-events-none" />
+                
+                <div className="flex items-center justify-between mb-6">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-500/10 text-blue-600 dark:text-blue-400 shadow-inner group-hover:scale-110 group-hover:rotate-3 transition-transform duration-500">
+                    <Bot className="h-6 w-6" />
+                  </div>
+                  <span className="text-[11px] font-mono font-semibold uppercase tracking-wider text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/50 border border-blue-200/60 dark:border-blue-800/40 px-2.5 py-1 rounded-full">
+                    The Brain
+                  </span>
+                </div>
+
+                <h3 className="text-xl font-bold mb-2 tracking-tight text-slate-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
+                  Nebius Token Factory
+                </h3>
+                <p className="text-xs font-medium text-slate-400 dark:text-slate-500 mb-4">
+                  NVIDIA Nemotron Deep Reasoning
+                </p>
+                <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed mb-6 flex-1">
+                  High-throughput token factory inference gateway. Powers autonomous multi-screen crawls, reasons over complex app state, classifies subtle defects, and writes 1-click code repair proposals.
+                </p>
+
+                <div className="pt-4 border-t border-slate-100 dark:border-white/5 space-y-2 text-xs">
+                  <div className="flex items-center justify-between text-slate-600 dark:text-slate-400">
+                    <span className="font-medium">Default Model</span>
+                    <span className="font-mono text-blue-600 dark:text-blue-400 font-semibold">Nemotron-3-Nano-Omni</span>
+                  </div>
+                  <div className="flex items-center justify-between text-slate-600 dark:text-slate-400">
+                    <span className="font-medium">Deep Reasoning</span>
+                    <span className="font-mono text-blue-600 dark:text-blue-400 font-semibold">Llama-3.1-Nemotron-70B</span>
+                  </div>
+                  <div className="flex items-center justify-between text-slate-600 dark:text-slate-400">
+                    <span className="font-medium">Remediation</span>
+                    <span className="font-mono text-blue-600 dark:text-blue-400 font-semibold">1-Click Git Diffs</span>
+                  </div>
+                </div>
+              </div>
+            </Reveal>
+          </div>
+
+          {/* Workflow integration ribbon */}
+          <Reveal delay={400} direction="up">
+            <div className="rounded-2xl border border-slate-200/80 dark:border-white/10 glass-panel p-6 bg-gradient-to-r from-indigo-50/50 via-emerald-50/30 to-blue-50/50 dark:from-indigo-950/20 dark:via-emerald-950/10 dark:to-blue-950/20 flex flex-col md:flex-row items-center justify-between gap-6">
+              <div className="flex items-center gap-4">
+                <div className="flex -space-x-2">
+                  <div className="h-9 w-9 rounded-full bg-indigo-500 flex items-center justify-center text-white text-xs font-bold ring-2 ring-white dark:ring-black shadow-sm">
+                    CV
+                  </div>
+                  <div className="h-9 w-9 rounded-full bg-emerald-500 flex items-center justify-center text-white text-xs font-bold ring-2 ring-white dark:ring-black shadow-sm">
+                    30ms
+                  </div>
+                  <div className="h-9 w-9 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs font-bold ring-2 ring-white dark:ring-black shadow-sm">
+                    NV
+                  </div>
+                </div>
+                <div>
+                  <h4 className="text-sm font-semibold text-slate-900 dark:text-white">
+                    Closed-Loop Autonomous Pipeline
+                  </h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    OpenCV measures pixels &rarr; Laya executes 30ms reflexes &rarr; Nebius Token Factory plans journeys and patches defects.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3 text-xs font-mono font-medium">
+                <span className="px-3 py-1.5 rounded-lg bg-white/80 dark:bg-white/5 border border-slate-200/60 dark:border-white/10 text-slate-700 dark:text-slate-300">
+                  OpenCV 24px Bounds
+                </span>
+                <span className="text-slate-400">&rarr;</span>
+                <span className="px-3 py-1.5 rounded-lg bg-white/80 dark:bg-white/5 border border-slate-200/60 dark:border-white/10 text-emerald-600 dark:text-emerald-400">
+                  Laya Reflex
+                </span>
+                <span className="text-slate-400">&rarr;</span>
+                <span className="px-3 py-1.5 rounded-lg bg-white/80 dark:bg-white/5 border border-slate-200/60 dark:border-white/10 text-blue-600 dark:text-blue-400">
+                  Nebius Token Factory
+                </span>
+              </div>
+            </div>
+          </Reveal>
         </div>
       </section>
 
