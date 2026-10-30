@@ -2,7 +2,7 @@
 
 > **Find bugs in your web app. See the evidence. Understand what to fix.**
 >
-> Open Design AI is an open-source web application testing and design review platform. It explores web interfaces, plans and runs browser tests, captures screenshots, and produces reports that help developers understand what worked and what failed.
+> Open Design AI is an open-source autonomous web testing and design review platform. Powered by **OpenCV** (pixel-level vision), **Laya Vision** (~30ms edge reflex), and **Nebius Token Factory** (NVIDIA Nemotron reasoning brain), it explores web interfaces, audits WCAG 2.5.8 touch targets, executes autonomous test journeys, and generates 1-click code repairs.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js)](https://nextjs.org/)
@@ -67,28 +67,48 @@ A crawl can only reach states permitted by the target app, available credentials
 
 ---
 
-## Architecture: Nebius Token Factory & NVIDIA Nemotron
+## Architecture: OpenCV, Laya Vision & Nebius Token Factory
 
-Open Design AI leverages **Nebius Token Factory** to run **NVIDIA Nemotron** models for autonomous reasoning, test planning, defect classification, and automated code repair:
+Open Design AI combines **OpenCV** (computer vision eyes), **Laya Vision** (sub-30ms edge reflex), and **Nebius Token Factory** (NVIDIA Nemotron reasoning brain) into a closed-loop autonomous testing and self-healing pipeline:
 
 ```mermaid
 flowchart TD
-    App[Target Web Application] -->|DOM & Screenshots| Browser[Puppeteer Headless Automation]
-    Browser -->|Visual Analysis| CV[OpenCV Element & Layout Detector]
-    Browser -->|~30ms Page Check| Laya[Laya Vision Reflex]
-    CV --> Context[Structured Screen & Defect Context]
+    App[Target Web Application] -->|DOM & Viewport Frames| Browser[Puppeteer Headless Automation]
+    Browser -->|Visual Inspection| CV[OpenCV Element & Layout Detector
+WCAG 2.5.8 24×24px Bounds & Layout Drift]
+    Browser -->|~30ms Local Reflex| Laya[Laya Vision Edge Classifier
+Page Readiness & Modal Blocker Clearing]
+    CV --> Context[Structured Screen & Visual Defect Context]
     Laya --> Context
     Context -->|High-Throughput Inference| Nebius[Nebius Token Factory Gateway]
     subgraph NebiusAICloud [Nebius AI Cloud Infrastructure]
         Nebius --> Nano[NVIDIA Nemotron-3-Nano-Omni
-Observe-Decide-Act Browser Loop]
+Observe-Decide-Act Browser Journey Loop]
         Nebius --> Large[NVIDIA Llama-3.1-Nemotron-70B
-Test Planning & Code Repair]
+Autonomous Test Planning & Code Repair]
     end
     Nano -->|Verified Actions: Click, Type, Navigate| Browser
     Large -->|Automated Unified Diffs| SelfHealing[Self-Healing Code Repair Modal]
+    Large -->|Remediation Prompts| DevGuide[Developer Triage Guide & Prompts]
     Browser --> Reports[Evidence Reports, Screen Maps & ZIP Artifacts]
 ```
+
+### The Three Autonomous Pillars
+
+1. **OpenCV (The Eyes — Visual Inspection)**:
+   - Evaluates interactive bounding boxes against WCAG 2.5.8 minimum target sizing (`24×24px`).
+   - Detects pixel-level layout shifts, clipped text, and horizontal viewport overflow across Phone (`393×852`), Tablet (`768×1024`), and Desktop (`1280×800`).
+   - Computes visual prominence and element salience directly from captured viewport frames.
+
+2. **Laya Vision (The Reflex — ~30ms Edge Inference)**:
+   - High-speed local vision classifier running at the edge.
+   - Evaluates page load readiness and dismisses routine barriers (cookie banners, dialog backdrops, notification popups) in ~30ms.
+   - Eliminates unnecessary cloud round-trips for routine interactions, preserving token budget and preventing test lag.
+
+3. **Nebius Token Factory (The Brain — NVIDIA Nemotron Reasoning)**:
+   - Powered by Nebius AI Cloud running high-throughput NVIDIA Nemotron models (`nvidia/Nemotron-3-Nano-Omni` and `nvidia/Llama-3.1-Nemotron-70B`).
+   - Conducts autonomous multi-screen journey planning, complex DOM reasoning, and deep defect classification.
+   - Generates 1-click code repair patches with unified git diffs and structured developer remediation prompts.
 
 ---
 
@@ -221,10 +241,12 @@ Reports describe what the automation observed. Coverage percentages and automate
 ## Technology
 
 - **Application:** Next.js App Router, React, TypeScript, Tailwind CSS.
+- **Visual inspection & optics:** OpenCV computer vision (WCAG 2.5.8 touch target bounds, layout shift deltas, pixel-level overflow detection).
+- **Edge reflex classification:** Laya Vision (~30ms local edge page readiness and modal clearing).
+- **AI inference & reasoning:** Nebius Token Factory running NVIDIA Nemotron (`Nemotron-3-Nano-Omni`, `Llama-3.1-Nemotron-70B`), plus OmniRouter, OpenRouter, and local Ollama support.
 - **Browser automation:** Puppeteer and Browserbase Stagehand.
 - **Database and authentication:** Supabase / PostgreSQL with row-level security.
-- **AI inference:** Configurable hosted or local OpenAI-compatible providers.
-- **Design review:** Figma-to-live comparison and review workflows.
+- **Design review & reports:** Figma-to-live comparison, multi-device simulator, interactive flow canvas, and developer triage reports with AI repair prompts.
 
 ---
 
