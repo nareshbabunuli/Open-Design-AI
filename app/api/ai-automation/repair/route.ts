@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getJob, saveJob, appendLog } from "@/lib/ai-automation/runner"
 import type { AutomationJob, RepairProposal } from "@/lib/ai-automation/types"
+import { generateRepairProposalWithAI } from "@/lib/ai-automation/ai-gateway"
 
 function generateProposalForIssue(issue: {
   id: string
@@ -92,7 +93,7 @@ function generateProposalForIssue(issue: {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
-    const { jobId, issueId, defectId, action } = body
+    const { jobId, issueId, defectId, action, apiKey, baseUrl, model, proposal: clientProposal } = body
 
     if (!jobId) {
       return NextResponse.json({ error: "Missing jobId parameter" }, { status: 400 })
@@ -115,13 +116,28 @@ export async function POST(req: NextRequest) {
       ? { id: issue.id, type: issue.type, description: issue.description, selector: (issue as any).selector, screenUrl: issue.screenUrl }
       : { id: defect!.id, type: defect!.type, description: defect!.domConfirmationDetail, selector: defect!.selector, screenUrl: defect!.screenName }
 
-    const proposal = generateProposalForIssue(targetDesc)
+    // Reuse the proposal the UI already shows; otherwise ask the model, and only
+    // fall back to the canned template when no model answer is available.
+    let proposal: RepairProposal
+    if (clientProposal && typeof clientProposal.diff === "string") {
+      proposal = clientProposal as RepairProposal
+    } else {
+      const ai = await generateRepairProposalWithAI({ issue: targetDesc, apiKey, baseUrl, model })
+      proposal = ai
+        ? {
+            isPrototype: false,
+            label: "AI-generated patch proposal (Nemotron via Nebius) — not written to your files",
+            ...ai,
+          }
+        : generateProposalForIssue(targetDesc)
+    }
 
     if (action === "apply_and_verify") {
       proposal.appliedAt = new Date().toISOString()
       proposal.verificationOutcome = "PASSED"
-      proposal.verificationDetail =
-        "[PROTOTYPE] Simulated code patch applied to sandbox DOM. Closed-loop probe re-executed: element dimensions, attributes, and styles now strictly meet acceptance criteria. Defect marked Resolved."
+      proposal.verificationDetail = proposal.isPrototype
+        ? "[PROTOTYPE] Simulated code patch. Re-test is simulated; nothing was changed in your source files."
+        : "Patch proposed by the AI model. The re-test is simulated and the patch was not written to your source files; apply it manually and re-run the test."
 
       // Update issue if matching
       if (issue) {

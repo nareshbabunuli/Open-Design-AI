@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { CheckCircle2, ChevronRight, Code2, Loader2, Play, ShieldAlert, Sparkles, Wrench, X } from "lucide-react"
 import type { AutomationIssue, OpenCVVisualDefect, RepairProposal } from "@/lib/ai-automation/types"
 
@@ -20,6 +20,7 @@ export function RepairVerifyModal({
   onRepaired,
 }: RepairVerifyModalProps) {
   const [isApplying, setIsApplying] = useState(false)
+  const [isGenerating, setIsGenerating] = useState(true)
   const [stepIndex, setStepIndex] = useState<"ready" | "applying" | "rerunning" | "verified">("ready")
   const [proposal, setProposal] = useState<RepairProposal | null>(() => {
     // Generate immediate realistic proposal based on target
@@ -92,6 +93,43 @@ export function RepairVerifyModal({
   const targetTitle = issue?.description || defect?.domConfirmationDetail || "Detected UI Defect"
   const targetId = issue?.id || defect?.id || "target"
 
+  const readAiSettings = () => {
+    try {
+      const provider = localStorage.getItem("ai_selected_provider")
+      const useNebius = !provider || provider === "nebius" || provider === "cloud"
+      return {
+        apiKey: useNebius ? localStorage.getItem("nebius_api_key") || undefined : undefined,
+        model: localStorage.getItem("nebius_selected_model") || undefined,
+      }
+    } catch {
+      return {}
+    }
+  }
+
+  // Ask the model for a real patch proposal; the canned proposal stays as fallback.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch("/api/ai-automation/repair", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jobId, issueId: issue?.id, defectId: defect?.id, action: "propose", ...readAiSettings() }),
+        })
+        const data = await res.json()
+        if (!cancelled && data?.proposal) setProposal(data.proposal)
+      } catch {
+        // keep the local fallback proposal
+      } finally {
+        if (!cancelled) setIsGenerating(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const handleApplyAndVerify = async () => {
     setIsApplying(true)
     setStepIndex("applying")
@@ -110,6 +148,7 @@ export function RepairVerifyModal({
           issueId: issue?.id,
           defectId: defect?.id,
           action: "apply_and_verify",
+          proposal,
         }),
       })
 
@@ -157,7 +196,7 @@ export function RepairVerifyModal({
                 <h3 className="text-sm font-bold text-white">Repair &amp; Verify</h3>
                 {/* Mandatory Prototype Label */}
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold uppercase bg-amber-950/80 text-amber-300 border border-amber-800/80 shadow-xs">
-                  [PROTOTYPE] Simulated Repair
+                  {isGenerating ? "Asking Nemotron..." : proposal?.isPrototype ? "[PROTOTYPE] Template Fix" : "AI Proposal (Nemotron)"}
                 </span>
               </div>
               <p className="text-[11px] text-slate-400 mt-0.5">
@@ -209,7 +248,7 @@ export function RepairVerifyModal({
             <div className="rounded-xl overflow-hidden border border-slate-800 bg-[#0d1117] font-mono text-xs shadow-inner">
               <div className="px-3 py-1.5 bg-slate-950/90 border-b border-slate-800 text-[10px] text-slate-400 flex items-center justify-between">
                 <span>Unified Patch Diff</span>
-                <span className="text-amber-400 font-semibold">Simulated Patch</span>
+                <span className="text-amber-400 font-semibold">{proposal?.isPrototype ? "Template Patch" : "AI-Proposed Patch (not written to disk)"}</span>
               </div>
               <pre className="p-3 text-[11px] leading-relaxed overflow-x-auto text-slate-300">
                 {proposal?.diff.split("\n").map((line, idx) => {
@@ -254,8 +293,8 @@ export function RepairVerifyModal({
                 <span>Verification Re-Test Verdict: PASSED</span>
               </div>
               <p className="text-[11px] text-emerald-200/90 leading-relaxed">
-                Closed-loop agent probe re-evaluated target element. Rendered bounding box and DOM attributes
-                confirmed strictly compliant. Defect marked as resolved.
+                Re-test is simulated in this prototype and the patch is not written to your files. Apply the
+                diff in your code, then re-run the test to confirm the defect is gone.
               </p>
             </div>
           )}
@@ -297,7 +336,7 @@ export function RepairVerifyModal({
               <button
                 type="button"
                 onClick={handleApplyAndVerify}
-                disabled={isApplying}
+                disabled={isApplying || isGenerating}
                 className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-xs font-semibold text-white flex items-center gap-1.5 transition cursor-pointer shadow-xs"
               >
                 {isApplying ? (

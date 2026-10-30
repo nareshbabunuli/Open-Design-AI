@@ -1564,3 +1564,69 @@ Return STRICTLY valid JSON conforming to this schema:
   }
 }
 
+
+
+export interface AIRepairProposalResult {
+  file: string
+  targetSelector: string
+  diff: string
+  explanation: string
+  confidence: number
+}
+
+/**
+ * Asks the configured model (Nebius Token Factory / NVIDIA Nemotron by default)
+ * for a minimal unified-diff fix for one detected defect. Returns null when no
+ * key is configured or the call fails, so callers can fall back honestly.
+ */
+export async function generateRepairProposalWithAI({
+  issue,
+  apiKey,
+  baseUrl = NEBIUS_BASE_URL,
+  model,
+}: {
+  issue: { type: string; description: string; selector?: string; screenUrl?: string }
+  apiKey?: string
+  baseUrl?: string
+  model?: string
+}): Promise<AIRepairProposalResult | null> {
+  const cleanBase = resolveBaseUrl(baseUrl)
+  const key = resolveAiApiKey(cleanBase, apiKey)
+  const prompt = `You are a senior front-end engineer. An automated tester found this defect.
+- Type: ${issue.type}
+- Page: ${issue.screenUrl || "unknown"}
+- Selector: ${issue.selector || "unknown"}
+- Description: ${issue.description}
+
+Propose the smallest HTML/CSS/JS fix. You have NOT seen the source file, so infer a likely file path and keep the diff minimal and clearly illustrative.
+Return strictly valid JSON:
+{"file":"path/to/file","targetSelector":"css selector","diff":"unified diff text with -/+ lines","explanation":"why this fixes it","confidence":0-100}`
+  try {
+    const res = await postChatCompletionSafe(
+      cleanBase,
+      key,
+      {
+        model: resolveModel(cleanBase, model),
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.2,
+        max_tokens: 800,
+        response_format: { type: "json_object" },
+      },
+      "Repair proposal",
+    )
+    if (!res || !res.ok) return null
+    const data = await res.json()
+    const parsed = parseJsonSafe<AIRepairProposalResult>(data?.choices?.[0]?.message?.content || "")
+    if (!parsed?.diff || !parsed?.explanation) return null
+    return {
+      file: parsed.file || "unknown",
+      targetSelector: parsed.targetSelector || issue.selector || "",
+      diff: String(parsed.diff),
+      explanation: String(parsed.explanation),
+      confidence: Math.max(0, Math.min(100, Number(parsed.confidence) || 80)),
+    }
+  } catch (err) {
+    console.warn("[AI Repair] Proposal generation failed:", err)
+    return null
+  }
+}
