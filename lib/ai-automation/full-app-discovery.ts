@@ -584,6 +584,9 @@ export async function collectLinks(
           if (!sameAppDomain) return
           if (/(logout|signout|sign-out|log-off|delete-account|leave)/i.test(full)) return
 
+          const NON_HTML_EXTENSIONS = /\.(pdf|zip|tar|gz|rar|7z|png|jpe?g|gif|webp|svg|ico|csv|xlsx?|docx?|pptx?|mp[34]|wav|webm|txt|json|xml)(\?.*)?$/i;
+          if (NON_HTML_EXTENSIONS.test(parsed.pathname)) return;
+
           const norm = full.replace(/\/+$/, "") || full
           if (!seen.has(norm)) {
             seen.add(norm)
@@ -594,7 +597,7 @@ export async function collectLinks(
       }
 
       // 1. Standard Anchor Links
-      document.querySelectorAll("a[href]").forEach((a: any) => {
+      document.querySelectorAll("a[href]:not([download])").forEach((a: any) => {
         tryAdd(a.getAttribute("href") || a.href, a.textContent || a.getAttribute("aria-label"))
       })
 
@@ -1090,6 +1093,7 @@ export async function discoverAndMapApp(
   const visitedHrefs = new Set<string>()
   while (queue.length > 0 && screens.length < maxLimit && job.status === "running") {
     const cand = queue.shift()!
+    if (/\.(pdf|zip|tar|gz|rar|7z|png|jpe?g|gif|webp|svg|ico|csv|xlsx?|docx?|pptx?|mp[34]|wav|webm|txt|json|xml)(\?.*)?$/i.test(cand.href)) continue
     const candPath = normalizePath(cand.href, origin)
 
     const known = pathScreenMap.get(candPath)
@@ -1477,7 +1481,10 @@ export async function completeJourneyReturnAndLogout(
       "info",
       `🏠 [JOURNEY COMPLETION] Returning from "${lastScreen?.name || currentBeforeReturn}" back to main page (${secretRedactor.redact(mainPageUrl)})...`
     )
-    await page.goto(mainPageUrl, { waitUntil: "domcontentloaded", timeout: 12000 }).catch(() => null)
+    await Promise.race([
+      page.goto(mainPageUrl, { waitUntil: "domcontentloaded", timeout: 8000 }),
+      new Promise((r) => setTimeout(r, 8500)),
+    ]).catch(() => null)
     await waitForSpaPageReady(page, 2000).catch(() => {})
     returnedToMain = true
     job.currentUrl = page.url()
@@ -1508,8 +1515,8 @@ export async function completeJourneyReturnAndLogout(
 
   // Helper to locate and click a visible Logout / Sign Out control on the page
   const tryClickLogoutOnPage = async (): Promise<string | null> => {
-    return page
-      .evaluate(() => {
+    return Promise.race([
+      page.evaluate(() => {
         const isVisible = (el: HTMLElement) => {
           const r = el.getBoundingClientRect()
           const s = window.getComputedStyle(el)
@@ -1549,8 +1556,9 @@ export async function completeJourneyReturnAndLogout(
           }
         }
         return null
-      })
-      .catch(() => null)
+      }),
+      new Promise<null>((r) => setTimeout(() => r(null), 4000)),
+    ]).catch(() => null)
   }
 
   let loggedOut = false

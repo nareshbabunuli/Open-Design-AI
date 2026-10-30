@@ -676,8 +676,8 @@ export async function promptPaymentCredentialsIfNeeded(
   appendLog(job, "info", "💳 Payment form detected - waiting for test card credentials or sandbox default...")
   saveJob(job)
 
-  // Pause up to 30 seconds for UI response, then default to sandbox card in test mode
-  const deadline = Date.now() + 30 * 1000
+  // Autonomous test mode: brief 2s window for custom credentials then proceed with sandbox card
+  const deadline = Date.now() + 2 * 1000
   while (!job.pendingPaymentCredentials && job.status === "running" && Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 500))
     const refreshed = getJob(job.id)
@@ -702,6 +702,7 @@ export async function promptPaymentCredentialsIfNeeded(
   job.pendingPaymentCredentials = undefined
   job.paymentState = supplied.skip ? "skipped" : "provided"
   job.paymentPrompt = undefined
+  job.currentStep = "Auto-filled test checkout form with sandbox card (Stripe 4242...)"
   saveJob(job)
   return supplied
 }
@@ -944,6 +945,7 @@ export async function runMultiDeviceResponsiveAudit(
         const buf = await page.screenshot({ type: "jpeg", quality: 65, fullPage: false })
         screenshotUrl = `data:image/jpeg;base64,${Buffer.from(buf).toString("base64")}`
         job.currentScreenshotUrl = screenshotUrl
+        await publishLiveFrame(job, page).catch(() => {})
       } catch {}
 
       // Update screen snapshots in job.screens
@@ -3422,20 +3424,14 @@ export async function executeStructuredTestPlan(
     appendLog(job, "warn", `UX Intelligence scoring encountered error: ${uxErr?.message}`)
   }
 
-  // PHASE 5.5: Multi-Device Responsive Testing
-  try {
-    const targetVps = options?.viewports && options.viewports.length > 0 ? options.viewports : STANDARD_RESPONSIVE_VIEWPORTS
-    await runMultiDeviceResponsiveAudit(job, page, targetVps, testPlan.screens)
-  } catch (respErr: any) {
-    appendLog(job, "warn", `Multi-device responsive testing encountered error: ${respErr?.message}`)
-  }
-
-  // Finalize full-session video recording BEFORE building the final report and marking job completed
+  // Finalize full-session video recording BEFORE responsive viewport resizing (changing resolution mid-stream can stall ffmpeg)
   if (options?.videoRecorder) {
     try {
-      await showActionBanner(page, "🏁 Full App & Multi-Device Testing Complete")
-      await new Promise((r) => setTimeout(r, 250))
-      const recUrl = await options.videoRecorder.stop(job)
+      await showActionBanner(page, "🏁 Full App Testing Complete — Running Multi-Device Audit")
+      const recUrl = await Promise.race([
+        options.videoRecorder.stop(job),
+        new Promise<string>((r) => setTimeout(() => r(""), 3500)),
+      ]).catch(() => "")
       if (recUrl) {
         job.recordingUrl = recUrl
       }
@@ -3447,6 +3443,17 @@ export async function executeStructuredTestPlan(
     } catch (recErr: any) {
       appendLog(job, "warn", `Video finalization note: ${recErr?.message || recErr}`)
     }
+  }
+
+  // PHASE 5.5: Multi-Device Responsive Testing
+  try {
+    const targetVps = options?.viewports && options.viewports.length > 0 ? options.viewports : STANDARD_RESPONSIVE_VIEWPORTS
+    await Promise.race([
+      runMultiDeviceResponsiveAudit(job, page, targetVps, testPlan.screens),
+      new Promise((r) => setTimeout(r, 20000)),
+    ])
+  } catch (respErr: any) {
+    appendLog(job, "warn", `Multi-device responsive testing encountered error: ${respErr?.message}`)
   }
 
   // Finalize completion status and duration BEFORE generating Phase 6 report
@@ -3895,7 +3902,7 @@ export async function executeFullAppTestingJob(
 
     // Finalize session video recording
     if (videoRecorder) {
-      const recUrl = await videoRecorder.stop(job)
+      const recUrl = await Promise.race([videoRecorder.stop(job), new Promise<string>((r) => setTimeout(() => r(""), 3000))]).catch(() => "")
       if (recUrl) {
         job.recordingUrl = recUrl
         if (job.report) job.report.recordingUrl = recUrl

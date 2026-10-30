@@ -1844,10 +1844,38 @@ export default function AISimulatorPage() {
   useEffect(() => {
     if (!currentJob?.id || (currentJob.status !== "running" && currentJob.status !== "queued")) return
 
+    let active = true
+    let consecutiveErrors = 0
+
     const interval = setInterval(async () => {
+      if (!active) return
       try {
-        const res = await fetch(`/api/ai-automation/status?jobId=${currentJob.id}`)
-        const data = await res.json()
+        const res = await fetch(`/api/ai-automation/status?jobId=${currentJob.id}`).catch(() => null)
+        if (!active || !res) {
+          consecutiveErrors++
+          if (consecutiveErrors >= 5) clearInterval(interval)
+          return
+        }
+
+        if (res.status === 404) {
+          // Job disappeared from server (e.g. server restarted) — stop polling
+          clearInterval(interval)
+          setCurrentJob((prev) => (prev ? { ...prev, status: "stopped" } : null))
+          return
+        }
+
+        if (!res.ok) {
+          consecutiveErrors++
+          if (consecutiveErrors >= 5) {
+            clearInterval(interval)
+          }
+          return
+        }
+
+        const data = await res.json().catch(() => null)
+        if (!active || !data) return
+        consecutiveErrors = 0
+
         if (data?.success && data.job) {
           setCurrentJob(data.job)
           if (data.job.status === "completed" || data.job.status === "failed" || data.job.status === "stopped") {
@@ -1856,12 +1884,19 @@ export default function AISimulatorPage() {
             loadWorkspace(false)
           }
         }
-      } catch (err) {
-        console.warn("Polling error:", err)
+      } catch (err: any) {
+        if (err?.name === "AbortError" || !active) return
+        consecutiveErrors++
+        if (consecutiveErrors >= 5) {
+          clearInterval(interval)
+        }
       }
-    }, 600)
+    }, 1200)
 
-    return () => clearInterval(interval)
+    return () => {
+      active = false
+      clearInterval(interval)
+    }
   }, [currentJob?.id, currentJob?.status, loadWorkspace])
 
   // The shared session event stream feeds chat progress; sequence IDs prevent

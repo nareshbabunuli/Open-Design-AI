@@ -67,6 +67,31 @@ A crawl can only reach states permitted by the target app, available credentials
 
 ---
 
+## Architecture: Nebius Token Factory & NVIDIA Nemotron
+
+Open Design AI leverages **Nebius Token Factory** to run **NVIDIA Nemotron** models for autonomous reasoning, test planning, defect classification, and automated code repair:
+
+```mermaid
+flowchart TD
+    App[Target Web Application] -->|DOM & Screenshots| Browser[Puppeteer Headless Automation]
+    Browser -->|Visual Analysis| CV[OpenCV Element & Layout Detector]
+    Browser -->|~30ms Page Check| Laya[Laya Vision Reflex]
+    CV --> Context[Structured Screen & Defect Context]
+    Laya --> Context
+    Context -->|High-Throughput Inference| Nebius[Nebius Token Factory Gateway]
+    subgraph NebiusAICloud [Nebius AI Cloud Infrastructure]
+        Nebius --> Nano[NVIDIA Nemotron-3-Nano-Omni
+Observe-Decide-Act Browser Loop]
+        Nebius --> Large[NVIDIA Llama-3.1-Nemotron-70B
+Test Planning & Code Repair]
+    end
+    Nano -->|Verified Actions: Click, Type, Navigate| Browser
+    Large -->|Automated Unified Diffs| SelfHealing[Self-Healing Code Repair Modal]
+    Browser --> Reports[Evidence Reports, Screen Maps & ZIP Artifacts]
+```
+
+---
+
 ## Core capabilities
 
 ### Full-app discovery and testing

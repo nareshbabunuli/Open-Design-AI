@@ -488,7 +488,7 @@ export class SessionVideoRecorder {
   async pause(job?: AutomationJob): Promise<void> {
     this.transition = this.transition.then(async () => {
       if (this.state !== "recording" || !this.recorder) return
-      try { await this.recorder.stop() }
+      try { await Promise.race([this.recorder.stop(), new Promise((r) => setTimeout(r, 3000))]) }
       finally {
         this.recorder = null
         this.state = "paused"
@@ -523,7 +523,7 @@ export class SessionVideoRecorder {
     if (this.monitor) { clearInterval(this.monitor); this.monitor = null }
     await this.transition.catch(() => {})
     if (this.recorder) {
-      try { await this.recorder.stop() }
+      try { await Promise.race([this.recorder.stop(), new Promise((r) => setTimeout(r, 3000))]) }
       catch (err: any) { if (job) appendLog(job, "warn", `Session video finalization note: ${err?.message || String(err)}`) }
       this.recorder = null
     }
@@ -551,7 +551,10 @@ export class SessionVideoRecorder {
           fs.copyFileSync(p, segDest)
         } catch {}
 
-        const remoteUrl = await uploadSessionVideo(fs.readFileSync(p), this.projectId, `${this.jobId}-segment-${i + 1}`)
+        const remoteUrl = await Promise.race([
+          uploadSessionVideo(fs.readFileSync(p), this.projectId, `${this.jobId}-segment-${i + 1}`),
+          new Promise<string>((r) => setTimeout(() => r(""), 4000)),
+        ]).catch(() => "")
         const localSegUrl = `/api/ai-automation/recording?jobId=${encodeURIComponent(this.jobId)}&segment=${i + 1}`
         urls.push(remoteUrl || localSegUrl)
       } catch (err: any) {
