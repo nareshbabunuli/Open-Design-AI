@@ -20,7 +20,7 @@
     "@base-ui/react": "^1.5.0",
     "@browserbasehq/stagehand": "^3.6.5",
     "@supabase/ssr": "0.7.0",
-    "@supabase/supabase-js": "2.57.0",
+    "@supabase/supabase-js": "2.118.0",
     "@vercel/analytics": "1.6.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
