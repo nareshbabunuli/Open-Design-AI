@@ -45,7 +45,7 @@
     "@types/pg": "^8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "pg": "^8.23.0",
+    "pg": "^8.23.1",
     "postcss": "^8.5",
     "shadcn": "^4.11.0",
     "tailwindcss": "^4.3.3",
